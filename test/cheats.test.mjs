@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { addCheatsMod, modBase } from "../src/cheats/mod.js";
 import { gameSettings } from "../src/game/page.js";
 import { perkName, powerupName, weaponName } from "../src/cheats/names.js";
+import { onCheatsKey, onPointerLock } from "../src/cheats/hotkey.js";
 import { cheatCommand, cheatsTick, createBridge, onCheatsLine, parseDvarPrint, parseState, sendCheat } from "../src/cheats/bridge.js";
 
 const tests = [];
@@ -128,6 +129,42 @@ test("unknown ids get a readable fallback", () => {
   assert.equal(weaponName("zombie_new_thing"), "New Thing");
   assert.equal(perkName("specialty_newperk"), "Newperk");
   assert.equal(powerupName("free_stuff"), "Free Stuff");
+});
+
+test("M opens the cheat panel in game without pausing, and frees the mouse", () => {
+  const session = { cheats: { panel: false }, fun: { open: false } };
+  let freed = 0;
+  const ctx = { playing: true, available: true, freeMouse: () => (freed += 1) };
+  const event = { code: "KeyM", repeat: false, ctrlKey: false, altKey: false, metaKey: false };
+  assert.equal(onCheatsKey(session, event, ctx), true, "handled (the game must not see it)");
+  assert.equal(session.cheats.panel, true);
+  assert.equal(session.fun.open, true, "Fun mode section opens with it");
+  assert.equal(freed, 1);
+  assert.equal(onCheatsKey(session, event, ctx), true);
+  assert.equal(session.cheats.panel, false, "M again closes it");
+});
+
+test("M does nothing for a guest, outside a game, on key repeat or with a modifier", () => {
+  const event = { code: "KeyM", repeat: false, ctrlKey: false, altKey: false, metaKey: false };
+  const fresh = () => ({ cheats: { panel: false }, fun: { open: false } });
+  const ctx = { playing: true, available: true, freeMouse: () => {} };
+  for (const [what, e, c] of [
+    ["guest", event, { ...ctx, available: false }],
+    ["menu", event, { ...ctx, playing: false }],
+    ["repeat", { ...event, repeat: true }, ctx],
+    ["ctrl", { ...event, ctrlKey: true }, ctx],
+    ["other key", { ...event, code: "KeyN" }, ctx],
+  ]) {
+    const session = fresh();
+    assert.equal(onCheatsKey(session, e, c), false, what);
+    assert.equal(session.cheats.panel, false, what);
+  }
+});
+
+test("taking the mouse back into the game closes the panel", () => {
+  const session = { cheats: { panel: true }, fun: { open: true } };
+  onPointerLock(session, true);
+  assert.equal(session.cheats.panel, false);
 });
 
 let failed = 0;
