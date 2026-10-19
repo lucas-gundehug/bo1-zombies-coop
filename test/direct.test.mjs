@@ -396,19 +396,33 @@ test("host: a guest is present while the relay or its direct link has it", async
   assert.equal(session.peer, false);
 });
 
-test("host: a seat the relay hands out again drops the old direct link", async () => {
+test("host: the relay announcing a direct guest again (its relay reconnect) keeps the link", async () => {
   const session = fakeSession("host");
   const { direct } = directFor(session);
   onControl(session, { t: "peer", seat: 2, present: true });
   direct.onSignal({ t: "rtc-offer", n: 1, sdp: "offer-sdp", from: 2 });
   await settle();
   direct.onLink(2, true);
-  onControl(session, { t: "peer", seat: 2, present: false });
-  assert.equal(direct.state(2), "direct");
+  relayClosed(session);
+  onControl(session, { t: "welcome", guests: [] });
   onControl(session, { t: "peer", seat: 2, present: true });
-  assert.ok(FakePc.all[0].closed);
-  assert.equal(direct.state(2), "relay");
+  assert.equal(FakePc.all[0].closed, undefined);
+  assert.equal(direct.state(2), "direct");
   assert.equal(session.guests.get(2).present, true);
+});
+
+test("host: a new offer for a seat replaces the link whoever had it made", async () => {
+  const session = fakeSession("host");
+  const { direct } = directFor(session);
+  direct.onSignal({ t: "rtc-offer", n: 1, sdp: "offer-sdp", from: 2 });
+  await settle();
+  direct.onLink(2, true);
+  direct.onSignal({ t: "rtc-offer", n: 1, sdp: "offer-sdp", from: 2 });
+  await settle();
+  assert.ok(FakePc.all[0].closed);
+  assert.equal(FakePc.all.length, 2);
+  assert.ok(session.posted.some((p) => p.message.type === "unlink" && p.message.seat === 2));
+  assert.equal(direct.state(2), "connecting");
 });
 
 test("host: its own relay reconnect keeps the direct links", async () => {

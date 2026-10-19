@@ -8,9 +8,12 @@ code; the agent writes, tests and maintains everything. Talk to him in plain Eng
 vel.gg changes its engine often and upstream follows within a day or so. When the card says "vel.gg updated its game
 engine" or upstream has a new release: `git fetch upstream && git merge upstream/main`, rebuild, run the checks below,
 then publish a fork release (see Release). `README.md` is the fork's own: on a merge conflict there keep ours and
-carry over only what changed for users (install steps, new features). Keep fork changes small and inside `src/cheats/`, so merges stay easy. The
-upstream files the fork touches: `src/main.js`, `src/session/hooks.js`, `src/fun/fun.js`, `src/ui/view.js`,
-`scripts/build.mjs`, `src/util/updates.js`, `extension/manifest.json`, `package.json`, `test/ui-preview.mjs`, `README.md`.
+carry over only what changed for users (install steps, new features). Keep fork changes small and inside `src/cheats/`
+or `src/net/` (direct links), so merges stay easy. The upstream files the fork touches: `src/main.js`,
+`src/session/hooks.js`, `src/session/session.js`, `src/session/messages.js`, `src/session/lobby.js`, `src/fun/fun.js`,
+`src/net/pump-worker.js`, `src/net/pump.js`, `src/ui/view.js`, `src/ui/card.js`, `src/ui/styles.js`,
+`src/ui/strings.js`, `scripts/build.mjs`, `src/util/updates.js`, `extension/manifest.json`, `package.json`,
+`test/ui-preview.mjs`, `test/e2e.mjs`, `README.md`.
 
 ## The cheat menu in one paragraph
 
@@ -23,9 +26,29 @@ and catching the engine's `"name" is: "value^7"` print in `console.log`. M opens
 (`src/cheats/hotkey.js`): vel.gg presses Escape for the game whenever it sees the pointer lock lost, so the one unlock M
 causes is hidden from it.
 
+## Direct links in one paragraph
+
+Game packets and control messages go straight between each guest and the host over WebRTC; the relay only introduces
+players (signaling: `rtc-offer` / `rtc-answer` / `rtc-ice`, `src/net/rtc-messages.js`) and is the per-guest fallback.
+The guest offers, the host answers (`src/net/direct.js`, page side, one `RTCPeerConnection` per link, STUN only, no
+TURN). Each link has two pre-negotiated data channels, `game` (id 1, unordered, no retransmits) and `control` (id 2,
+reliable), transferred to the pump worker right after creation (`postMessage(ch, [ch])`, Chrome 155+); the worker
+sends per seat over them while both are open, else over the relay (`src/net/routes.js`), and a host broadcast reaches
+each guest once on its own path. Direct control messages get the relay's `from` stamp and may not use the relay's own
+types (`fromDirect`). Presence is "relay says present OR direct link open" (`syncPresence`, `relayClosed` in
+`src/session/messages.js`), so a game with direct links outlives the relay. A relay hiccup must not drop direct links
+(the relay re-announcing a seat keeps its link; a new offer for a seat replaces it). Players on a direct link see each other's IP address (Lucas accepted this). The card shows Direct / Relay per
+player. Other features (the in-game map) send through `send()` and get the direct path for free; `session.links`
+says which seats are direct.
+
 ## Checks
 
-- `npm run check`: lint, build, `test/cheats.test.mjs` (unit), `test/patch.test.mjs` (engine patches).
+- `npm run check`: lint, build, `test/cheats.test.mjs` (unit), `test/patch.test.mjs` (engine patches),
+  `test/direct.test.mjs` (direct links: signaling checks, routing, page side with a fake `RTCPeerConnection`, card).
+- Direct links in the real game: `test/e2e.mjs` checks each guest is direct; `NODIRECT=2` (or `all`) puts players on
+  the relay only, `DROP_DIRECT_S=<s>` drops the first guest's link mid-game, `RELAY_DOWN_S=<s>` cuts the relay
+  mid-game; the end prints each player's relay traffic. Use your own `PROFILE=/tmp/<name>` and a relay on its own port
+  (`npx wrangler dev --config relay/wrangler.jsonc --port <port>`) when another session may be testing too.
 - In the real game (Playwright, downloads the map once per profile): `node test/cheats-e2e.mjs kino actions` (every
   command), `kino ui` (M and the card's buttons), `kino load` / `kino off`, `<map> sweep` (everything once on a map),
   `HORDE=1` for Hell mode. `PROFILE=<dir>` reuses a browser profile with the packs already downloaded.
