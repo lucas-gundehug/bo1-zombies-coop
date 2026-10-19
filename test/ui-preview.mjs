@@ -77,9 +77,19 @@ const scenes = [
     fun: { open: true, infiniteClip: true, passive: true, timescale: 1, jump: 150, gravity: 400,
       players: { 0: { god: true, demigod: false, notarget: false, noclip: false, ufo: false, speed: 1.5 }, 1: { god: true, demigod: false, notarget: true, noclip: false, ufo: false, speed: 1 } } },
     stats: { rtt: 38, rtts: { 1: 38 } } } } },
+  { name: "9-host-cheats", tall: true, url: `/bsz/#coop=host&coopRoom=${ROOM}&coopRelay=http%3A%2F%2F127.0.0.1%3A9`, run: { screen: "ready", coop: {
+    set: { zone: "zombie_theater", name: "Allan", peer: true, cheats: { enabled: true, ok: true, ready: true, round: 7, frozen: true, power: false, horde: false, target: 1, noticeArea: "perks",
+      weapons: ["knife_ballistic_bowie_zm", "crossbow_explosive_zm", "thundergun_zm", "ray_gun_zm", "zombie_cymbal_monkey", "china_lake_zm", "m72_law_zm", "claymore_zm", "hk21_zm", "rpk_zm", "l96a1_zm", "galil_zm", "famas_zm", "spas_zm", "cz75dw_zm", "python_zm", "m1911_zm"],
+      perks: ["specialty_quickrevive", "specialty_fastreload", "specialty_rof", "specialty_armorvest", "specialty_additionalprimaryweapon"],
+      powerups: ["fire_sale", "carpenter", "full_ammo", "double_points", "insta_kill", "nuke"] } },
+    clients: [{ slot: 1, state: 5, loopback: true, port: 2406 }],
+    guests: [{ seat: 1, state: { phase: "connected", name: "Rafa" }, slot: { slot: 1, state: 5 } }],
+    fun: { open: true, notice: "Juggernog given to Rafa.", noticeAt: Date.now() + 3600e3, timescale: 1, jump: 39, gravity: 800, players: {} },
+    stats: { rtt: 38, rtts: { 1: 38 } } } } },
 ];
 
-for (const scene of scenes) {
+// ONLY=<text> shoots only the scenes whose name contains it.
+for (const scene of scenes.filter((s) => !process.env.ONLY || s.name.includes(process.env.ONLY))) {
   const page = await ctx.newPage();
   if (scene.tall) await page.setViewportSize({ width: 1100, height: 2600 });
   await page.goto(`https://vel.gg${scene.url}${scene.url.includes("?") ? "&coopRelay=http%3A%2F%2F127.0.0.1%3A9" : ""}`);

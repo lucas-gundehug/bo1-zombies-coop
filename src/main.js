@@ -14,6 +14,8 @@ import { LANG, T } from "./ui/strings.js";
 import { view } from "./ui/view.js";
 import { DEFAULT_RELAY, inviteLink, normalizeRelay } from "./util/relay.js";
 import { createFun, funActions, funTick, watchConsole } from "./fun/fun.js";
+import { cheatsSettingActions, createCheats } from "./cheats/setup.js";
+import { installCheatsKey } from "./cheats/hotkey.js";
 import { cleanName, guestIdFor, saveSetting } from "./util/settings.js";
 import { checkForUpdate, RELAY_GUIDE } from "./util/updates.js";
 
@@ -29,6 +31,8 @@ function start() {
   const session = createSession();
   window.__bo1Coop = session;
   session.fun = createFun();
+  session.cheats = createCheats();
+  installCheatsKey(session);
   watchConsole(session);
   if (session.mode) keepSinglePlayer(session.room);
 
@@ -158,6 +162,7 @@ function actions(session) {
     aimDown: () => setAim(session, session.aimLevel - 1),
     aimUp: () => setAim(session, session.aimLevel + 1),
     ...funActions(session),
+    ...cheatsSettingActions(session),
   };
 }
 

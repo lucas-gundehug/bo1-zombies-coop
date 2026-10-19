@@ -5,6 +5,9 @@
 import { SLOT } from "../engine/builds.js";
 import { MAP_SLUGS, currentZone, screen as pageScreen } from "../game/page.js";
 import { LANG } from "../ui/strings.js";
+import { cheatsTick, onCheatsLine } from "../cheats/bridge.js";
+import { cheatActions, cheatBlocks, cheatsFailedBlock } from "../cheats/section.js";
+import { C } from "../cheats/strings.js";
 
 const TEXT = {
   en: {
@@ -172,6 +175,7 @@ function say(fun, text) {
 export function funTick(session) {
   const fun = session.fun;
   if (fun.notice && Date.now() - fun.noticeAt > 6000) fun.notice = null;
+  if (session.cheats) cheatsTick(session, Date.now(), funAvailable(session) && pageScreen() === "playing");
   const a = addresses(session);
   if (!a || !funAvailable(session) || pageScreen() !== "playing") {
     flushQueue(session);
@@ -233,6 +237,7 @@ export function watchConsole(session) {
     const original = console[level];
     console[level] = function (...args) {
       const text = typeof args[0] === "string" ? args[0] : "";
+      onCheatsLine(session, text);
       const missing = text.match(/Could not load weapon "([^"]+)"/);
       if (missing && session.fun?.pendingWeapon === missing[1]) {
         const label = WEAPONS.find(([w]) => w === missing[1])?.[1] ?? missing[1];
@@ -288,6 +293,7 @@ export function funActions(session) {
   const forSlots = (slot) => (slot === "all" ? funPlayers(session).map((p) => p.slot) : [slot]);
 
   return {
+    ...(session.cheats ? cheatActions(session, funPlayers) : {}),
     fun: () => (fun.open = !fun.open),
     funToggle: (arg) => {
       if (!engineReady()) return;
@@ -391,9 +397,10 @@ export function funSection(session) {
     const dvar = a.engine.int(a.f.cheatsDvar);
     return dvar ? a.engine.byte(dvar + 24) === 1 : true;
   })();
-  blocks.push({ kind: "text", cls: "muted small", text: `${F.note} ${F.pause}` });
+  blocks.push({ kind: "text", cls: "muted small", text: `${F.note} ${session.cheats?.enabled ? C.keyTip : F.pause}` });
   if (!cheats) blocks.push({ kind: "callout", tone: "wait", text: F.cheatsOff });
-  if (fun.notice) blocks.push({ kind: "callout", tone: "info", text: fun.notice });
+  const cheating = session.cheats?.ok && session.cheats.ready;
+  if (fun.notice && !cheating) blocks.push({ kind: "callout", tone: "info", text: fun.notice });
 
   const players = funPlayers(session);
   blocks.push({ kind: "label", text: F.players });
@@ -450,8 +457,12 @@ export function funSection(session) {
   blocks.push({ kind: "stepper", label: F.jump, value: String(fun.jump), dec: { act: "funWorld", arg: "jump:down" }, inc: { act: "funWorld", arg: "jump:up" } });
   blocks.push({ kind: "stepper", label: F.gravity, value: String(fun.gravity), dec: { act: "funWorld", arg: "gravity:down" }, inc: { act: "funWorld", arg: "gravity:up" } });
 
-  blocks.push({ kind: "label", text: F.weapons, aside: MAP_SLUGS[session.zone ?? currentZone()] ?? "" });
-  blocks.push({ kind: "grid", buttons: WEAPONS.map(([w, label]) => ({ act: "funWeapon", arg: w, label })) });
+  if (cheating) blocks.push(...cheatBlocks(session, players));
+  else {
+    if (session.cheats?.ok === false) blocks.push(cheatsFailedBlock());
+    blocks.push({ kind: "label", text: F.weapons, aside: MAP_SLUGS[session.zone ?? currentZone()] ?? "" });
+    blocks.push({ kind: "grid", buttons: WEAPONS.map(([w, label]) => ({ act: "funWeapon", arg: w, label })) });
+  }
 
   blocks.push({ kind: "buttons", buttons: [{ act: "funReset", label: F.reset, style: "ghost" }] });
   return { kind: "section", title: F.title, act: "fun", open: fun.open, blocks };

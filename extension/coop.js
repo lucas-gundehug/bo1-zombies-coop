@@ -1,4 +1,4 @@
-// BO1 Zombies Co-op 2.2.2 for vel.gg. Built from src/ with scripts/build.mjs; edit the sources, not this file.
+// BO1 Zombies Co-op 2.2.2.1 for vel.gg. Built from src/ with scripts/build.mjs; edit the sources, not this file.
 (() => {
   // relay/src/protocol.js
   var ROLES = Object.freeze(["host", "guest"]);
@@ -318,9 +318,9 @@
     return view2 && Array.isArray(view2.origin) && view2.origin.length === 3 && view2.origin.every(Number.isFinite) ? view2 : null;
   }
   function go(url) {
-    const target = new URL(url, location.href);
-    location.assign(target.href);
-    if (target.pathname === location.pathname && target.search === location.search) location.reload();
+    const target2 = new URL(url, location.href);
+    location.assign(target2.href);
+    if (target2.pathname === location.pathname && target2.search === location.search) location.reload();
   }
   var landingUrl = (params) => `${BASE.replace(/\/$/, "")}#${params.replace(/^[?&#]/, "")}`;
   function paramsFromHash() {
@@ -1489,11 +1489,1102 @@
     if (Date.now() - (session.movedAt ?? 0) < 1e3) return false;
     const spot = spotNearHost(session);
     if (!spot) return false;
-    const target = [spot[0], spot[1], spot[2] + EYE_HEIGHT];
-    if (!engine.command(`setviewpos ${target.map((v) => v.toFixed(1)).join(" ")}`)) return false;
+    const target2 = [spot[0], spot[1], spot[2] + EYE_HEIGHT];
+    if (!engine.command(`setviewpos ${target2.map((v) => v.toFixed(1)).join(" ")}`)) return false;
     session.movedAt = Date.now();
     session.note(`moved next to the host (${why})`);
     return true;
+  }
+
+  // src/cheats/bridge.js
+  var STATE_EVERY_MS = 1e3;
+  var STATE_BUSY_MS = 250;
+  var RESULT_EVERY_MS = 500;
+  var SEND_EVERY_MS = 250;
+  var RESULT_WAIT_MS = 12e4;
+  var SAFE = /^[\w.-]+$/;
+  function createBridge() {
+    return {
+      ready: false,
+      round: 0,
+      frozen: false,
+      power: false,
+      horde: false,
+      weapons: [],
+      perks: [],
+      powerups: [],
+      seq: 0,
+      outbox: [],
+      // [seq, command text] not sent yet
+      sent: /* @__PURE__ */ new Map(),
+      // seq -> { action, target, arg, until } waiting for a result
+      lastSeq: 0,
+      // latest seq sent
+      scriptSeq: 0,
+      // latest seq the script has taken (cheats_state seq=)
+      scriptLists: 0,
+      // the lists counter the script published last
+      listsLoaded: 0,
+      // the lists counter the lists were last asked for
+      weaponChunks: null,
+      lastStateAt: -Infinity,
+      lastResultAt: -Infinity,
+      lastSendAt: -Infinity,
+      onResult: null
+    };
+  }
+  function parseDvarPrint(line) {
+    const match = String(line).match(/^"(cheats_\w+)" is: "(.*?)\^7"/);
+    return match ? { name: match[1], value: match[2] } : null;
+  }
+  function parseState(value) {
+    const raw = Object.fromEntries(
+      String(value).split(" ").filter((pair) => pair.includes("=")).map((pair) => pair.split("="))
+    );
+    const n = (key) => Number(raw[key]) || 0;
+    return { ready: raw.ready === "1", seq: n("seq"), round: n("round"), frozen: raw.frozen === "1", power: raw.power === "1", horde: raw.horde === "1", lists: n("lists") };
+  }
+  function cheatCommand(seq, action, target2, arg) {
+    const parts2 = [seq, action, target2, arg].filter((part) => part != null && part !== "").map(String);
+    for (const part of parts2) if (!SAFE.test(part)) throw new Error(`unsafe cheat argument: ${part}`);
+    return `set cheats_cmd "${parts2.join(" ")}"`;
+  }
+  function sendCheat(session, action, target2, arg) {
+    const cheats = session.cheats;
+    cheats.seq += 1;
+    cheats.outbox.push([cheats.seq, cheatCommand(cheats.seq, action, target2, arg)]);
+    cheats.sent.set(cheats.seq, { action, target: target2, arg, until: Infinity });
+  }
+  function ask(session, name) {
+    if (!session.fun.queue.includes(name)) session.fun.queue.push(name);
+  }
+  function cheatsTick(session, now, playing) {
+    const cheats = session.cheats;
+    if (!cheats?.ok || !playing) return;
+    const busy = cheats.outbox.length > 0 || cheats.scriptSeq < cheats.lastSeq;
+    if (now - cheats.lastStateAt >= (busy ? STATE_BUSY_MS : STATE_EVERY_MS)) {
+      cheats.lastStateAt = now;
+      ask(session, "cheats_state");
+    }
+    if (cheats.scriptLists > cheats.listsLoaded) {
+      cheats.listsLoaded = cheats.scriptLists;
+      for (const name of ["cheats_weapons_count", "cheats_perks", "cheats_powerups"]) ask(session, name);
+    }
+    if (cheats.outbox.length && cheats.scriptSeq >= cheats.lastSeq && now - cheats.lastSendAt >= SEND_EVERY_MS) {
+      cheats.lastSendAt = now;
+      const [seq, text] = cheats.outbox.shift();
+      session.fun.queue.push(text);
+      cheats.lastSeq = seq;
+      const sent = cheats.sent.get(seq);
+      if (sent) sent.until = now + RESULT_WAIT_MS;
+    }
+    for (const [seq, sent] of cheats.sent) if (now > sent.until) cheats.sent.delete(seq);
+    const waiting = [...cheats.sent.keys()].some((seq) => seq <= cheats.lastSeq);
+    if (waiting && now - cheats.lastResultAt >= RESULT_EVERY_MS) {
+      cheats.lastResultAt = now;
+      ask(session, "cheats_results");
+    }
+  }
+  function onCheatsLine(session, line) {
+    const print = parseDvarPrint(line);
+    const cheats = session.cheats;
+    if (!print || !cheats) return;
+    const { name, value } = print;
+    const list = () => value.split(",").filter(Boolean);
+    if (name === "cheats_state") {
+      const state = parseState(value);
+      Object.assign(cheats, { ready: state.ready, round: state.round, frozen: state.frozen, power: state.power, horde: state.horde, scriptLists: state.lists });
+      if (state.seq < cheats.scriptSeq) cheats.lastSeq = state.seq;
+      cheats.scriptSeq = state.seq;
+    } else if (name === "cheats_weapons_count") {
+      const count = Number(value) || 0;
+      cheats.weaponChunks = new Array(count).fill(null);
+      for (let i = 0; i < count; i += 1) ask(session, `cheats_weapons_${i}`);
+    } else if (name.startsWith("cheats_weapons_")) {
+      const i = Number(name.slice("cheats_weapons_".length));
+      if (!cheats.weaponChunks || !(i >= 0 && i < cheats.weaponChunks.length)) return;
+      cheats.weaponChunks[i] = list();
+      if (cheats.weaponChunks.every(Boolean)) cheats.weapons = cheats.weaponChunks.flat();
+    } else if (name === "cheats_perks") {
+      cheats.perks = list();
+    } else if (name === "cheats_powerups") {
+      cheats.powerups = list();
+    } else if (name === "cheats_results") {
+      for (const entry of value.split(";").filter(Boolean)) {
+        const [seqText, status, code = "", ...rest] = entry.split(" ");
+        const seq = Number(seqText);
+        const sent = cheats.sent.get(seq);
+        if (!sent) continue;
+        cheats.sent.delete(seq);
+        cheats.onResult?.({ seq, ok: status === "ok", code, detail: rest.join(" ") }, { action: sent.action, target: sent.target, arg: sent.arg });
+      }
+    }
+  }
+
+  // src/cheats/gsc/_hooks.gsc
+  var hooks_default = `// CHEAT MENU - part of the BO1 Zombies Co-op extension's fork, not of the game. Loaded through +set fs_mods "... cheats"
+// (mods/_stack/maps/_modstack.gsc runs each stacked mod's register()).
+
+register()
+{
+	maps\\_modstack::add( "_zombiemode_ffotd::main_end", maps\\cheats\\_cheats::main_end );
+}
+`;
+
+  // src/cheats/gsc/_cheats.gsc
+  var cheats_default = `#include maps\\_utility;
+#include common_scripts\\utility;
+#include maps\\_zombiemode_utility;
+
+// CHEAT MENU - the game side of Fun mode's weapons, perks, power-ups and rounds. The card sends commands in the dvar
+// cheats_cmd ("<seq> <action> <target> [arg]", target a client number or "all") and reads what this script publishes:
+//   cheats_state           ready=1 seq= round= frozen= power= horde= lists=
+//   cheats_weapons_count   number of cheats_weapons_<i> chunks (comma-separated weapon names)
+//   cheats_perks           perk machines on this map (their perk names)
+//   cheats_powerups        power-ups this map includes
+//   cheats_results         the latest results, newest first, ";"-separated: "<seq> ok" or "<seq> err <code> [detail]"
+//                          (commands run in threads of their own, so a slow perk can answer after a later command)
+// Every effect calls the retail scripts' own functions, as the decompiled repo's mods/sandbox does.
+
+main_end()
+{
+	level.cheats_seq = 0;
+	level.cheats_lists = 0;
+	level.cheats_frozen = false;
+	level.cheats_hold = false;
+	level.cheats_round_active = false;
+	level.cheats_results = [];
+	SetDvar( "cheats_cmd", "" );
+	SetDvar( "cheats_results", "" );
+	level thread cheats_round_tracker();
+	level thread cheats_main();
+}
+
+cheats_main()
+{
+	flag_wait( "all_players_connected" );
+	level thread cheats_state_loop();
+	level thread cheats_freeze_loop();
+	level thread cheats_publish_lists_later();
+	for ( ;; )
+	{
+		cmd = GetDvar( #"cheats_cmd" );
+		if ( cmd != "" )
+		{
+			SetDvar( "cheats_cmd", "" );
+			level thread cheats_handle( cmd );
+		}
+		wait( .05 );
+	}
+}
+
+//-------------------------------------------------------------------------------
+// published state
+//-------------------------------------------------------------------------------
+
+cheats_bit( value )
+{
+	if ( is_true( value ) )
+	{
+		return "1";
+	}
+	return "0";
+}
+
+// flag() on a flag this map never made is not safe; these are made by some maps only
+cheats_flag( name )
+{
+	return IsDefined( level.flag ) && IsDefined( level.flag[name] ) && level.flag[name];
+}
+
+cheats_horde()
+{
+	return GetDvarInt( #"cheats_horde" ) == 1;
+}
+
+cheats_state_loop()
+{
+	for ( ;; )
+	{
+		SetDvar( "cheats_state", "ready=1 seq=" + level.cheats_seq + " round=" + level.round_number + " frozen=" + cheats_bit( level.cheats_frozen ) + " power=" + cheats_bit( cheats_flag( "power_on" ) ) + " horde=" + cheats_bit( cheats_horde() ) + " lists=" + level.cheats_lists + " zombies=" + get_enemy_count() + " left=" + level.zombie_total + " active=" + cheats_bit( level.cheats_round_active ) + " intermission=" + cheats_bit( level.intermission ) + " spawn=" + cheats_bit( cheats_flag( "spawn_zombies" ) ) );
+		wait( .5 );
+	}
+}
+
+// the Mule Kick machine and some maps' extras are placed after main_end: publish once everyone is in
+cheats_publish_lists_later()
+{
+	flag_wait( "all_players_spawned" );
+	wait( 2 );
+	cheats_publish_lists();
+}
+
+cheats_publish_lists()
+{
+	level.cheats_upgrades = [];
+	keys = GetArrayKeys( level.zombie_weapons );
+	chunk = "";
+	count = 0;
+	n = 0;
+	for ( i = 0; i < keys.size; i++ )
+	{
+		if ( IsDefined( level.zombie_weapons[keys[i]].upgrade_name ) )
+		{
+			level.cheats_upgrades[level.zombie_weapons[keys[i]].upgrade_name] = keys[i];
+		}
+		if ( n > 0 )
+		{
+			chunk = chunk + ",";
+		}
+		chunk = chunk + keys[i];
+		n++;
+		if ( n == 8 || i == keys.size - 1 )
+		{
+			SetDvar( "cheats_weapons_" + count, chunk );
+			count++;
+			chunk = "";
+			n = 0;
+		}
+	}
+	SetDvar( "cheats_weapons_count", count );
+
+	perks = "";
+	vending = GetEntArray( "zombie_vending", "targetname" );
+	for ( i = 0; i < vending.size; i++ )
+	{
+		perk = vending[i].script_noteworthy;
+		if ( !IsDefined( perk ) || IsSubStr( perks, perk ) )
+		{
+			continue;
+		}
+		if ( perks != "" )
+		{
+			perks = perks + ",";
+		}
+		perks = perks + perk;
+	}
+	SetDvar( "cheats_perks", perks );
+
+	powerups = "";
+	if ( IsDefined( level.zombie_include_powerups ) )
+	{
+		keys = GetArrayKeys( level.zombie_include_powerups );
+		for ( i = 0; i < keys.size; i++ )
+		{
+			if ( powerups != "" )
+			{
+				powerups = powerups + ",";
+			}
+			powerups = powerups + keys[i];
+		}
+	}
+	SetDvar( "cheats_powerups", powerups );
+	level.cheats_lists++;
+}
+
+//-------------------------------------------------------------------------------
+// commands
+//-------------------------------------------------------------------------------
+
+cheats_handle( cmd )
+{
+	tokens = StrTok( cmd, " " );
+	if ( tokens.size < 2 )
+	{
+		return;
+	}
+	seq = int( tokens[0] );
+	if ( seq <= level.cheats_seq )
+	{
+		return;	// already handled (the card resends nothing, but a stale value must not run twice)
+	}
+	level.cheats_seq = seq;
+	action = tokens[1];
+	target = "";
+	arg = "";
+	if ( tokens.size > 2 )
+	{
+		target = tokens[2];
+	}
+	if ( tokens.size > 3 )
+	{
+		arg = tokens[3];
+	}
+
+	result = "";
+	switch ( action )
+	{
+	case "round":
+		result = cheats_round( int( target ) );
+		break;
+	case "next":
+		result = cheats_round( level.round_number + 1 );
+		break;
+	case "freeze":
+		result = cheats_freeze( target == "1" );
+		break;
+	case "clear":
+		result = cheats_clear();
+		break;
+	default:
+		result = cheats_for_players( action, target, arg );
+		break;
+	}
+	if ( result == "" )
+	{
+		cheats_publish_result( seq + " ok" );
+	}
+	else
+	{
+		cheats_publish_result( seq + " err " + result );
+	}
+}
+
+cheats_publish_result( entry )
+{
+	results = [];
+	results[0] = entry;
+	for ( i = 0; i < level.cheats_results.size && results.size < 8; i++ )
+	{
+		results[results.size] = level.cheats_results[i];
+	}
+	level.cheats_results = results;
+	text = "";
+	for ( i = 0; i < results.size; i++ )
+	{
+		if ( i > 0 )
+		{
+			text = text + ";";
+		}
+		text = text + results[i];
+	}
+	SetDvar( "cheats_results", text );
+}
+
+// runs a player action for one player or everyone: ok when it worked for anyone, else the first error
+cheats_for_players( action, target, arg )
+{
+	players = get_players();
+	chosen = [];
+	waiting = false;
+	for ( i = 0; i < players.size; i++ )
+	{
+		if ( target == "all" || players[i] GetEntityNumber() == int( target ) )
+		{
+			// a player who joined mid-round spectates until the next one: what they got now would be lost
+			if ( !IsDefined( players[i].sessionstate ) || players[i].sessionstate != "playing" )
+			{
+				waiting = true;
+				continue;
+			}
+			chosen[chosen.size] = players[i];
+		}
+	}
+	if ( chosen.size == 0 && waiting )
+	{
+		return "not_spawned";
+	}
+	if ( chosen.size == 0 || target == "" )
+	{
+		return "no_player";
+	}
+	first_error = "";
+	any_ok = false;
+	for ( i = 0; i < chosen.size; i++ )
+	{
+		result = chosen[i] cheats_player_action( action, arg );
+		if ( result == "" )
+		{
+			any_ok = true;
+		}
+		else if ( first_error == "" )
+		{
+			first_error = result;
+		}
+	}
+	if ( any_ok )
+	{
+		return "";
+	}
+	return first_error;
+}
+
+cheats_player_action( action, arg )
+{
+	switch ( action )
+	{
+	case "give":
+		return self cheats_give( arg );
+	case "pap":
+		return self cheats_pap();
+	case "perk":
+		return self cheats_perk( arg );
+	case "powerup":
+		return self cheats_powerup( arg );
+	}
+	return "bad_action " + action;
+}
+
+// the Mystery Box's own give function (weapon_give), as sandbox pad_weapon()
+cheats_give( weapon )
+{
+	if ( !IsDefined( level.zombie_weapons[weapon] ) )
+	{
+		return "no_weapon " + weapon;
+	}
+	if ( self HasWeapon( weapon ) )
+	{
+		self SwitchToWeapon( weapon );
+		return "";
+	}
+	self maps\\_zombiemode_weapons::weapon_give( weapon );
+	return "";
+}
+
+// follows zombie_devgui_pack_current_weapon(), as sandbox pad_pack_current_weapon()
+cheats_pap()
+{
+	weapon = self GetCurrentWeapon();
+	if ( IsDefined( level.cheats_upgrades ) && IsDefined( level.cheats_upgrades[weapon] ) )
+	{
+		return "has_upgrade " + weapon;
+	}
+	if ( self maps\\_zombiemode_weapons::has_upgrade( weapon ) )
+	{
+		return "has_upgrade " + weapon;
+	}
+	if ( !IsDefined( level.zombie_weapons[weapon] ) || !IsDefined( level.zombie_weapons[weapon].upgrade_name ) )
+	{
+		return "no_upgrade " + weapon;
+	}
+	upgrade = level.zombie_weapons[weapon].upgrade_name;
+	self TakeWeapon( weapon );
+	self GiveWeapon( upgrade, 0, self maps\\_zombiemode_weapons::get_pack_a_punch_weapon_options( upgrade ) );
+	self GiveStartAmmo( upgrade );
+	self SwitchToWeapon( upgrade );
+	return "";
+}
+
+cheats_power_event( perk )
+{
+	switch ( perk )
+	{
+	case "specialty_armorvest":
+		return "juggernog_on";
+	case "specialty_quickrevive":
+		return "revive_on";
+	case "specialty_fastreload":
+		return "sleight_on";
+	case "specialty_rof":
+		return "doubletap_on";
+	case "specialty_longersprint":
+		return "marathon_on";
+	case "specialty_flakjacket":
+		return "divetonuke_on";
+	case "specialty_deadshot":
+		return "deadshot_on";
+	case "specialty_additionalprimaryweapon":
+		return "additionalprimaryweapon_on";
+	}
+	return perk + "_on";
+}
+
+// the retail map power switch, as sandbox_power_on(); waits up to 10 s for the power to come on
+cheats_power_on( player )
+{
+	if ( cheats_flag( "power_on" ) )
+	{
+		return;
+	}
+	trig = GetEnt( "use_elec_switch", "targetname" );
+	if ( IsDefined( trig ) )
+	{
+		trig notify( "trigger", player );
+	}
+	for ( i = 0; i < 100 && !cheats_flag( "power_on" ); i++ )
+	{
+		wait( .1 );
+	}
+}
+
+// One perk at a time per player: the free-points and perk-count bookkeeping below must not interleave (two quick
+// clicks ran in two threads and left the player 20000 points).
+cheats_perk( perk )
+{
+	while ( is_true( self.cheats_perk_busy ) )
+	{
+		wait( .1 );
+	}
+	self.cheats_perk_busy = true;
+	result = self cheats_perk_now( perk );
+	self.cheats_perk_busy = false;
+	return result;
+}
+
+// uses the perk's own machine for the player (the retail bottle, HUD and effect), as sandbox pad_perk(); free: the
+// points it costs are given first and the score is set back afterwards. The machine refuses a fifth perk (BO1's limit
+// of 4, counted in num_perks; seen in game on Shangri-La and Moon): the count is lowered while the machine is used and
+// set to the real number afterwards.
+cheats_perk_now( perk )
+{
+	machine = undefined;
+	vending = GetEntArray( "zombie_vending", "targetname" );
+	for ( i = 0; i < vending.size; i++ )
+	{
+		if ( IsDefined( vending[i].script_noteworthy ) && vending[i].script_noteworthy == perk )
+		{
+			machine = vending[i];
+		}
+	}
+	if ( !IsDefined( machine ) )
+	{
+		return "no_perk " + perk;
+	}
+	if ( self HasPerk( perk ) )
+	{
+		return "";
+	}
+	cheats_power_on( self );
+	if ( !cheats_flag( "power_on" ) )
+	{
+		level notify( cheats_power_event( perk ) );
+		wait( 1 );
+	}
+	score = self.score;
+	self.score = score + 20000;
+	perks = self.num_perks;
+	if ( IsDefined( perks ) && perks >= 4 )
+	{
+		self.num_perks = 3;
+	}
+	for ( attempt = 0; attempt < 5 && !self HasPerk( perk ); attempt++ )
+	{
+		// The World at War maps power their own machines without the "power_on" flag, and vel.gg's added Mule Kick
+		// waits for that flag (seen on Verruckt: switch used, other perks given, power_on never set, Mule Kick
+		// untouched). After a failed try, with the switch already used: set it and send the machine's own event.
+		if ( attempt == 1 )
+		{
+			if ( !cheats_flag( "power_on" ) )
+			{
+				flag_set( "power_on" );
+			}
+			level notify( cheats_power_event( perk ) );
+			wait( 1 );
+		}
+		machine notify( "trigger", self );
+		for ( i = 0; i < 30 && !self HasPerk( perk ); i++ )
+		{
+			wait( .1 );
+		}
+	}
+	// the bottle animation ends before the perk is set; give it time, then put the points back
+	for ( i = 0; i < 60 && !self HasPerk( perk ); i++ )
+	{
+		wait( .1 );
+	}
+	self.score = score;
+	if ( !self HasPerk( perk ) )
+	{
+		self.num_perks = perks;
+		return "perk_failed " + perk;
+	}
+	if ( IsDefined( perks ) )
+	{
+		self.num_perks = perks + 1;
+	}
+	return "";
+}
+
+// retail specific_powerup_drop() 80 units in front of the player, on the floor, as sandbox pad_powerup()
+cheats_powerup( name )
+{
+	if ( !IsDefined( level.zombie_include_powerups ) || !IsDefined( level.zombie_include_powerups[name] ) )
+	{
+		return "no_powerup " + name;
+	}
+	angles = self GetPlayerAngles();
+	forward = AnglesToForward( ( 0, angles[1], 0 ) );
+	spot = self.origin + ( forward[0] * 80, forward[1] * 80, 0 );
+	trace = BulletTrace( spot + ( 0, 0, 40 ), spot - ( 0, 0, 80 ), false, undefined );
+	if ( trace["fraction"] < 1 )
+	{
+		spot = trace["position"];
+	}
+	level thread maps\\_zombiemode_powerups::specific_powerup_drop( name, spot );
+	return "";
+}
+
+//-------------------------------------------------------------------------------
+// rounds
+//-------------------------------------------------------------------------------
+
+// round_think() notifies "start_of_round" right after it starts spawning and "end_of_round" when the round is over
+cheats_round_tracker()
+{
+	for ( ;; )
+	{
+		level waittill( "start_of_round" );
+		level.cheats_round_active = true;
+		level waittill( "end_of_round" );
+		level.cheats_round_active = false;
+	}
+}
+
+cheats_round( target )
+{
+	if ( cheats_horde() )
+	{
+		return "horde";
+	}
+	if ( target < 1 || target > 255 )
+	{
+		return "bad_round " + target;
+	}
+	level thread cheats_goto_round( target );
+	return "";
+}
+
+cheats_kill_zombies()
+{
+	zombies = GetAiSpeciesArray( "axis", "all" );
+	if ( !IsDefined( zombies ) )
+	{
+		return;
+	}
+	for ( i = 0; i < zombies.size; i++ )
+	{
+		if ( is_true( zombies[i].ignore_devgui_death ) )
+		{
+			continue;
+		}
+		zombies[i] DoDamage( zombies[i].health + 666, zombies[i].origin );
+	}
+}
+
+// follows zombie_devgui_goto_round(), as sandbox_goto_round(): works forwards and backwards
+cheats_goto_round( target )
+{
+	// between rounds nothing listens for "kill_round" yet: wait for the next round, the latest request wins
+	if ( !level.cheats_round_active )
+	{
+		if ( IsDefined( level.cheats_goto_pending ) )
+		{
+			level.cheats_goto_pending = target;
+			return;
+		}
+		level.cheats_goto_pending = target;
+		level waittill( "start_of_round" );
+		wait( .05 );
+		target = level.cheats_goto_pending;
+		level.cheats_goto_pending = undefined;
+	}
+	cheats_release_hold();
+	level.zombie_total = 0;
+	maps\\_zombiemode::ai_calculate_health( target );
+	level.round_number = target - 1;
+	level notify( "kill_round" );
+	wait( 1 );
+	cheats_kill_zombies();
+}
+
+cheats_clear()
+{
+	if ( cheats_horde() )
+	{
+		return "horde";
+	}
+	level.zombie_total = 0;
+	cheats_kill_zombies();
+	return "";
+}
+
+// Freeze round: once the round has spawned all its zombies, one more is kept "to come" and spawning is paused, so the
+// round cannot end (round_wait() waits for no zombies alive and none to come). Unfreezing lets it end as normal.
+cheats_freeze( on )
+{
+	if ( cheats_horde() )
+	{
+		return "horde";
+	}
+	level.cheats_frozen = on;
+	if ( !on )
+	{
+		cheats_release_hold();
+	}
+	return "";
+}
+
+// Spawning stays paused until the round is over: round_spawning() may already have taken the kept zombie and be
+// waiting on the flag, and would spawn it the moment the flag came back (seen in game: one extra zombie, total -1).
+cheats_release_hold()
+{
+	if ( level.cheats_hold )
+	{
+		level.cheats_hold = false;
+		level.zombie_total = 0;
+		level thread cheats_resume_spawning();
+	}
+}
+
+cheats_resume_spawning()
+{
+	level notify( "cheats_resume_spawning" );
+	level endon( "cheats_resume_spawning" );
+	level waittill( "end_of_round" );
+	flag_set( "spawn_zombies" );
+}
+
+cheats_freeze_loop()
+{
+	for ( ;; )
+	{
+		if ( level.cheats_frozen && !level.cheats_hold && level.cheats_round_active && level.zombie_total <= 0 )
+		{
+			level.cheats_hold = true;
+			flag_clear( "spawn_zombies" );
+			level.zombie_total = 1;
+		}
+		wait( .05 );
+	}
+}
+`;
+
+  // src/cheats/gsc/_stack/_modstack.gsc
+  var modstack_default = `// bo1-coop-cheats: copied from github.com/MisaDev4/bo1-zombies-decompiled mods/_stack/maps/_modstack.gsc; written only where vel.gg ships none.
+// FS_MODS BASE - not part of the original game. mods/_stack goes on top of the search path only with +set fs_mods
+// (src/universal/com_files.cpp FS_Startup); without fs_mods nothing here is read and the game is retail.
+//
+// Several mods at once: +set fs_mods "mapkit horde zinfo" puts mods/mapkit, mods/horde, mods/zinfo on the search path in
+// that order (a later mod's plain file wins over an earlier one's). The retail "fix for the day" hooks that every mod
+// wants to ship (maps\\zombie_pentagon_ffotd.gsc, maps\\_zombiemode_ffotd.gsc) would shadow each other, so mods/_stack ships
+// them (retail body + one run() line) and each mod registers what it wants run there instead, in its own file:
+//
+//   mods/<name>/maps/<name>/_hooks.gsc
+//   register()
+//   {
+//       maps\\_modstack::add( "zombie_pentagon_ffotd::main_start", maps\\<name>\\_<name>::main_start );
+//   }
+//
+// Hook names: "<ffotd file>::main_start" / "::main_end" of zombie_pentagon_ffotd and _zombiemode_ffotd. run() starts every
+// registered function as a level thread, in fs_mods order: it runs at once up to its first wait (same frame, same order as a
+// direct call), and a hook that waits does not hold back the next mod's. A mod without _hooks.gsc only adds files.
+// maps\\_modstack_list.gsc is not a file: the engine writes it from fs_mods (Scr_ReadFile, src/clientscript/cscr_parser.cpp).
+
+add( hook, func )
+{
+	if ( !IsDefined( level._modstack_hooks[hook] ) )
+	{
+		level._modstack_hooks[hook] = [];
+	}
+	level._modstack_hooks[hook][level._modstack_hooks[hook].size] = func;
+}
+
+run( hook )
+{
+	if ( !IsDefined( level._modstack_hooks ) )
+	{
+		level._modstack_hooks = [];
+		maps\\_modstack_list::register_all();
+	}
+	funcs = level._modstack_hooks[hook];
+	if ( !IsDefined( funcs ) )
+	{
+		return;
+	}
+	for ( i = 0; i < funcs.size; i++ )
+	{
+		level thread [[ funcs[i] ]]();
+	}
+}
+`;
+
+  // src/cheats/gsc/_stack/_zombiemode_ffotd.gsc
+  var zombiemode_ffotd_default = `// bo1-coop-cheats: copied from github.com/MisaDev4/bo1-zombies-decompiled mods/_stack/maps/_zombiemode_ffotd.gsc; written only where vel.gg ships none.
+#include maps\\_utility;\r
+#include common_scripts\\utility;\r
+#include maps\\_zombiemode_utility;\r
+#include animscripts\\zombie_Utility;\r
+\r
+\r
+main_start()\r
+{\r
+	//This will turn off the new path method if added\r
+	//level.calc_closest_player_using_paths = false;\r
+	\r
+	\r
+	//Disable friends list and dev list from spaceman name if we want\r
+	//setsaveddvar( "r_zombieNameAllowFriendsList", "1" );\r
+	//setsaveddvar( "r_zombieNameAllowDevList", "1" );\r
+	\r
+	//We can disable additional primary machines here on a per map basis\r
+	//just set level.zombie_additionalprimaryweapon_machine_origin to undefined and it will ignore it\r
+	\r
+	//Turn off 3 weapon perk machines for other maps based on dvars\r
+	disable_additionalprimaryweapon_machine_locations();\r
+	maps\\_modstack::run( "_zombiemode_ffotd::main_start" ); // mod: fs_mods - each stacked mod's hook (maps\\_modstack.gsc)\r
+}\r
+\r
+\r
+main_end()\r
+{\r
+	level thread onPlayerConnect();\r
+	maps\\_modstack::run( "_zombiemode_ffotd::main_end" ); // mod: fs_mods\r
+}\r
+\r
+\r
+// FS_MODS BASE - not part of the original game. mods/_stack goes on top of the search path only with +set fs_mods\r
+// (src/universal/com_files.cpp FS_Startup). Retail maps\\_zombiemode_ffotd.gsc (common_zombie_patch), the shared "fix for\r
+// the day" hook every zombie map's maps\\_zombiemode::main() runs, is this file without the two maps\\_modstack::run lines.\r
+\r
+disable_additionalprimaryweapon_machine_locations()\r
+{\r
+	enabled = 0;\r
+\r
+	switch ( Tolower( GetDvar( #"mapname" ) ) )\r
+	{\r
+	case "zombie_theater":\r
+		enabled = GetDvarInt( #"scr_zm_extra_perk_theater" );\r
+		break;\r
+	case "zombie_pentagon":\r
+		enabled = GetDvarInt( #"scr_zm_extra_perk_pentagon" );\r
+		break;\r
+	case "zombie_cosmodrome":\r
+		enabled = GetDvarInt( #"scr_zm_extra_perk_cosmodrome" );\r
+		break;\r
+	case "zombie_coast":\r
+		enabled = GetDvarInt( #"scr_zm_extra_perk_coast" );\r
+		break;\r
+	case "zombie_temple":\r
+		enabled = GetDvarInt( #"scr_zm_extra_perk_temple" );\r
+		break;\r
+	case "zombie_moon":\r
+		enabled = 1;\r
+		break;\r
+	case "zombie_cod5_prototype":\r
+		enabled = GetDvarInt( #"scr_zm_extra_perk_cod5_prototype" );\r
+		break;\r
+	case "zombie_cod5_asylum":\r
+		enabled = GetDvarInt( #"scr_zm_extra_perk_cod5_asylum" );\r
+		break;\r
+	case "zombie_cod5_sumpf":\r
+		enabled = GetDvarInt( #"scr_zm_extra_perk_cod5_sumpf" );\r
+		break;\r
+	case "zombie_cod5_factory":\r
+		enabled = GetDvarInt( #"scr_zm_extra_perk_cod5_factory" );\r
+		break;\r
+	}\r
+\r
+	if ( GetDvarInt( #"scr_zm_extra_perk_all" ) )\r
+	{\r
+		enabled = 1;\r
+	}\r
+\r
+	if ( !enabled )\r
+	{\r
+		level.zombie_additionalprimaryweapon_machine_origin = undefined;\r
+	}\r
+}\r
+\r
+\r
+onPlayerConnect()\r
+{\r
+	for ( ;; )\r
+	{\r
+		level waittill( "connecting", player );\r
+\r
+		player thread claymore_to_notsolid();\r
+	}\r
+}\r
+\r
+\r
+claymore_to_notsolid()\r
+{\r
+	self endon( "disconnect" );\r
+\r
+	for ( ;; )\r
+	{\r
+		self waittill( "grenade_fire", claymore, weapname );\r
+		if ( weapname == "claymore_zm" || weapname == "spikemore_zm" )\r
+		{\r
+			claymore NotSolid();\r
+		}\r
+	}\r
+}\r
+\r
+\r
+//Cheaters logic added here because its a small file (for any ffotd updates)\r
+//TODO: Next game move to its own file\r
+nazizombies_checking_for_cheats()\r
+{\r
+//WIP - PETER\r
+// 	players = get_players();		\r
+// 	for( i = 0; i < players.size; i++ )\r
+// 	{\r
+// 		total_kills = players[i].stats["kills"];\r
+// 		total_points = players[i].stats["score"];\r
+// 		total_rounds = (level.round_number - 1); // rounds survived\r
+// 		total_downs = players[i].stats["downs"];\r
+// 		total_revives = players[i].stats["revives"];\r
+// 		total_perks = players[i].stats["perks"];\r
+// 		total_headshots = players[i].stats["headshots"];\r
+// 		total_zombie_gibs = players[i].stats["zombie_gibs"];\r
+// 	}\r
+\r
+\r
+	return false;  // no cheater found\r
+}\r
+\0`;
+
+  // src/cheats/files.js
+  var MOD_FILES = [
+    { path: "mods/cheats/maps/cheats/_hooks.gsc", text: hooks_default },
+    { path: "mods/cheats/maps/cheats/_cheats.gsc", text: cheats_default },
+    { path: "mods/_stack/maps/_modstack.gsc", text: modstack_default },
+    { path: "mods/_stack/maps/_zombiemode_ffotd.gsc", text: zombiemode_ffotd_default }
+  ];
+
+  // src/cheats/mod.js
+  var MOD_NAME = "cheats";
+  function modBase(args) {
+    const i = args.findIndex((arg, at) => arg === "fs_b" && args[at - 1] === "+set");
+    const value = i < 0 ? "" : args[i + 1] ?? "";
+    return value.startsWith("/opfs/") ? value.slice("/opfs/".length) : null;
+  }
+  function addCheatsMod(args, { horde }) {
+    const i = args.findIndex((arg, at) => arg === "fs_mods" && args[at - 1] === "+set");
+    if (i < 0) {
+      insertBeforeDevmap(args, ["+set", "fs_mods", MOD_NAME]);
+    } else {
+      const names = args[i + 1].split(/[\s,;]+/).filter(Boolean);
+      if (!names.includes(MOD_NAME)) args[i + 1] = [...names, MOD_NAME].join(" ");
+    }
+    if (horde && !args.includes("cheats_horde")) insertBeforeDevmap(args, ["+set", "cheats_horde", "1"]);
+  }
+
+  // src/cheats/opfs.js
+  var MARKER = "// bo1-coop-cheats";
+  async function dir(root, parts2) {
+    let d = root;
+    for (const part of parts2) d = await d.getDirectoryHandle(part, { create: true });
+    return d;
+  }
+  async function existingText(folder, name) {
+    try {
+      return await (await (await folder.getFileHandle(name)).getFile()).text();
+    } catch {
+      return null;
+    }
+  }
+  async function writeModFiles(base, files) {
+    try {
+      const root = await navigator.storage.getDirectory();
+      for (const { path, text } of files) {
+        const parts2 = `${base}/${path}`.split("/").filter(Boolean);
+        const name = parts2.pop();
+        const folder = await dir(root, parts2);
+        if (path.startsWith("mods/_stack/")) {
+          const old = await existingText(folder, name);
+          if (old != null && !old.startsWith(MARKER)) continue;
+        }
+        const writable = await (await folder.getFileHandle(name, { create: true })).createWritable();
+        await writable.write(text);
+        await writable.close();
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // src/cheats/strings.js
+  var C = {
+    setting: "Cheat menu",
+    on: "On",
+    off: "Off",
+    turnOn: "Turn on",
+    turnOff: "Turn off",
+    reload: "Reload the page to apply.",
+    note: "Weapons, perks, power-ups and rounds in Fun mode. Only the host needs it. In a game, press M to open it without pausing; click the game to go back.",
+    keyTip: "Tip: press M in game to open this card without pausing; click the game to go back.",
+    failed: "The cheat menu could not load in this game, so Fun mode works as before. Reload the page to try again.",
+    everyone: "Everyone",
+    player: "that player",
+    giveTo: "Give to",
+    weapons: "Weapons on this map",
+    pap: "Pack-a-Punch the weapon in hand",
+    perks: "Perks (free)",
+    noPerks: "This map has no perk machines.",
+    powerNote: "Giving a perk turns the power on.",
+    powerups: "Power-ups",
+    noPowerups: "This map has no power-ups.",
+    rounds: "Rounds",
+    roundNow: (n) => `now round ${n}`,
+    roundPlaceholder: "Go to round (1-255)",
+    go: "Go",
+    nextRound: "Next round",
+    freeze: "Freeze round",
+    giving: (thing, name) => `Giving ${thing} to ${name}…`,
+    packing: (name) => `Pack-a-Punching ${name}'s weapon…`,
+    given: (thing, name) => `${thing} given to ${name}.`,
+    packed: (name) => `Pack-a-Punched for ${name}.`,
+    dropped: (thing, name) => `${thing} dropped in front of ${name}.`,
+    goingTo: (n) => `Going to round ${n}.`,
+    frozenOn: "Round frozen: it will not end until you unfreeze it.",
+    frozenOff: "Round unfrozen.",
+    errNoPlayer: "That player is no longer in the game.",
+    errNotSpawned: "That player is still waiting to spawn (until the next round). Try again then.",
+    errNoWeapon: (w) => `${w} is not on this map.`,
+    errNoUpgrade: (w) => `${w} can't be Pack-a-Punched.`,
+    errHasUpgrade: "That weapon is already Pack-a-Punched.",
+    errNoPerk: (p) => `This map has no ${p} machine.`,
+    errPerkFailed: (p) => `Could not give ${p} on this map right now.`,
+    errNoPowerup: (p) => `${p} is not on this map.`,
+    errBadRound: (max) => `Pick a round from 1 to ${max}.`,
+    errHorde: "Round controls are not available in Hell mode.",
+    errOther: (code) => `That did not work (${code}).`
+  };
+
+  // src/cheats/setup.js
+  var WRITE_TIMEOUT_MS = 5e3;
+  function createCheats() {
+    return {
+      enabled: readSetting("cheats", "1") !== "0",
+      /** true once the mod was handed to the engine, false when it could not be, null before the game starts. */
+      ok: null,
+      ...createBridge()
+    };
+  }
+  var wantsCheats = (session) => session.cheats.enabled && session.mode !== "guest" && session.patched;
+  async function prepareCheats(session, args) {
+    if (!wantsCheats(session)) return;
+    try {
+      const base = modBase(args);
+      const timeout = new Promise((resolve) => setTimeout(() => resolve(false), WRITE_TIMEOUT_MS));
+      const ok = base ? await Promise.race([writeModFiles(base, MOD_FILES), timeout]) : false;
+      if (ok) addCheatsMod(args, { horde: currentHorde() });
+      session.cheats.ok = ok;
+      session.note(`cheat menu: ${ok ? "mod loaded" : "mod not written"}`);
+    } catch (error) {
+      session.cheats.ok = false;
+      session.note(`cheat menu failed: ${error?.stack ?? error}`);
+    }
+  }
+  function cheatsSettingBlocks(session) {
+    const on = session.cheats.enabled;
+    return [
+      { kind: "kv", items: [[C.setting, on ? C.on : C.off]] },
+      { kind: "text", cls: "muted small", text: C.note },
+      { kind: "buttons", buttons: [{ act: "cheatsSetting", label: on ? C.turnOff : C.turnOn, style: "ghost" }] }
+    ];
+  }
+  function cheatsSettingActions(session) {
+    return {
+      cheatsSetting: () => {
+        session.cheats.enabled = !session.cheats.enabled;
+        saveSetting("cheats", session.cheats.enabled ? "1" : "0");
+        session.notice = C.reload;
+      }
+    };
   }
 
   // src/engine/wasm.js
@@ -2094,7 +3185,10 @@
           writable: true,
           value(args) {
             if (!session.mode && session.patched) session.engine = new EngineMemory(Module, session.build);
-            if (!session.mode || !session.patched) return original.call(this, args);
+            if (!session.mode || !session.patched) {
+              if (!wantsCheats(session)) return original.call(this, args);
+              return prepareCheats(session, args).then(() => original.call(this, args));
+            }
             return (async () => {
               try {
                 if (session.mode === "host") prepareHost(session, Module, args);
@@ -2106,6 +3200,7 @@
                 session.note(`setup failed: ${error.stack ?? error}`);
                 session.engine?.useInboundQueue(0);
               }
+              if (session.mode === "host") await prepareCheats(session, args);
               return original.call(this, args);
             })();
           }
@@ -2398,13 +3493,13 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
             const row = el("div", `player ${p.empty ? "empty" : ""} ${p.me ? "me" : ""}`);
             const badge = el("div", "badge", String(p.n));
             badge.style.background = PLAYER_COLORS[p.n - 1];
-            const who = el("div", "who");
+            const who2 = el("div", "who");
             const name = el("div", "name", p.name);
             for (const t of p.tags ?? []) name.append(el("span", `tag ${t.cls}`, t.text));
             const st = el("div", "st");
             if (p.status) st.append(el("span", `dot ${p.tone ?? ""}`), document.createTextNode(p.status));
-            who.append(name, st);
-            row.append(badge, who);
+            who2.append(name, st);
+            row.append(badge, who2);
             if (p.ping != null) {
               const ping = el("div", "ping");
               const bars = el("span", `bars q${p.ping < 80 ? 3 : p.ping < 180 ? 2 : 1}`);
@@ -2520,6 +3615,245 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     }
   };
 
+  // src/cheats/names.js
+  var WEAPONS = {
+    m1911_zm: "M1911",
+    python_zm: "Python",
+    cz75_zm: "CZ75",
+    cz75dw_zm: "CZ75 Dual Wield",
+    ak74u_zm: "AK-74u",
+    mp5k_zm: "MP5K",
+    mp40_zm: "MP40",
+    mpl_zm: "MPL",
+    pm63_zm: "PM63",
+    spectre_zm: "Spectre",
+    ithaca_zm: "Stakeout",
+    spas_zm: "SPAS-12",
+    hs10_zm: "HS10",
+    rottweil72_zm: "Olympia",
+    m14_zm: "M14",
+    m16_zm: "M16",
+    g11_lps_zm: "G11",
+    famas_zm: "FAMAS",
+    aug_acog_zm: "AUG",
+    galil_zm: "Galil",
+    commando_zm: "Commando",
+    fnfal_zm: "FN FAL",
+    dragunov_zm: "Dragunov",
+    l96a1_zm: "L96A1",
+    rpk_zm: "RPK",
+    hk21_zm: "HK21",
+    m72_law_zm: "M72 LAW",
+    china_lake_zm: "China Lake",
+    crossbow_explosive_zm: "Crossbow",
+    knife_ballistic_zm: "Ballistic Knife",
+    knife_ballistic_bowie_zm: "Ballistic Knife (Bowie)",
+    knife_ballistic_sickle_zm: "Ballistic Knife (Sickle)",
+    ray_gun_zm: "Ray Gun",
+    thundergun_zm: "Thundergun",
+    tesla_gun_zm: "Wunderwaffe DG-2",
+    freezegun_zm: "Winter's Howl",
+    sniper_explosive_zm: "Scavenger",
+    humangun_zm: "V-R11",
+    shrink_ray_zm: "31-79 JGb215",
+    microwavegun_zm: "Wave Gun",
+    microwavegundw_zm: "Zap Guns",
+    zombie_cymbal_monkey: "Monkey Bombs",
+    zombie_black_hole_bomb: "Gersh Device",
+    zombie_quantum_bomb: "QED",
+    zombie_nesting_dolls: "Matryoshka Dolls",
+    claymore_zm: "Claymores",
+    spikemore_zm: "Spikemores",
+    frag_grenade_zm: "Frag Grenades",
+    sticky_grenade_zm: "Semtex",
+    stielhandgranate: "Stielhandgranate",
+    bowie_knife_zm: "Bowie Knife",
+    sickle_knife_zm: "Sickle",
+    m2_flamethrower_zm: "M2 Flamethrower",
+    zombie_kar98k: "Kar98k",
+    kar98k_scoped_zombie: "Scoped Kar98k",
+    mine_bouncing_betty: "Bouncing Betties",
+    zombie_type99_rifle: "Arisaka",
+    zombie_gewehr43: "Gewehr 43",
+    zombie_m1carbine: "M1 Carbine",
+    zombie_m1garand: "M1 Garand",
+    zombie_thompson: "Thompson",
+    zombie_type100_smg: "Type 100",
+    zombie_stg44: "STG-44",
+    zombie_shotgun: "Trench Gun",
+    zombie_doublebarrel: "Double-Barreled Shotgun",
+    zombie_doublebarrel_sawed: "Sawed-Off Shotgun",
+    zombie_bar: "BAR",
+    zombie_bar_bipod: "BAR (Bipod)",
+    zombie_fg42: "FG42",
+    zombie_mg42: "MG42",
+    zombie_30cal: "Browning M1919",
+    zombie_ppsh: "PPSh-41",
+    zombie_ptrs41: "PTRS-41",
+    zombie_sw_357: ".357 Magnum"
+  };
+  var PERKS = {
+    specialty_armorvest: "Juggernog",
+    specialty_quickrevive: "Quick Revive",
+    specialty_fastreload: "Speed Cola",
+    specialty_rof: "Double Tap",
+    specialty_longersprint: "Stamin-Up",
+    specialty_flakjacket: "PhD Flopper",
+    specialty_deadshot: "Deadshot Daiquiri",
+    specialty_additionalprimaryweapon: "Mule Kick"
+  };
+  var POWERUPS = {
+    full_ammo: "Max Ammo",
+    insta_kill: "Insta-Kill",
+    double_points: "Double Points",
+    nuke: "Nuke",
+    carpenter: "Carpenter",
+    fire_sale: "Fire Sale",
+    minigun: "Death Machine",
+    bonfire_sale: "Bonfire Sale",
+    tesla: "Wunderwaffe",
+    random_weapon: "Random Weapon",
+    bonus_points_player: "Bonus Points",
+    bonus_points_team: "Bonus Points (Team)",
+    lose_points_team: "Lose Points",
+    lose_perk: "Lose Perk",
+    empty_clip: "Empty Clip",
+    free_perk: "Free Perk"
+  };
+  function readable(id) {
+    const words = String(id).replace(/_zm$/, "").replace(/^(zombie|specialty)_/, "").split("_").filter(Boolean);
+    return words.map((w) => w[0].toUpperCase() + w.slice(1)).join(" ") || String(id);
+  }
+  var weaponName = (id) => WEAPONS[id] ?? readable(id);
+  var perkName = (id) => PERKS[id] ?? readable(id);
+  var powerupName = (id) => POWERUPS[id] ?? readable(id);
+
+  // src/cheats/section.js
+  var MAX_ROUND = 255;
+  var byName = (name) => (a, b) => name(a).localeCompare(name(b));
+  var AREA = { give: "weapons", pap: "weapons", perk: "perks", powerup: "powerups", round: "rounds", next: "rounds", freeze: "rounds" };
+  function say(session, text, action) {
+    session.fun.notice = text;
+    session.fun.noticeAt = Date.now();
+    session.cheats.noticeArea = AREA[action] ?? "rounds";
+  }
+  function noticeAfter(session, area, blocks) {
+    if (session.fun.notice && session.cheats.noticeArea === area) blocks.push({ kind: "callout", tone: "info", text: session.fun.notice });
+  }
+  function target(session, players) {
+    const chosen = session.cheats.target ?? 0;
+    return chosen === "all" || players.some((p) => p.slot === chosen) ? chosen : 0;
+  }
+  function who(session, players, slot) {
+    if (slot === "all") return C.everyone;
+    return players.find((p) => p.slot === slot)?.name ?? C.player;
+  }
+  var ERRORS = {
+    no_player: () => C.errNoPlayer,
+    not_spawned: () => C.errNotSpawned,
+    no_weapon: (d) => C.errNoWeapon(weaponName(d)),
+    no_upgrade: (d) => C.errNoUpgrade(weaponName(d)),
+    has_upgrade: () => C.errHasUpgrade,
+    no_perk: (d) => C.errNoPerk(perkName(d)),
+    perk_failed: (d) => C.errPerkFailed(perkName(d)),
+    no_powerup: (d) => C.errNoPowerup(powerupName(d)),
+    bad_round: () => C.errBadRound(MAX_ROUND),
+    horde: () => C.errHorde
+  };
+  function resultText(result, sent, name) {
+    if (!result.ok) return (ERRORS[result.code] ?? (() => C.errOther(result.code)))(result.detail);
+    switch (sent.action) {
+      case "give":
+        return C.given(weaponName(sent.arg), name);
+      case "pap":
+        return C.packed(name);
+      case "perk":
+        return C.given(perkName(sent.arg), name);
+      case "powerup":
+        return C.dropped(powerupName(sent.arg), name);
+      case "round":
+        return C.goingTo(sent.target);
+      case "next":
+        return C.nextRound;
+      case "freeze":
+        return sent.target === 1 ? C.frozenOn : C.frozenOff;
+    }
+    return "";
+  }
+  function cheatBlocks(session, players) {
+    const cheats = session.cheats;
+    const chosen = target(session, players);
+    const blocks = [];
+    if (players.length > 1) {
+      blocks.push({ kind: "label", text: C.giveTo });
+      const chips = players.map((p) => ({ act: "cheatTarget", arg: String(p.slot), label: p.name, on: chosen === p.slot }));
+      chips.push({ act: "cheatTarget", arg: "all", label: C.everyone, on: chosen === "all" });
+      blocks.push({ kind: "chips", chips });
+    }
+    blocks.push({ kind: "label", text: C.weapons });
+    blocks.push({ kind: "buttons", buttons: [{ act: "cheatPap", label: C.pap }] });
+    noticeAfter(session, "weapons", blocks);
+    blocks.push({ kind: "grid", buttons: [...cheats.weapons].sort(byName(weaponName)).map((w) => ({ act: "cheatGive", arg: w, label: weaponName(w) })) });
+    blocks.push({ kind: "label", text: C.perks });
+    if (!cheats.perks.length) blocks.push({ kind: "text", cls: "muted small", text: C.noPerks });
+    else {
+      if (!cheats.power) blocks.push({ kind: "text", cls: "muted small", text: C.powerNote });
+      blocks.push({ kind: "grid", buttons: [...cheats.perks].sort(byName(perkName)).map((p) => ({ act: "cheatPerk", arg: p, label: perkName(p) })) });
+    }
+    noticeAfter(session, "perks", blocks);
+    blocks.push({ kind: "label", text: C.powerups });
+    if (!cheats.powerups.length) blocks.push({ kind: "text", cls: "muted small", text: C.noPowerups });
+    else blocks.push({ kind: "grid", buttons: [...cheats.powerups].sort(byName(powerupName)).map((p) => ({ act: "cheatPowerup", arg: p, label: powerupName(p) })) });
+    noticeAfter(session, "powerups", blocks);
+    blocks.push({ kind: "label", text: C.rounds, aside: cheats.round ? C.roundNow(cheats.round) : "" });
+    if (cheats.horde) {
+      blocks.push({ kind: "text", cls: "muted small", text: C.errHorde });
+    } else {
+      blocks.push({ kind: "input", field: "cheatRound", placeholder: C.roundPlaceholder, act: "cheatRound", button: C.go, maxLength: 3 });
+      blocks.push({
+        kind: "chips",
+        chips: [
+          { act: "cheatNext", label: C.nextRound, on: false, plain: true },
+          { act: "cheatFreeze", label: C.freeze, on: cheats.frozen }
+        ]
+      });
+    }
+    noticeAfter(session, "rounds", blocks);
+    return blocks;
+  }
+  var cheatsFailedBlock = () => ({ kind: "callout", tone: "wait", text: C.failed });
+  function cheatActions(session, funPlayers2) {
+    const cheats = session.cheats;
+    cheats.onResult = (result, sent) => {
+      const players = funPlayers2(session);
+      say(session, resultText(result, sent, who(session, players, sent.target)), sent.action);
+    };
+    const toChosen = (action, arg, pending) => {
+      const players = funPlayers2(session);
+      const slot = target(session, players);
+      sendCheat(session, action, slot, arg);
+      say(session, pending(who(session, players, slot)), action);
+    };
+    return {
+      cheatTarget: (arg) => cheats.target = arg === "all" ? "all" : Number(arg),
+      cheatGive: (weapon) => toChosen("give", weapon, (name) => C.giving(weaponName(weapon), name)),
+      cheatPap: () => toChosen("pap", void 0, (name) => C.packing(name)),
+      cheatPerk: (perk) => toChosen("perk", perk, (name) => C.giving(perkName(perk), name)),
+      cheatPowerup: (powerup) => toChosen("powerup", powerup, (name) => C.giving(powerupName(powerup), name)),
+      cheatRound: (text) => {
+        const round = Number(String(text ?? "").trim());
+        if (!Number.isInteger(round) || round < 1 || round > MAX_ROUND) return say(session, C.errBadRound(MAX_ROUND), "round");
+        sendCheat(session, "round", round);
+        say(session, C.goingTo(round), "round");
+      },
+      cheatNext: () => sendCheat(session, "next"),
+      cheatFreeze: () => {
+        cheats.frozen = !cheats.frozen;
+        sendCheat(session, "freeze", cheats.frozen ? 1 : 0);
+      }
+    };
+  }
+
   // src/fun/fun.js
   var TEXT = {
     en: {
@@ -2596,7 +3930,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
   var JUMPS = [39, 80, 150, 300, 600];
   var GRAVITIES = [800, 600, 400, 200, 100];
   var STOCK = 999;
-  var WEAPONS = [
+  var WEAPONS2 = [
     ["ray_gun_zm", "Ray Gun"],
     ["ray_gun_upgraded_zm", "Ray Gun (PaP)"],
     ["thundergun_zm", "Thundergun"],
@@ -2668,13 +4002,14 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     if (on) Atomics.or(engine.i32, address >> 2, bit);
     else Atomics.and(engine.i32, address >> 2, ~bit);
   }
-  function say(fun, text) {
+  function say2(fun, text) {
     fun.notice = text;
     fun.noticeAt = Date.now();
   }
   function funTick(session) {
     const fun = session.fun;
     if (fun.notice && Date.now() - fun.noticeAt > 6e3) fun.notice = null;
+    if (session.cheats) cheatsTick(session, Date.now(), funAvailable(session) && screen() === "playing");
     const a = addresses(session);
     if (!a || !funAvailable(session) || screen() !== "playing") {
       flushQueue(session);
@@ -2731,10 +4066,11 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       const original = console[level];
       console[level] = function(...args) {
         const text = typeof args[0] === "string" ? args[0] : "";
+        onCheatsLine(session, text);
         const missing = text.match(/Could not load weapon "([^"]+)"/);
         if (missing && session.fun?.pendingWeapon === missing[1]) {
-          const label = WEAPONS.find(([w]) => w === missing[1])?.[1] ?? missing[1];
-          say(session.fun, F.weaponMissing(label));
+          const label = WEAPONS2.find(([w]) => w === missing[1])?.[1] ?? missing[1];
+          say2(session.fun, F.weaponMissing(label));
           session.fun.pendingWeapon = null;
         }
         return original.apply(this, args);
@@ -2781,6 +4117,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     };
     const forSlots = (slot) => slot === "all" ? funPlayers(session).map((p) => p.slot) : [slot];
     return {
+      ...session.cheats ? cheatActions(session, funPlayers) : {},
       fun: () => fun.open = !fun.open,
       funToggle: (arg) => {
         if (!engineReady()) return;
@@ -2827,8 +4164,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       },
       funWorld: (arg) => {
         if (!engineReady()) return;
-        const [what, dir] = String(arg).split(":");
-        const direction = dir === "up" ? 1 : -1;
+        const [what, dir2] = String(arg).split(":");
+        const direction = dir2 === "up" ? 1 : -1;
         if (what === "timescale") {
           fun.timescale = step(TIMESCALES, fun.timescale, direction);
           fun.queue.push(`timescale ${fun.timescale}`);
@@ -2844,8 +4181,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
         if (!engineReady()) return;
         fun.pendingWeapon = weapon;
         fun.queue.push(`give ${weapon}`);
-        const label = WEAPONS.find(([w]) => w === weapon)?.[1] ?? weapon;
-        say(fun, F.weaponGiven(label));
+        const label = WEAPONS2.find(([w]) => w === weapon)?.[1] ?? weapon;
+        say2(fun, F.weaponGiven(label));
       },
       funReset: () => {
         const a = addresses(session);
@@ -2881,9 +4218,10 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       const dvar = a.engine.int(a.f.cheatsDvar);
       return dvar ? a.engine.byte(dvar + 24) === 1 : true;
     })();
-    blocks.push({ kind: "text", cls: "muted small", text: `${F.note} ${F.pause}` });
+    blocks.push({ kind: "text", cls: "muted small", text: `${F.note} ${session.cheats?.enabled ? C.keyTip : F.pause}` });
     if (!cheats) blocks.push({ kind: "callout", tone: "wait", text: F.cheatsOff });
-    if (fun.notice) blocks.push({ kind: "callout", tone: "info", text: fun.notice });
+    const cheating = session.cheats?.ok && session.cheats.ready;
+    if (fun.notice && !cheating) blocks.push({ kind: "callout", tone: "info", text: fun.notice });
     const players = funPlayers(session);
     blocks.push({ kind: "label", text: F.players });
     const rows = players.length > 1 ? [...players, { slot: "all", n: 0, name: F.all }] : players;
@@ -2934,8 +4272,12 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     blocks.push({ kind: "stepper", label: F.timescale, value: `${fmt(fun.timescale)}×`, dec: { act: "funWorld", arg: "timescale:down" }, inc: { act: "funWorld", arg: "timescale:up" } });
     blocks.push({ kind: "stepper", label: F.jump, value: String(fun.jump), dec: { act: "funWorld", arg: "jump:down" }, inc: { act: "funWorld", arg: "jump:up" } });
     blocks.push({ kind: "stepper", label: F.gravity, value: String(fun.gravity), dec: { act: "funWorld", arg: "gravity:down" }, inc: { act: "funWorld", arg: "gravity:up" } });
-    blocks.push({ kind: "label", text: F.weapons, aside: MAP_SLUGS[session.zone ?? currentZone()] ?? "" });
-    blocks.push({ kind: "grid", buttons: WEAPONS.map(([w, label]) => ({ act: "funWeapon", arg: w, label })) });
+    if (cheating) blocks.push(...cheatBlocks(session, players));
+    else {
+      if (session.cheats?.ok === false) blocks.push(cheatsFailedBlock());
+      blocks.push({ kind: "label", text: F.weapons, aside: MAP_SLUGS[session.zone ?? currentZone()] ?? "" });
+      blocks.push({ kind: "grid", buttons: WEAPONS2.map(([w, label]) => ({ act: "funWeapon", arg: w, label })) });
+    }
     blocks.push({ kind: "buttons", buttons: [{ act: "funReset", label: F.reset, style: "ghost" }] });
     return { kind: "section", title: F.title, act: "fun", open: fun.open, blocks };
   }
@@ -2973,7 +4315,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       players: roster.map((p) => ({ n: p.n, on: CONNECTED.includes(p.status) })),
       texts: [session.paused ? T.chip.paused : ping, ...session.gamepad?.status === "active" ? ["🎮"] : []]
     };
-    return { chip, tagline: `${T.room} ${session.room}`, blocks, compact: playing && !session.error, pill };
+    return { chip, tagline: `${T.room} ${session.room}`, blocks, compact: playing && !session.error && !session.cheats?.panel, pill };
   }
   function soloView(session, blocks, playing) {
     blocks.push({ kind: "text", cls: "muted", text: T.intro });
@@ -2983,7 +4325,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     if (session.engine) blocks.push(funSection(session));
     blocks.push(settingsSection(session, false));
     const pill = session.gamepad?.status === "active" ? { texts: ["🎮"] } : null;
-    return { chip: { text: T.chip.solo }, tagline: T.tagline, blocks, compact: playing && !session.error && !session.notice, pill };
+    return { chip: { text: T.chip.solo }, tagline: T.tagline, blocks, compact: playing && !session.error && !session.notice && !session.cheats?.panel, pill };
   }
   function hostSection(session, blocks, roster, screen2) {
     const freeSeats = roster.filter((p) => p.status === "free").length;
@@ -3105,7 +4447,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       if (session.stats?.lost) items.push([T.dropped, String(session.stats.lost)]);
       blocks.push({ kind: "kv", items });
     }
-    blocks.push(...controllerBlocks(session), ...relayBlocks(session), { kind: "credits", text: T.credits });
+    blocks.push(...controllerBlocks(session), ...cheatsSettingBlocks(session), ...relayBlocks(session), { kind: "credits", text: T.credits });
     return { kind: "section", title: T.settings, act: "settings", open: session.showSettings, blocks };
   }
   function controllerBlocks(session) {
@@ -3143,9 +4485,77 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
   var onSharedRelay = (session) => session.relay === DEFAULT_RELAY && !session.overQuota;
   var relayButtons = () => [{ act: "openRelayGuide", label: T.relayGuide }, { act: "editRelayNow", label: T.relayHaveOne, style: "ghost" }];
 
+  // src/cheats/hotkey.js
+  var KEY2 = "KeyM";
+  function onCheatsKey(session, event, { playing, available, freeMouse, lockMouse }) {
+    if (event.code !== KEY2 || event.repeat || event.ctrlKey || event.altKey || event.metaKey) return false;
+    const target2 = event.composedPath?.()[0];
+    if (target2 && (/^(INPUT|TEXTAREA|SELECT)$/.test(target2.tagName ?? "") || target2.isContentEditable)) return false;
+    if (!playing || !available) return false;
+    session.cheats.panel = !session.cheats.panel;
+    if (session.cheats.panel) {
+      session.fun.open = true;
+      freeMouse();
+    } else {
+      lockMouse();
+    }
+    return true;
+  }
+  function onPointerLock(session, locked) {
+    if (locked) session.cheats.panel = false;
+  }
+  function installCheatsKey(session) {
+    let hideUnlock = false;
+    const ctx = () => ({
+      playing: screen() === "playing",
+      available: funAvailable(session) && Boolean(session.engine),
+      freeMouse: () => {
+        if (!document.pointerLockElement) return;
+        hideUnlock = true;
+        document.exitPointerLock();
+      },
+      lockMouse: () => document.getElementById("game")?.requestPointerLock?.()?.catch?.(() => {
+      })
+    });
+    const showFun = () => setTimeout(() => session.card?.root.querySelector('[data-act="fun"]')?.scrollIntoView({ block: "start" }), 120);
+    window.addEventListener(
+      "keydown",
+      (event) => {
+        if (!onCheatsKey(session, event, ctx())) return;
+        if (session.cheats.panel) showFun();
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      true
+    );
+    window.addEventListener(
+      "keyup",
+      (event) => {
+        if (event.code === KEY2 && screen() === "playing" && funAvailable(session)) event.stopImmediatePropagation();
+      },
+      true
+    );
+    window.addEventListener(
+      "pointerlockchange",
+      (event) => {
+        const locked = Boolean(document.pointerLockElement);
+        if (!locked && hideUnlock) {
+          hideUnlock = false;
+          event.stopImmediatePropagation();
+          return;
+        }
+        onPointerLock(session, locked);
+      },
+      true
+    );
+  }
+
+  // src/cheats/version.js
+  var FORK_VERSION = "2.2.2.1";
+
   // src/util/updates.js
-  var LATEST = "https://api.github.com/repos/AllanLotta/bo1-zombies-coop/releases/latest";
-  var UPDATE_GUIDE = "https://allanlotta.github.io/bo1-zombies-coop/#update";
+  var LATEST = "https://api.github.com/repos/lucas-gundehug/bo1-zombies-coop/releases/latest";
+  var UPDATE_GUIDE = "https://github.com/lucas-gundehug/bo1-zombies-coop#install";
   var RELAY_GUIDE = "https://allanlotta.github.io/bo1-zombies-coop/#relay";
   var CHECK_EVERY_MS = 6 * 3600 * 1e3;
   var parts = (version) => String(version).replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
@@ -3173,7 +4583,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
         return;
       }
     }
-    if (latest && isNewer(latest, session.version)) session.update = { version: String(latest).replace(/^v/, ""), url: UPDATE_GUIDE };
+    if (latest && isNewer(latest, FORK_VERSION)) session.update = { version: String(latest).replace(/^v/, ""), url: UPDATE_GUIDE };
   }
 
   // src/main.js
@@ -3187,6 +4597,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     const session = createSession();
     window.__bo1Coop = session;
     session.fun = createFun();
+    session.cheats = createCheats();
+    installCheatsKey(session);
     watchConsole(session);
     if (session.mode) keepSinglePlayer(session.room);
     hookWasm(session);
@@ -3292,7 +4704,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       },
       aimDown: () => setAim(session, session.aimLevel - 1),
       aimUp: () => setAim(session, session.aimLevel + 1),
-      ...funActions(session)
+      ...funActions(session),
+      ...cheatsSettingActions(session)
     };
   }
   function setAim(session, level) {

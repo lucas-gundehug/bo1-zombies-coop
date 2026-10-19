@@ -20,6 +20,7 @@ const options = async () => ({
   target: "chrome120",
   charset: "utf8",
   legalComments: "none",
+  loader: { ".gsc": "text" },
   banner: { js: banner },
   define: { __PUMP_WORKER_SOURCE__: JSON.stringify(await workerSource()) },
 });

@@ -9,6 +9,7 @@ import { DEFAULT_RELAY } from "../util/relay.js";
 import { cleanName } from "../util/settings.js";
 import { T } from "./strings.js";
 import { funAvailable, funSection } from "../fun/fun.js";
+import { cheatsSettingBlocks } from "../cheats/setup.js";
 
 const COPIED_MS = 2000;
 const CONNECTED = ["ingame", "ready", "lobby"];
@@ -47,7 +48,7 @@ export function view(session) {
     players: roster.map((p) => ({ n: p.n, on: CONNECTED.includes(p.status) })),
     texts: [session.paused ? T.chip.paused : ping, ...(session.gamepad?.status === "active" ? ["\u{1F3AE}"] : [])],
   };
-  return { chip, tagline: `${T.room} ${session.room}`, blocks, compact: playing && !session.error, pill };
+  return { chip, tagline: `${T.room} ${session.room}`, blocks, compact: playing && !session.error && !session.cheats?.panel, pill };
 }
 
 function soloView(session, blocks, playing) {
@@ -58,7 +59,7 @@ function soloView(session, blocks, playing) {
   if (session.engine) blocks.push(funSection(session));
   blocks.push(settingsSection(session, false));
   const pill = session.gamepad?.status === "active" ? { texts: ["\u{1F3AE}"] } : null;
-  return { chip: { text: T.chip.solo }, tagline: T.tagline, blocks, compact: playing && !session.error && !session.notice, pill };
+  return { chip: { text: T.chip.solo }, tagline: T.tagline, blocks, compact: playing && !session.error && !session.notice && !session.cheats?.panel, pill };
 }
 
 function hostSection(session, blocks, roster, screen) {
@@ -194,7 +195,7 @@ function settingsSection(session, inRoom) {
     if (session.stats?.lost) items.push([T.dropped, String(session.stats.lost)]);
     blocks.push({ kind: "kv", items });
   }
-  blocks.push(...controllerBlocks(session), ...relayBlocks(session), { kind: "credits", text: T.credits });
+  blocks.push(...controllerBlocks(session), ...cheatsSettingBlocks(session), ...relayBlocks(session), { kind: "credits", text: T.credits });
   return { kind: "section", title: T.settings, act: "settings", open: session.showSettings, blocks };
 }
 
