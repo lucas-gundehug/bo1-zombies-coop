@@ -35,7 +35,8 @@ causes is hidden from it.
 ## Release
 
 Bump `extension/manifest.json` `version` (4 parts, e.g. `2.2.2.1`; the third part follows upstream), `npm run build`,
-`node scripts/package.mjs` (needs `zip`), then `gh release create v<version> dist/bo1-zombies-coop.zip` on
+`node scripts/package.mjs` (needs `zip`; on Windows without it, zip the contents of `extension/` with Python's
+`zipfile`, `manifest.json` at the top level), then `gh release create v<version> dist/bo1-zombies-coop.zip` on
 `lucas-gundehug/bo1-zombies-coop`. The card's update notice reads this fork's releases.
 
 ## Rules

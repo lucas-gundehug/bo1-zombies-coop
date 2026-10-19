@@ -5,6 +5,9 @@ import { addCheatsMod, modBase } from "../src/cheats/mod.js";
 import { gameSettings } from "../src/game/page.js";
 import { perkName, powerupName, weaponName } from "../src/cheats/names.js";
 import { onCheatsKey, onPointerLock } from "../src/cheats/hotkey.js";
+import { FORK_VERSION } from "../src/cheats/version.js";
+import { isNewer } from "../src/util/updates.js";
+import { readFileSync } from "node:fs";
 import { cheatCommand, cheatsTick, createBridge, onCheatsLine, parseDvarPrint, parseState, sendCheat } from "../src/cheats/bridge.js";
 
 const tests = [];
@@ -169,6 +172,13 @@ test("taking the mouse back into the game closes the panel", () => {
   const session = { cheats: { panel: true }, fun: { open: true } };
   onPointerLock(session, true);
   assert.equal(session.cheats.panel, false);
+});
+
+test("the fork's version matches the manifest, and a fork release is not newer than itself", () => {
+  const manifest = JSON.parse(readFileSync(new URL("../extension/manifest.json", import.meta.url)));
+  assert.equal(FORK_VERSION, manifest.version);
+  assert.equal(isNewer(`v${FORK_VERSION}`, FORK_VERSION), false);
+  assert.equal(isNewer("v2.2.3.1", FORK_VERSION), true);
 });
 
 let failed = 0;

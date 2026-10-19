@@ -1,4 +1,4 @@
-// BO1 Zombies Co-op 2.2.2 for vel.gg. Built from src/ with scripts/build.mjs; edit the sources, not this file.
+// BO1 Zombies Co-op 2.2.2.1 for vel.gg. Built from src/ with scripts/build.mjs; edit the sources, not this file.
 (() => {
   // relay/src/protocol.js
   var ROLES = Object.freeze(["host", "guest"]);
@@ -4488,9 +4488,12 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     );
   }
 
+  // src/cheats/version.js
+  var FORK_VERSION = "2.2.2.1";
+
   // src/util/updates.js
-  var LATEST = "https://api.github.com/repos/AllanLotta/bo1-zombies-coop/releases/latest";
-  var UPDATE_GUIDE = "https://allanlotta.github.io/bo1-zombies-coop/#update";
+  var LATEST = "https://api.github.com/repos/lucas-gundehug/bo1-zombies-coop/releases/latest";
+  var UPDATE_GUIDE = "https://github.com/lucas-gundehug/bo1-zombies-coop#install";
   var RELAY_GUIDE = "https://allanlotta.github.io/bo1-zombies-coop/#relay";
   var CHECK_EVERY_MS = 6 * 3600 * 1e3;
   var parts = (version) => String(version).replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
@@ -4518,7 +4521,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
         return;
       }
     }
-    if (latest && isNewer(latest, session.version)) session.update = { version: String(latest).replace(/^v/, ""), url: UPDATE_GUIDE };
+    if (latest && isNewer(latest, FORK_VERSION)) session.update = { version: String(latest).replace(/^v/, ""), url: UPDATE_GUIDE };
   }
 
   // src/main.js

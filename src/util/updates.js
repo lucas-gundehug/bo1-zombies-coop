@@ -1,9 +1,11 @@
 // Tells players when a newer release is out: an extension loaded from a folder never updates itself. Asks GitHub at
 // most every six hours (its API allows 60 anonymous requests an hour per IP) and remembers the answer.
 import { readSetting, saveSetting } from "./settings.js";
+import { FORK_VERSION } from "../cheats/version.js";
 
-const LATEST = "https://api.github.com/repos/AllanLotta/bo1-zombies-coop/releases/latest";
-export const UPDATE_GUIDE = "https://allanlotta.github.io/bo1-zombies-coop/#update";
+// fork: its own releases and install steps
+const LATEST = "https://api.github.com/repos/lucas-gundehug/bo1-zombies-coop/releases/latest";
+export const UPDATE_GUIDE = "https://github.com/lucas-gundehug/bo1-zombies-coop#install";
 export const RELAY_GUIDE = "https://allanlotta.github.io/bo1-zombies-coop/#relay";
 const CHECK_EVERY_MS = 6 * 3600 * 1000;
 
@@ -35,5 +37,5 @@ export async function checkForUpdate(session) {
       return;
     }
   }
-  if (latest && isNewer(latest, session.version)) session.update = { version: String(latest).replace(/^v/, ""), url: UPDATE_GUIDE };
+  if (latest && isNewer(latest, FORK_VERSION)) session.update = { version: String(latest).replace(/^v/, ""), url: UPDATE_GUIDE };
 }
