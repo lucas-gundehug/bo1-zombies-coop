@@ -2,6 +2,7 @@
 //   node test/direct.test.mjs
 import assert from "node:assert/strict";
 import { batchCandidates, CANDIDATE_FLUSH_MS, CONNECT_TIMEOUT_MS, parseRtc, retryDelay, RTC_TYPES } from "../src/net/rtc-messages.js";
+import { controlRoutes, createRoutes, isDirect, packetPath, relayPresence } from "../src/net/routes.js";
 
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
@@ -83,6 +84,76 @@ test("batchCandidates splits into groups of at most 8", () => {
 
 test("retryDelay backs off to a minute", () => {
   assert.deepEqual([0, 1, 2, 3, 4, 5].map(retryDelay), [5000, 15000, 30000, 60000, 60000, 60000]);
+});
+
+const open = () => ({ readyState: "open" });
+const link = (game = open(), control = open()) => ({ game, control });
+const routesWith = (links, relaySeats = []) => {
+  const routes = createRoutes();
+  for (const [seat, l] of Object.entries(links)) routes.links.set(Number(seat), l);
+  for (const seat of relaySeats) routes.relaySeats.add(seat);
+  return routes;
+};
+
+test("isDirect needs both channels open", () => {
+  const routes = routesWith({ 1: link(), 2: link(open(), { readyState: "connecting" }), 3: link({ readyState: "closed" }) });
+  assert.deepEqual([1, 2, 3, 0].map((s) => isDirect(routes, s)), [true, false, false, false]);
+  assert.equal(packetPath(routes, 1), "direct");
+  assert.equal(packetPath(routes, 3), "relay");
+});
+
+test("controlRoutes: a guest sends to the host directly when the link is open", () => {
+  const message = { t: "state", phase: "connected" };
+  assert.deepEqual(controlRoutes(routesWith({ 0: link() }), message, false), [{ via: "direct", seat: 0 }]);
+  assert.deepEqual(controlRoutes(createRoutes(), message, false), [{ via: "relay", message }]);
+});
+
+test("controlRoutes: signaling always goes through the relay", () => {
+  const offer = { t: "rtc-offer", n: 1, sdp: "v=0" };
+  assert.deepEqual(controlRoutes(routesWith({ 0: link() }), offer, false), [{ via: "relay", message: offer }]);
+  const answer = { t: "rtc-answer", n: 1, sdp: "v=0", to: 2 };
+  assert.deepEqual(controlRoutes(routesWith({ 2: link() }, [2]), answer, true), [{ via: "relay", message: answer }]);
+});
+
+test("controlRoutes: the host sends to one seat on that seat's path", () => {
+  const routes = routesWith({ 2: link() }, [1, 2]);
+  const toTwo = { t: "info", to: 2 };
+  const toOne = { t: "info", to: 1 };
+  assert.deepEqual(controlRoutes(routes, toTwo, true), [{ via: "direct", seat: 2 }]);
+  assert.deepEqual(controlRoutes(routes, toOne, true), [{ via: "relay", message: toOne }]);
+});
+
+test("controlRoutes: a broadcast with no direct seat is one relay message", () => {
+  const message = { t: "lobby", players: [] };
+  assert.deepEqual(controlRoutes(routesWith({}, [1, 2, 3]), message, true), [{ via: "relay", message }]);
+});
+
+test("controlRoutes: a mixed broadcast reaches each seat once, on its own path", () => {
+  const message = { t: "lobby", players: [] };
+  assert.deepEqual(controlRoutes(routesWith({ 1: link() }, [1, 2, 3]), message, true), [
+    { via: "direct", seat: 1 },
+    { via: "relay", message: { ...message, to: 2 } },
+    { via: "relay", message: { ...message, to: 3 } },
+  ]);
+});
+
+test("controlRoutes: a closed game channel puts the seat back on the relay", () => {
+  const message = { t: "lobby" };
+  assert.deepEqual(controlRoutes(routesWith({ 1: link({ readyState: "closed" }) }, [1]), message, true), [{ via: "relay", message }]);
+});
+
+test("relayPresence follows the relay's welcome and peer messages", () => {
+  const routes = createRoutes();
+  relayPresence(routes, { t: "welcome", guests: [1, 3] });
+  assert.deepEqual([...routes.relaySeats].sort(), [1, 3]);
+  relayPresence(routes, { t: "peer", seat: 2, present: true });
+  relayPresence(routes, { t: "peer", seat: 1, present: false });
+  assert.deepEqual([...routes.relaySeats].sort(), [2, 3]);
+  relayPresence(routes, { t: "welcome", guests: [] });
+  assert.deepEqual([...routes.relaySeats], []);
+  relayPresence(routes, { t: "peer", seat: 9, present: true });
+  relayPresence(routes, { t: "state", from: 2 });
+  assert.deepEqual([...routes.relaySeats], []);
 });
 
 let failed = 0;
