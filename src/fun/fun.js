@@ -5,6 +5,7 @@
 import { SLOT } from "../engine/builds.js";
 import { MAP_SLUGS, currentZone, screen as pageScreen } from "../game/page.js";
 import { LANG } from "../ui/strings.js";
+import { cheatsTick, onCheatsLine } from "../cheats/bridge.js";
 
 const TEXT = {
   en: {
@@ -172,6 +173,7 @@ function say(fun, text) {
 export function funTick(session) {
   const fun = session.fun;
   if (fun.notice && Date.now() - fun.noticeAt > 6000) fun.notice = null;
+  if (session.cheats) cheatsTick(session, Date.now(), funAvailable(session) && pageScreen() === "playing");
   const a = addresses(session);
   if (!a || !funAvailable(session) || pageScreen() !== "playing") {
     flushQueue(session);
@@ -233,6 +235,7 @@ export function watchConsole(session) {
     const original = console[level];
     console[level] = function (...args) {
       const text = typeof args[0] === "string" ? args[0] : "";
+      onCheatsLine(session, text);
       const missing = text.match(/Could not load weapon "([^"]+)"/);
       if (missing && session.fun?.pendingWeapon === missing[1]) {
         const label = WEAPONS.find(([w]) => w === missing[1])?.[1] ?? missing[1];

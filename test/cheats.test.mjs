@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { addCheatsMod, modBase } from "../src/cheats/mod.js";
 import { gameSettings } from "../src/game/page.js";
+import { cheatCommand, cheatsTick, createBridge, onCheatsLine, parseDvarPrint, parseState, sendCheat } from "../src/cheats/bridge.js";
 
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
@@ -38,6 +39,77 @@ test("modBase reads the pack folder from the engine's fs_b", () => {
   assert.equal(modBase(["+set", "fs_b", "/opfs/pack-kino/files", "+set", "fs_h", "/opfs/user"]), "pack-kino/files");
   assert.equal(modBase(["+set", "fs_h", "/opfs/user"]), null);
   assert.equal(modBase(["+set", "fs_b", "C:/game"]), null);
+});
+
+test("parseDvarPrint reads the engine's answer for a cheats dvar", () => {
+  assert.deepEqual(parseDvarPrint('"cheats_perks" is: "specialty_rof,specialty_armorvest^7" default: "^7"'), { name: "cheats_perks", value: "specialty_rof,specialty_armorvest" });
+  assert.equal(parseDvarPrint('"sv_cheats" is: "1^7" default: "0^7"'), null);
+  assert.equal(parseDvarPrint("WEB_GL_COPIES frames=60"), null);
+});
+
+test("parseState turns the published state into numbers and booleans", () => {
+  assert.deepEqual(parseState("ready=1 seq=4 round=12 frozen=1 power=0 horde=0 lists=2"), { ready: true, seq: 4, round: 12, frozen: true, power: false, horde: false, lists: 2 });
+});
+
+test("cheatCommand builds the console command and refuses unsafe text", () => {
+  assert.equal(cheatCommand(5, "give", "all", "ray_gun_zm"), 'set cheats_cmd "5 give all ray_gun_zm"');
+  assert.equal(cheatCommand(6, "next"), 'set cheats_cmd "6 next"');
+  assert.throws(() => cheatCommand(1, "give", 0, 'x"; quit'));
+  assert.throws(() => cheatCommand(1, "give", 0, "two words"));
+});
+
+const fakeSession = () => ({ cheats: { ok: true, ...createBridge() }, fun: { queue: [] } });
+
+test("commands go out in order, one per 250 ms", () => {
+  const session = fakeSession();
+  sendCheat(session, "give", 0, "ray_gun_zm");
+  sendCheat(session, "pap", 0);
+  cheatsTick(session, 1000, true);
+  cheatsTick(session, 1100, true);
+  cheatsTick(session, 1300, true);
+  const sent = session.fun.queue.filter((c) => c.startsWith("set cheats_cmd"));
+  assert.deepEqual(sent, ['set cheats_cmd "1 give 0 ray_gun_zm"', 'set cheats_cmd "2 pap 0"']);
+});
+
+test("nothing is sent or asked while the map is not playing, or when the mod did not load", () => {
+  const session = fakeSession();
+  sendCheat(session, "next");
+  cheatsTick(session, 1000, false);
+  assert.deepEqual(session.fun.queue, []);
+  session.cheats.ok = false;
+  cheatsTick(session, 2000, true);
+  assert.deepEqual(session.fun.queue, []);
+});
+
+test("the lists are asked for once the state says they are published, and assembled", () => {
+  const session = fakeSession();
+  cheatsTick(session, 1000, true);
+  assert.ok(session.fun.queue.includes("cheats_state"));
+  onCheatsLine(session, '"cheats_state" is: "ready=1 seq=0 round=1 frozen=0 power=0 horde=0 lists=1^7" default: "^7"');
+  assert.equal(session.cheats.round, 1);
+  cheatsTick(session, 2000, true);
+  assert.ok(session.fun.queue.includes("cheats_weapons_count") && session.fun.queue.includes("cheats_perks") && session.fun.queue.includes("cheats_powerups"));
+  onCheatsLine(session, '"cheats_weapons_count" is: "2^7" default: "^7"');
+  assert.ok(session.fun.queue.includes("cheats_weapons_0") && session.fun.queue.includes("cheats_weapons_1"));
+  onCheatsLine(session, '"cheats_weapons_1" is: "m1911_zm^7" default: "^7"');
+  onCheatsLine(session, '"cheats_weapons_0" is: "ray_gun_zm,thundergun_zm^7" default: "^7"');
+  onCheatsLine(session, '"cheats_perks" is: "specialty_armorvest^7" default: "^7"');
+  assert.deepEqual(session.cheats.weapons, ["ray_gun_zm", "thundergun_zm", "m1911_zm"]);
+  assert.deepEqual(session.cheats.perks, ["specialty_armorvest"]);
+});
+
+test("a result is matched to the command it answers", () => {
+  const session = fakeSession();
+  const results = [];
+  session.cheats.onResult = (result, sent) => results.push([result, sent]);
+  sendCheat(session, "perk", 1, "specialty_rof");
+  cheatsTick(session, 1000, true);
+  cheatsTick(session, 1600, true);
+  assert.ok(session.fun.queue.includes("cheats_result"));
+  onCheatsLine(session, '"cheats_result" is: "1 err perk_failed specialty_rof^7" default: "^7"');
+  assert.deepEqual(results, [[{ seq: 1, ok: false, code: "perk_failed", detail: "specialty_rof" }, { action: "perk", target: 1, arg: "specialty_rof" }]]);
+  onCheatsLine(session, '"cheats_result" is: "1 err perk_failed specialty_rof^7" default: "^7"');
+  assert.equal(results.length, 1, "a result is reported once");
 });
 
 let failed = 0;

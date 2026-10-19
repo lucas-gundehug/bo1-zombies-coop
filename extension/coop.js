@@ -1496,6 +1496,112 @@
     return true;
   }
 
+  // src/cheats/bridge.js
+  var STATE_EVERY_MS = 1e3;
+  var RESULT_EVERY_MS = 500;
+  var SEND_EVERY_MS = 250;
+  var RESULT_WAIT_MS = 3e4;
+  function createBridge() {
+    return {
+      ready: false,
+      round: 0,
+      frozen: false,
+      power: false,
+      horde: false,
+      weapons: [],
+      perks: [],
+      powerups: [],
+      seq: 0,
+      outbox: [],
+      // command texts not sent yet
+      sent: /* @__PURE__ */ new Map(),
+      // seq -> { action, target, arg } waiting for a result
+      lastSeq: 0,
+      // latest seq sent
+      resultSeq: 0,
+      // latest seq a result was reported for
+      resultUntil: 0,
+      scriptLists: 0,
+      // the lists counter the script published last
+      listsLoaded: 0,
+      // the lists counter the lists were last asked for
+      weaponChunks: null,
+      lastStateAt: -Infinity,
+      lastResultAt: -Infinity,
+      lastSendAt: -Infinity,
+      onResult: null
+    };
+  }
+  function parseDvarPrint(line) {
+    const match = String(line).match(/^"(cheats_\w+)" is: "(.*?)\^7"/);
+    return match ? { name: match[1], value: match[2] } : null;
+  }
+  function parseState(value) {
+    const raw = Object.fromEntries(
+      String(value).split(" ").filter((pair) => pair.includes("=")).map((pair) => pair.split("="))
+    );
+    const n = (key) => Number(raw[key]) || 0;
+    return { ready: raw.ready === "1", seq: n("seq"), round: n("round"), frozen: raw.frozen === "1", power: raw.power === "1", horde: raw.horde === "1", lists: n("lists") };
+  }
+  function ask(session, name) {
+    if (!session.fun.queue.includes(name)) session.fun.queue.push(name);
+  }
+  function cheatsTick(session, now, playing) {
+    const cheats = session.cheats;
+    if (!cheats?.ok || !playing) return;
+    if (now - cheats.lastStateAt >= STATE_EVERY_MS) {
+      cheats.lastStateAt = now;
+      ask(session, "cheats_state");
+    }
+    if (cheats.scriptLists > cheats.listsLoaded) {
+      cheats.listsLoaded = cheats.scriptLists;
+      for (const name of ["cheats_weapons_count", "cheats_perks", "cheats_powerups"]) ask(session, name);
+    }
+    if (cheats.outbox.length && now - cheats.lastSendAt >= SEND_EVERY_MS) {
+      cheats.lastSendAt = now;
+      const text = cheats.outbox.shift();
+      session.fun.queue.push(text);
+      cheats.lastSeq = Number(text.match(/"(\d+)/)[1]);
+      cheats.resultUntil = now + RESULT_WAIT_MS;
+    }
+    if (cheats.resultSeq < cheats.lastSeq && now < cheats.resultUntil && now - cheats.lastResultAt >= RESULT_EVERY_MS) {
+      cheats.lastResultAt = now;
+      ask(session, "cheats_result");
+    }
+  }
+  function onCheatsLine(session, line) {
+    const print = parseDvarPrint(line);
+    const cheats = session.cheats;
+    if (!print || !cheats) return;
+    const { name, value } = print;
+    const list = () => value.split(",").filter(Boolean);
+    if (name === "cheats_state") {
+      const state = parseState(value);
+      Object.assign(cheats, { ready: state.ready, round: state.round, frozen: state.frozen, power: state.power, horde: state.horde, scriptLists: state.lists });
+    } else if (name === "cheats_weapons_count") {
+      const count = Number(value) || 0;
+      cheats.weaponChunks = new Array(count).fill(null);
+      for (let i = 0; i < count; i += 1) ask(session, `cheats_weapons_${i}`);
+    } else if (name.startsWith("cheats_weapons_")) {
+      const i = Number(name.slice("cheats_weapons_".length));
+      if (!cheats.weaponChunks || !(i >= 0 && i < cheats.weaponChunks.length)) return;
+      cheats.weaponChunks[i] = list();
+      if (cheats.weaponChunks.every(Boolean)) cheats.weapons = cheats.weaponChunks.flat();
+    } else if (name === "cheats_perks") {
+      cheats.perks = list();
+    } else if (name === "cheats_powerups") {
+      cheats.powerups = list();
+    } else if (name === "cheats_result") {
+      const [seqText, status, code = "", ...rest] = value.split(" ");
+      const seq = Number(seqText);
+      if (!(seq > cheats.resultSeq)) return;
+      cheats.resultSeq = seq;
+      const sent = cheats.sent.get(seq);
+      for (const old of cheats.sent.keys()) if (old <= seq) cheats.sent.delete(old);
+      if (sent) cheats.onResult?.({ seq, ok: status === "ok", code, detail: rest.join(" ") }, sent);
+    }
+  }
+
   // src/cheats/gsc/_hooks.gsc
   var hooks_default = `// CHEAT MENU - part of the BO1 Zombies Co-op extension's fork, not of the game. Loaded through +set fs_mods "... cheats"
 // (mods/_stack/maps/_modstack.gsc runs each stacked mod's register()).
@@ -2328,7 +2434,8 @@ nazizombies_checking_for_cheats()\r
     return {
       enabled: readSetting("cheats", "1") !== "0",
       /** true once the mod was handed to the engine, false when it could not be, null before the game starts. */
-      ok: null
+      ok: null,
+      ...createBridge()
     };
   }
   var wantsCheats = (session) => session.cheats.enabled && session.mode !== "guest" && session.patched;
@@ -3542,6 +3649,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
   function funTick(session) {
     const fun = session.fun;
     if (fun.notice && Date.now() - fun.noticeAt > 6e3) fun.notice = null;
+    if (session.cheats) cheatsTick(session, Date.now(), funAvailable(session) && screen() === "playing");
     const a = addresses(session);
     if (!a || !funAvailable(session) || screen() !== "playing") {
       flushQueue(session);
@@ -3598,6 +3706,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       const original = console[level];
       console[level] = function(...args) {
         const text = typeof args[0] === "string" ? args[0] : "";
+        onCheatsLine(session, text);
         const missing = text.match(/Could not load weapon "([^"]+)"/);
         if (missing && session.fun?.pendingWeapon === missing[1]) {
           const label = WEAPONS.find(([w]) => w === missing[1])?.[1] ?? missing[1];

@@ -2,6 +2,7 @@
 // game script runs on the host's server and reaches every player from there).
 import { currentHorde } from "../game/page.js";
 import { readSetting, saveSetting } from "../util/settings.js";
+import { createBridge } from "./bridge.js";
 import { MOD_FILES } from "./files.js";
 import { addCheatsMod, modBase } from "./mod.js";
 import { writeModFiles } from "./opfs.js";
@@ -14,6 +15,7 @@ export function createCheats() {
     enabled: readSetting("cheats", "1") !== "0",
     /** true once the mod was handed to the engine, false when it could not be, null before the game starts. */
     ok: null,
+    ...createBridge(),
   };
 }
 

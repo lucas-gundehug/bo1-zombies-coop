@@ -232,6 +232,10 @@ const scenarios = {
     assert.ok(state, "the game script never reported ready");
     const ok = await page.evaluate(() => window.__bo1Coop.cheats.ok);
     assert.equal(ok, true, "session.cheats.ok");
+    // the card's side (src/cheats/bridge.js) gets the map's lists by itself
+    await page.waitForFunction(() => window.__bo1Coop.cheats.weapons.length > 10 && window.__bo1Coop.cheats.perks.length > 0 && window.__bo1Coop.cheats.round > 0, null, { timeout: 30000 });
+    const seen = await page.evaluate(() => ({ weapons: window.__bo1Coop.cheats.weapons.length, perks: window.__bo1Coop.cheats.perks, powerups: window.__bo1Coop.cheats.powerups, round: window.__bo1Coop.cheats.round }));
+    log("card side:", JSON.stringify(seen));
   },
   async off() {
     await setCheats(false);
