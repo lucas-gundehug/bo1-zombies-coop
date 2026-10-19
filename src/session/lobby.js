@@ -4,6 +4,7 @@ import { MAX_GUESTS } from "../../relay/src/protocol.js";
 import { SLOT } from "../engine/builds.js";
 import { currentHorde, currentZone, MAP_SLUGS, screen as pageScreen } from "../game/page.js";
 import { send } from "../net/pump.js";
+import { T } from "../ui/strings.js";
 import { cleanName } from "../util/settings.js";
 import { CONNECTING } from "./host.js";
 import { validSeat } from "./session.js";
@@ -11,8 +12,11 @@ import { validSeat } from "./session.js";
 const roundPing = (rtt) => (Number.isFinite(rtt) ? Math.round(rtt) : null);
 const LEFT_VISIBLE_MS = 60000;
 
+/** A present guest's path ("direct" while its direct link is open, else "relay"); null for an absent one. */
+const guestPath = (session, g) => (g?.present ? (session.links.get(g.seat) === "direct" ? "direct" : "relay") : null);
+
 /**
- * Host: [{ n, name, host?, status, tone, ping }] for players 1..4.
+ * Host: [{ n, name, host?, status, tone, ping, path }] for players 1..4.
  * status: picking | loading | lobby | ingame | ready | opening | turn | joining | reconnecting | left | disconnected | free
  * tone: ok | wait | bad | "" (the colour of the status dot)
  */
@@ -20,12 +24,12 @@ export function hostRoster(session) {
   const screen = pageScreen();
   const playing = screen === "playing";
   const [hostStatus, hostTone] = playing ? ["ingame", "ok"] : screen === "ready" ? ["lobby", "ok"] : session.engine || screen === "loading" || screen === "download" ? ["loading", "wait"] : ["picking", "wait"];
-  const players = [{ n: 1, name: session.name, host: true, status: hostStatus, tone: hostTone, ping: null }];
+  const players = [{ n: 1, name: session.name, host: true, status: hostStatus, tone: hostTone, ping: null, path: null }];
   const rtts = session.stats?.rtts ?? {};
   for (let seat = 1; seat <= MAX_GUESTS; seat += 1) {
     const g = session.guests.get(seat);
     const [status, tone] = guestStatus(session, g, seat, playing);
-    players.push({ n: seat + 1, name: status === "free" ? "" : cleanName(g?.state?.name), status, tone, ping: g?.present ? roundPing(rtts[seat]) : null });
+    players.push({ n: seat + 1, name: status === "free" ? "" : cleanName(g?.state?.name), status, tone, ping: g?.present ? roundPing(rtts[seat]) : null, path: guestPath(session, g) });
   }
   return { t: "lobby", players, slug: MAP_SLUGS[session.zone ?? currentZone()] ?? null, horde: currentHorde(), playing };
 }
@@ -65,7 +69,18 @@ export function guestRoster(session) {
   }
   if (!validSeat(session.seat)) return players;
   const [status, tone] = ownStatus(session);
-  return players.map((p) => (p.n === session.seat + 1 ? { ...p, name: session.name, ping: roundPing(session.stats?.rtt), status, tone } : p));
+  return players.map((p) => (p.n === session.seat + 1 ? { ...p, name: session.name, ping: roundPing(session.stats?.rtt), path: ownPath(session), status, tone } : p));
+}
+
+const ownPath = (session) => (session.direct?.state(0) === "direct" ? "direct" : "relay");
+
+/** The settings' Connection row: a guest's own path, or for the host how many guests are on each; null with nobody. */
+export function connectionText(session) {
+  if (session.mode === "guest") return T.path[session.direct?.state(0) ?? "relay"] ?? T.path.relay;
+  const present = [...session.guests.values()].filter((g) => g.present);
+  if (!present.length) return null;
+  const direct = present.filter((g) => session.links.get(g.seat) === "direct").length;
+  return T.pathCount(direct, present.length - direct);
 }
 
 function ownStatus(session) {

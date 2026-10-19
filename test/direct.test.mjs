@@ -396,6 +396,33 @@ test("host: a guest is present while the relay or its direct link has it", async
   assert.equal(session.peer, false);
 });
 
+test("host: a seat the relay hands out again drops the old direct link", async () => {
+  const session = fakeSession("host");
+  const { direct } = directFor(session);
+  onControl(session, { t: "peer", seat: 2, present: true });
+  direct.onSignal({ t: "rtc-offer", n: 1, sdp: "offer-sdp", from: 2 });
+  await settle();
+  direct.onLink(2, true);
+  onControl(session, { t: "peer", seat: 2, present: false });
+  assert.equal(direct.state(2), "direct");
+  onControl(session, { t: "peer", seat: 2, present: true });
+  assert.ok(FakePc.all[0].closed);
+  assert.equal(direct.state(2), "relay");
+  assert.equal(session.guests.get(2).present, true);
+});
+
+test("host: its own relay reconnect keeps the direct links", async () => {
+  const session = fakeSession("host");
+  const { direct } = directFor(session);
+  onControl(session, { t: "peer", seat: 1, present: true });
+  direct.onSignal({ t: "rtc-offer", n: 1, sdp: "offer-sdp", from: 1 });
+  await settle();
+  direct.onLink(1, true);
+  relayClosed(session);
+  onControl(session, { t: "welcome", guests: [1] });
+  assert.equal(direct.state(1), "direct");
+});
+
 test("host: a guest the relay lost while its link was down has left", async () => {
   const session = fakeSession("host");
   directFor(session);
@@ -403,6 +430,51 @@ test("host: a guest the relay lost while its link was down has left", async () =
   onControl(session, { t: "peer", seat: 1, present: false });
   assert.equal(session.guests.get(1).present, false);
   assert.equal(session.guests.has(3), false);
+});
+
+// --- the card (src/session/lobby.js, src/ui/view.js) ---
+
+globalThis.window ??= {};
+const { hostRoster, guestRoster } = await import("../src/session/lobby.js");
+const { connectionText } = await import("../src/session/lobby.js");
+
+test("hostRoster: each present guest shows its path, the host and free seats none", async () => {
+  const session = fakeSession("host");
+  const { direct } = directFor(session);
+  session.name = "Lucas";
+  session.stats = { rtts: { 1: 12, 2: 40 } };
+  onControl(session, { t: "peer", seat: 1, present: true });
+  onControl(session, { t: "peer", seat: 2, present: true });
+  direct.onSignal({ t: "rtc-offer", n: 1, sdp: "offer-sdp", from: 1 });
+  await settle();
+  direct.onLink(1, true);
+  const { players } = hostRoster(session);
+  assert.deepEqual(players.map((p) => p.path), [null, "direct", "relay", null]);
+});
+
+test("guestRoster: a guest's own row shows its own path", async () => {
+  const session = fakeSession("guest");
+  const { direct } = directFor(session);
+  session.name = "Friend";
+  session.phase = "connected";
+  session.lobby = { players: [{ n: 1, host: true }, { n: 2, path: "relay" }, { n: 3, path: "relay" }, { n: 4 }] };
+  direct.tick();
+  await settle();
+  direct.onSignal({ t: "rtc-answer", n: 1, sdp: "answer-sdp" });
+  await settle();
+  direct.onLink(0, true);
+  const players = guestRoster(session);
+  assert.equal(players[1].path, "direct");
+  assert.equal(players[2].path, "relay");
+});
+
+test("connectionText: a guest sees its own path, the host a count", () => {
+  assert.equal(connectionText({ mode: "guest", direct: { state: () => "direct" } }), "Direct");
+  assert.equal(connectionText({ mode: "guest", direct: { state: () => "connecting" } }), "Connecting…");
+  assert.equal(connectionText({ mode: "guest", direct: null }), "Relay");
+  const host = { mode: "host", guests: new Map([[1, { seat: 1, present: true }], [2, { seat: 2, present: true }], [3, { seat: 3, present: false }]]), links: new Map([[1, "direct"]]) };
+  assert.equal(connectionText(host), "1 Direct, 1 Relay");
+  assert.equal(connectionText({ mode: "host", guests: new Map(), links: new Map() }), null);
 });
 
 let failed = 0;

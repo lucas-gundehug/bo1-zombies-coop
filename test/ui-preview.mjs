@@ -43,34 +43,34 @@ const fake = ({ screen, mem = true, coop }) => {
 
 const scenes = [
   { name: "1-solo", url: "/bsz/", run: null },
-  { name: "2-host-lobby", url: `/bsz/?coop=host&coopRoom=${ROOM}`, run: { screen: "ready", coop: {
+  { name: "2-host-lobby", url: `/bsz/#coop=host&coopRoom=${ROOM}`, run: { screen: "ready", coop: {
     set: { zone: "zombie_theater", name: "Allan", peer: true, gate: false },
     clients: [{ slot: 1, state: 5, loopback: true, port: 2406 }, { slot: 2, state: 3, loopback: true, port: 2407 }],
     guests: [{ seat: 1, state: { phase: "connected", name: "Rafa" } }, { seat: 2, state: { phase: "joining", name: "Bruno" } }, { seat: 3, state: { phase: "loading", name: "" } }],
     stats: { rtt: 142, rtts: { 1: 38, 2: 142, 3: 260 }, lost: 0 } } } },
-  { name: "3-host-picking", url: `/bsz/?coop=host&coopRoom=${ROOM}`, run: { screen: "landing", mem: false, coop: { set: { name: "Allan" }, stats: { rtt: null, rtts: {} } } } },
-  { name: "4-guest-joining", url: `/bsz/?coop=join&coopRoom=${ROOM}`, run: { screen: "loading", coop: {
+  { name: "3-host-picking", url: `/bsz/#coop=host&coopRoom=${ROOM}`, run: { screen: "landing", mem: false, coop: { set: { name: "Allan" }, stats: { rtt: null, rtts: {} } } } },
+  { name: "4-guest-joining", url: `/bsz/#coop=join&coopRoom=${ROOM}`, run: { screen: "loading", coop: {
     set: { phase: "loading", seat: 2, peer: true, name: "Bruno", hostInfo: { slug: "kino", zone: "zombie_theater" },
       lobby: { t: "lobby", slug: "kino", horde: false, playing: false, players: [
-        { n: 1, name: "Allan", host: true, status: "lobby", tone: "ok" }, { n: 2, name: "Rafa", status: "ready", tone: "ok", ping: 38 },
-        { n: 3, name: "Bruno", status: "loading", tone: "wait", ping: 90 }, { n: 4, name: "", status: "free", tone: "" }] } },
+        { n: 1, name: "Allan", host: true, status: "lobby", tone: "ok" }, { n: 2, name: "Rafa", status: "ready", tone: "ok", ping: 38, path: "direct" },
+        { n: 3, name: "Bruno", status: "loading", tone: "wait", ping: 90, path: "relay" }, { n: 4, name: "", status: "free", tone: "" }] } },
     stats: { rtt: 91 } } } },
-  { name: "5-guest-lobby-settings", url: `/bsz/?coop=join&coopRoom=${ROOM}`, run: { screen: "ready", coop: {
+  { name: "5-guest-lobby-settings", url: `/bsz/#coop=join&coopRoom=${ROOM}`, run: { screen: "ready", coop: {
     set: { phase: "connected", seat: 1, peer: true, name: "Rafa", showSettings: true, hostInfo: { slug: "kino", zone: "zombie_theater" }, hostState: { screen: "ready", ready: true },
       usage: { fraction: 0.12, resetsAt: new Date(Date.now() + 5 * 3600e3).toISOString() },
       lobby: { t: "lobby", slug: "kino", horde: true, playing: false, players: [
-        { n: 1, name: "Allan", host: true, status: "lobby", tone: "ok" }, { n: 2, name: "Rafa", status: "ready", tone: "ok", ping: 38 },
-        { n: 3, name: "Bruno", status: "ready", tone: "ok", ping: 142 }, { n: 4, name: "Leo", status: "turn", tone: "wait", ping: 210 }] } },
+        { n: 1, name: "Allan", host: true, status: "lobby", tone: "ok" }, { n: 2, name: "Rafa", status: "ready", tone: "ok", ping: 38, path: "direct" },
+        { n: 3, name: "Bruno", status: "ready", tone: "ok", ping: 142, path: "direct" }, { n: 4, name: "Leo", status: "turn", tone: "wait", ping: 210, path: "relay" }] } },
     stats: { rtt: 38, lost: 0 } } } },
-  { name: "6-guest-error", url: `/bsz/?coop=join&coopRoom=${ROOM}`, run: { screen: "error", coop: {
+  { name: "6-guest-error", url: `/bsz/#coop=join&coopRoom=${ROOM}`, run: { screen: "error", coop: {
     set: { phase: "failed", seat: 3, peer: true, name: "Leo", lastStep: 3, error: null },
     stats: { rtt: 120 } } } },
-  { name: "7-host-ingame-pill", url: `/bsz/?coop=host&coopRoom=${ROOM}`, run: { screen: "playing", coop: {
+  { name: "7-host-ingame-pill", url: `/bsz/#coop=host&coopRoom=${ROOM}`, run: { screen: "playing", coop: {
     set: { zone: "zombie_theater", name: "Allan", peer: true },
     clients: [{ slot: 1, state: 5, loopback: true, port: 2406 }, { slot: 2, state: 5, loopback: true, port: 2407 }],
     guests: [{ seat: 1, state: { phase: "connected", name: "Rafa" } }, { seat: 2, state: { phase: "connected", name: "Bruno" } }],
     stats: { rtt: 64, rtts: { 1: 38, 2: 64 } } } } },
-  { name: "8-host-fun", tall: true, url: `/bsz/?coop=host&coopRoom=${ROOM}`, run: { screen: "ready", coop: {
+  { name: "8-host-fun", tall: true, url: `/bsz/#coop=host&coopRoom=${ROOM}`, run: { screen: "ready", coop: {
     set: { zone: "zombie_theater", name: "Allan", peer: true },
     clients: [{ slot: 1, state: 5, loopback: true, port: 2406 }],
     guests: [{ seat: 1, state: { phase: "connected", name: "Rafa" }, slot: { slot: 1, state: 5 } }],
@@ -92,7 +92,7 @@ const scenes = [
 for (const scene of scenes.filter((s) => !process.env.ONLY || s.name.includes(process.env.ONLY))) {
   const page = await ctx.newPage();
   if (scene.tall) await page.setViewportSize({ width: 1100, height: 2600 });
-  await page.goto(`https://vel.gg${scene.url}${scene.url.includes("?") ? "&coopRelay=http%3A%2F%2F127.0.0.1%3A9" : ""}`);
+  await page.goto(`https://vel.gg${scene.url}${/[?#]coop=/.test(scene.url) && !scene.url.includes("coopRelay") ? "&coopRelay=http%3A%2F%2F127.0.0.1%3A9" : ""}`);
   await page.waitForFunction(() => window.__bo1Coop?.card);
   if (scene.run) await page.evaluate(fake, scene.run);
   await page.waitForTimeout(600);

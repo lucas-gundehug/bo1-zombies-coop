@@ -21,6 +21,9 @@ function onHostMessage(session, message) {
       break;
     case "peer":
       if (!validSeat(message.seat)) return;
+      // A seat the relay had let go and now hands out again may be someone else: the direct link made with whoever
+      // had it is dropped, and the seat's player (the same one, usually) sets up a fresh one.
+      if (message.present && !session.relayGuests.has(message.seat)) session.direct?.drop(message.seat);
       if (message.present) session.relayGuests.add(message.seat);
       else session.relayGuests.delete(message.seat);
       syncPresence(session, message.seat);
