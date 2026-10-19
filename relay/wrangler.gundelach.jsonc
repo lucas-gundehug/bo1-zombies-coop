@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Lucas's own relay, served at https://blackops.gundelach.pw (a Worker custom domain on the gundelach.pw zone).
+  // Same Worker and Durable Objects as wrangler.jsonc; this file only adds the domain and keeps the workers.dev
+  // address off, so a deploy from here never brings back bo1-zombies-coop-relay.<account>.workers.dev.
+  // Deploy: npm run relay:deploy:own
+  "name": "bo1-zombies-coop-relay",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-08",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "blackops.gundelach.pw", "custom_domain": true }],
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOM_RELAY", "class_name": "RoomRelay" },
+      { "name": "USAGE", "class_name": "UsageCounter" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["RoomRelay"] },
+    { "tag": "v2", "new_sqlite_classes": ["UsageCounter"] }
+  ],
+  "observability": { "enabled": true },
+  "vars": {
+    // Pages allowed to open rooms (requests without an Origin header, such as tests, are accepted too).
+    "ALLOWED_ORIGINS": "https://vel.gg"
+  }
+}
