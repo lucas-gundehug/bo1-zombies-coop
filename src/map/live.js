@@ -9,6 +9,7 @@ import { funPlayers } from "../fun/fun.js";
 import { currentZone, MAP_SLUGS, screen } from "../game/page.js";
 import { floorOf } from "./plan.js";
 import { planFor } from "./plans/index.js";
+import { pushSample } from "./track.js";
 
 const LIVE_EVERY_MS = 250;
 const BITS = /^[01]*$/;
@@ -52,6 +53,8 @@ export function onMapLine(session, name, value) {
       const n = numbers.get(p.ent);
       if (!n) continue;
       map.live.set(n, { x: p.x, y: p.y, z: p.z, yaw: p.yaw, room: p.room, s: p.s, floor: map.plan ? floorOf(map.plan, p.z, p.x, p.y) : 0, at: now });
+      if (!map.tracks.has(n)) map.tracks.set(n, []);
+      pushSample(map.tracks.get(n), now, p.x, p.y, p.yaw);
     }
     map.liveV = live.v;
     // A lower counter is a restarted game (game over in the same page): its state is new, not old.

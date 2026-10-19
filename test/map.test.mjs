@@ -6,6 +6,10 @@ import { createMap } from "../src/map/state.js";
 import { mapTick, onMapLine, parseLive, parseMapState } from "../src/map/live.js";
 import { createBridge, onCheatsLine } from "../src/cheats/bridge.js";
 import { SLOT } from "../src/engine/builds.js";
+import { pushSample, sampleTrack } from "../src/map/track.js";
+import { mapModel } from "../src/map/model.js";
+import { roomName } from "../src/map/names.js";
+import { PLAYER_COLORS } from "../src/ui/card.js";
 
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
@@ -254,6 +258,164 @@ test("cheats_map_ lines reach the map through the cheat bridge", () => {
   session.cheats = { ...createBridge(), ok: true };
   onCheatsLine(session, '"cheats_map_live" is: "v=1 p=0,100,-200,64,90,2,0^7" default: "^7"');
   assert.equal(session.map.live.get(1).room, 2);
+});
+
+// ---- gliding tracks and the model the panel draws (src/map/track.js, src/map/model.js) ----
+
+test("sampleTrack glides between samples and turns the short way round", () => {
+  const track = [];
+  pushSample(track, 0, 0, 0, 350);
+  pushSample(track, 250, 100, 0, 10);
+  const mid = sampleTrack(track, 125);
+  assert.ok(Math.abs(mid.x - 50) < 1e-9);
+  assert.ok(Math.abs(mid.yaw % 360) < 1e-9);
+  assert.deepEqual(sampleTrack(track, 400), { x: 100, y: 0, yaw: 10 });
+  assert.deepEqual(sampleTrack(track, -50), { x: 0, y: 0, yaw: 350 });
+  assert.equal(sampleTrack([], 100), null);
+});
+
+test("a track keeps its last 8 samples", () => {
+  const track = [];
+  for (let i = 0; i < 12; i += 1) pushSample(track, i * 250, i, 0, 0);
+  assert.equal(track.length, 8);
+  assert.equal(track[0].x, 4);
+});
+
+test("onMapLine feeds the gliding tracks", () => {
+  const session = hostSession();
+  onMapLine(session, "cheats_map_live", "v=1 p=1,5,6,7,-45,0,0");
+  onMapLine(session, "cheats_map_live", "v=1 p=1,15,6,7,-45,0,0");
+  assert.deepEqual(session.map.tracks.get(2).map((s) => s.x), [5, 15]);
+});
+
+/** A host session with the host (n 1) and Jonas (n 2) both seen just now, and a matching state. */
+function modelSession(now) {
+  const session = hostSession();
+  session.map.live.set(1, { x: 100, y: 100, z: 50, yaw: 90, room: 0, s: 0, floor: 0, at: now });
+  session.map.live.set(2, { x: 1100, y: 200, z: 50, yaw: 0, room: 1, s: 0, floor: 0, at: now });
+  pushSample((session.map.tracks.set(2, []), session.map.tracks.get(2)), now - 500, 1000, 200, 0);
+  pushSample(session.map.tracks.get(2), now - 250, 1100, 200, 0);
+  session.map.state = { v: 1, sig: "z3d2", doors: [false, true], rooms: [true, false, false], box: [0], power: false, at: now };
+  session.map.planOk = true;
+  return session;
+}
+const VIEW = { origin: [120, 130, 110], angles: [0, 45, 0] };
+
+test("mapModel draws each player with their colour and first letter; mine from my camera", () => {
+  const now = 100000;
+  const model = mapModel(modelSession(now), now, { view: VIEW });
+  assert.equal(model.status, "ok");
+  const [me, jonas] = model.players;
+  assert.deepEqual([me.n, me.letter, me.color, me.me, me.x, me.y, me.yaw], [1, "L", PLAYER_COLORS[0], true, 120, 130, 45]);
+  assert.deepEqual([jonas.n, jonas.letter, jonas.color, jonas.me], [2, "J", PLAYER_COLORS[1], false]);
+  assert.equal(model.room, "Foyer");
+  assert.deepEqual(model.legend.map((l) => l.name), ["Lucas", "jonas"]);
+});
+
+test("others are drawn 300 ms in the past, between two samples", () => {
+  const now = 100000;
+  const jonas = mapModel(modelSession(now), now, { view: VIEW }).players[1];
+  assert.ok(Math.abs(jonas.x - 1080) < 1e-9, `x ${jonas.x}`); // 300 ms back from the newest: 0.8 of the way from 1000 to 1100
+});
+
+test("a downed player gets a ring, a spectator is left out", () => {
+  const now = 100000;
+  const session = modelSession(now);
+  session.map.live.get(2).s = 1;
+  assert.equal(mapModel(session, now, { view: VIEW }).players[1].downed, true);
+  session.map.live.get(2).s = 2;
+  const model = mapModel(session, now, { view: VIEW });
+  assert.deepEqual(model.players.map((p) => p.n), [1]);
+  assert.deepEqual(model.legend.map((l) => l.letter), ["L"]);
+});
+
+test("a player not heard from for 2 s is dropped with their track; a new one shows up", () => {
+  const now = 100000;
+  const session = modelSession(now);
+  session.map.live.get(2).at = now - 2100;
+  const model = mapModel(session, now, { view: VIEW });
+  assert.deepEqual(model.players.map((p) => p.n), [1]);
+  assert.equal(session.map.tracks.has(2), false);
+  onMapLine(session, "cheats_map_live", "v=1 p=0,100,100,50,90,0,0;1,1100,200,50,0,1,0");
+  assert.deepEqual(mapModel(session, Date.now(), { view: VIEW }).players.map((p) => p.n), [1, 2]);
+});
+
+test("closed doors and room states come from the state", () => {
+  const now = 100000;
+  const model = mapModel(modelSession(now), now, { view: VIEW });
+  assert.deepEqual(
+    model.doors.map((d) => d.index),
+    [0],
+  );
+  assert.equal(model.doors[0].cost, 1000);
+  assert.deepEqual(
+    model.rooms.map((r) => [r.open, r.current]),
+    [
+      [true, true],
+      [false, false],
+      [false, false],
+    ],
+  );
+  const box = model.pois.find((p) => p.kind === "box");
+  assert.equal(box.active, true);
+  assert.equal(model.stale, false);
+});
+
+test("with a plan that doesn't match, players stay but doors and rooms are hidden", () => {
+  const now = 100000;
+  const session = modelSession(now);
+  session.map.planOk = false;
+  const model = mapModel(session, now, { view: VIEW });
+  assert.deepEqual(model.doors, []);
+  assert.ok(model.rooms.every((r) => r.open === null));
+  assert.equal(model.stale, true);
+  assert.equal(model.players.length, 2);
+});
+
+test("no plan, waiting, and no data", () => {
+  const now = 100000;
+  const noPlan = modelSession(now);
+  noPlan.map.plan = null;
+  assert.equal(mapModel(noPlan, now, { view: VIEW }).status, "noPlan");
+  const empty = hostSession();
+  empty.map.openedAt = now - 1000;
+  assert.equal(mapModel(empty, now, { view: VIEW }).status, "waiting");
+  empty.map.openedAt = now - 5001;
+  assert.equal(mapModel(empty, now, { view: VIEW }).status, "noData");
+});
+
+test("friends on another floor show on that floor's button", () => {
+  const now = 100000;
+  const session = modelSession(now);
+  session.map.live.get(2).floor = 1;
+  const model = mapModel(session, now, { view: VIEW });
+  assert.deepEqual(
+    model.floors.map((f) => [f.name, f.current, f.others]),
+    [
+      ["Ground floor", true, []],
+      ["Upstairs", false, ["J"]],
+    ],
+  );
+});
+
+test("a guest sees itself as me, with names from the host's lobby", () => {
+  const now = 100000;
+  const session = modelSession(now);
+  Object.assign(session, { mode: "guest", seat: 1, name: "jonas", lobby: { players: [{ n: 1, name: "Lucas" }, { n: 2, name: "" }] } });
+  const model = mapModel(session, now, { view: VIEW });
+  assert.deepEqual(
+    model.players.map((p) => [p.n, p.letter, p.me]),
+    [
+      [1, "L", false],
+      [2, "J", true],
+    ],
+  );
+});
+
+test("roomName reads a technical name when the table has none", () => {
+  assert.equal(roomName("nacht", "foyer_zone"), "Foyer");
+  assert.equal(roomName("nacht", "west_balcony_zone"), "West balcony");
+  assert.equal(roomName("nacht", "labs_zone3"), "Labs 3");
 });
 
 let failed = 0;

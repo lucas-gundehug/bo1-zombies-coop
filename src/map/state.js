@@ -4,6 +4,7 @@
 export function createMap() {
   return {
     open: false,
+    openedAt: null, // when the panel was last opened (the "no data" note waits a few seconds)
     slug: null,
     plan: null,
     tracks: new Map(), // n -> track of recent positions, for gliding (src/map/track.js)
