@@ -47,6 +47,7 @@ const dvars = new Map();
 page.on("console", (message) => {
   const match = message.text().match(/^"(cheats_\w+)" is: "(.*?)\^7"/);
   if (match) dvars.set(match[1], match[2]);
+  else if (/cheats|script compile|unknown function|bad syntax/i.test(message.text())) log("[game]", message.text().slice(0, 300));
 });
 
 let shot = 0;
@@ -105,7 +106,123 @@ async function waitReady(timeoutMs = 90000) {
   return null;
 }
 
+let seq = 0;
+/** Sends one cheat command and waits for its result: { ok, code, detail }. */
+async function run(cmd, timeoutMs = 20000) {
+  seq += 1;
+  const mine = seq;
+  await command(`set cheats_cmd "${mine} ${cmd}"`);
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    const result = await readDvar("cheats_result", 2000);
+    if (result?.startsWith(`${mine} `)) {
+      const [, status, code = "", ...rest] = result.split(" ");
+      log(`  ${cmd} -> ${result}`);
+      return { ok: status === "ok", code, detail: rest.join(" ") };
+    }
+    await wait(300);
+  }
+  throw new Error(`no result for "${cmd}"`);
+}
+
+/** The game script's published state as an object (numbers and booleans). */
+async function state() {
+  const value = (await readDvar("cheats_state")) ?? "";
+  return Object.fromEntries(value.split(" ").filter(Boolean).map((pair) => pair.split("=")).map(([k, v]) => [k, Number(v)]));
+}
+
+/** Waits until the published state satisfies `test`. */
+async function until(test, timeoutMs, what) {
+  const end = Date.now() + timeoutMs;
+  let last = null;
+  while (Date.now() < end) {
+    last = await state();
+    if (test(last)) return last;
+    await wait(1000);
+  }
+  throw new Error(`${what}: last state ${JSON.stringify(last)}`);
+}
+
+/** Player 0's points, read where Fun mode reads them (src/fun/fun.js). */
+const score = () =>
+  page.evaluate(() => {
+    const { build, engine } = window.__bo1Coop;
+    const f = build.fun;
+    const client = engine.int(f.entities + f.ent.client);
+    return engine.int(client + f.client.score);
+  });
+
 const scenarios = {
+  async actions() {
+    // Also sends "clear" (zombies left this round = 0, every zombie killed): what makes a round end on its own.
+    await setCheats(true);
+    await startMap();
+    assert.ok(await waitReady(), "the game script never reported ready");
+    await command("god"); // the test player stands still; zombies must not end the game
+    await until((s) => s.lists >= 1, 30000, "lists published");
+    const chunks = Number(await readDvar("cheats_weapons_count"));
+    const weapons = [];
+    for (let i = 0; i < chunks; i += 1) weapons.push(...(await readDvar(`cheats_weapons_${i}`)).split(","));
+    const perks = (await readDvar("cheats_perks")).split(",");
+    const powerups = (await readDvar("cheats_powerups")).split(",");
+    log("weapons:", weapons.join(" "));
+    log("perks:", perks.join(" "));
+    log("power-ups:", powerups.join(" "));
+    assert.ok(weapons.includes("ray_gun_zm") && weapons.length > 10, "weapon list");
+    assert.ok(perks.includes("specialty_armorvest"), "perk list");
+    assert.ok(powerups.includes("full_ammo"), "power-up list");
+
+    assert.equal((await run("give 0 ray_gun_zm")).ok, true, "give");
+    await wait(2000);
+    assert.equal((await run("pap 0")).ok, true, "pap");
+    await wait(2000);
+    assert.equal((await run("pap 0")).code, "has_upgrade", "pap twice");
+    const before = await score();
+    assert.equal((await run("perk 0 specialty_armorvest", 30000)).ok, true, "perk");
+    assert.equal(await score(), before, "a perk is free");
+    assert.equal((await run("powerup 0 full_ammo")).ok, true, "power-up");
+    assert.equal((await run("give 3 ray_gun_zm")).code, "no_player", "missing player");
+    assert.equal((await run("give 0 not_a_weapon_zm")).code, "no_weapon", "unknown weapon");
+    await snap("given");
+
+    assert.equal((await run("round 10")).ok, true, "round 10");
+    await until((s) => s.round === 10, 60000, "round 10");
+    assert.equal((await run("round 3")).ok, true, "round 3");
+    await until((s) => s.round === 3, 60000, "back to round 3");
+
+    assert.equal((await run("freeze 1")).ok, true, "freeze");
+    await wait(5000);
+    assert.equal((await run("clear")).ok, true, "clear");
+    await wait(20000);
+    const frozen = await state();
+    assert.equal(frozen.round, 3, "a frozen round does not advance");
+    assert.equal(frozen.frozen, 1, "state says frozen");
+    await snap("frozen");
+    log("frozen state:", JSON.stringify(frozen));
+    assert.equal((await run("freeze 0")).ok, true, "unfreeze");
+    await wait(5000);
+    log("after unfreezing:", JSON.stringify(await state()));
+    await until((s) => s.round === 4, 60000, "the round moves on after unfreezing");
+  },
+  async freeze() {
+    await setCheats(true);
+    await startMap();
+    assert.ok(await waitReady(), "ready");
+    await command("god");
+    await until((s) => s.active === 1, 60000, "round active");
+    await run("freeze 1");
+    await wait(3000);
+    await run("clear");
+    for (let i = 0; i < 4; i += 1) {
+      log("frozen:", JSON.stringify(await state()));
+      await wait(3000);
+    }
+    await run("freeze 0");
+    for (let i = 0; i < 16; i += 1) {
+      log("after:", JSON.stringify(await state()));
+      await wait(4000);
+    }
+  },
   async load() {
     await setCheats(true);
     await startMap();
