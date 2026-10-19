@@ -11,6 +11,7 @@
     "check": "npm run lint && npm run build && node test/cheats.test.mjs && node test/patch.test.mjs",
     "relay:dev": "wrangler dev --config relay/wrangler.jsonc --port 8787 --ip 127.0.0.1",
     "relay:deploy": "wrangler deploy --config relay/wrangler.jsonc --name bo1z-coop-4p-relay",
+    "relay:deploy:own": "wrangler deploy --config relay/wrangler.gundelach.jsonc",
     "test:relay": "node test/relay.test.mjs",
     "test:e2e": "node test/e2e.mjs",
     "preview": "node test/ui-preview.mjs",

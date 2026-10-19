@@ -39,6 +39,14 @@ Bump `extension/manifest.json` `version` (4 parts, e.g. `2.2.2.1`; the third par
 `zipfile`, `manifest.json` at the top level), then `gh release create v<version> dist/bo1-zombies-coop.zip` on
 `lucas-gundehug/bo1-zombies-coop`. The card's update notice reads this fork's releases.
 
+## Lucas's relay
+
+Worker `bo1-zombies-coop-relay` on Lucas's Cloudflare account, served only at `https://blackops.gundelach.pw` (Worker
+custom domain on the `gundelach.pw` zone; its workers.dev address is off). Deploy it with `npm run relay:deploy:own`
+(`relay/wrangler.gundelach.jsonc`), never with `relay/wrangler.jsonc`, which would turn the workers.dev address back
+on. Live check: `node test/relay.test.mjs https://blackops.gundelach.pw`. It runs on the Workers Free plan (100,000
+requests a day); keep it there. Changes to the domain or DNS need Lucas's yes first.
+
 ## Rules
 
 - Commits use `lucas.g@live.dk`. Work on a branch; Lucas merges.
