@@ -2,7 +2,7 @@
 //   node test/cheats-e2e.mjs [map=kino] [scenario=load]
 // Scenarios: load (the script reports ready), off (with the setting off nothing loads), actions (every command, Task 2).
 // PROFILE=<dir> reuses a browser profile (the map packs are downloaded once per profile and kept), default in the OS
-// temp folder. SHOTS=<dir> saves a screenshot after each step.
+// temp folder. SHOTS=<dir> saves a screenshot after each step. HORDE=1 plays vel.gg's Hell mode (?horde=1).
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -82,7 +82,7 @@ async function setCheats(on) {
 }
 
 async function startMap() {
-  await page.goto(`https://vel.gg/bsz/${MAP}/`, { waitUntil: "domcontentloaded" });
+  await page.goto(`https://vel.gg/bsz/${MAP}/${process.env.HORDE ? "?horde=1" : ""}`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => [...document.querySelectorAll("button")].some((b) => b.innerText?.trim() === "PLAY"), null, { timeout: 60000 });
   await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.innerText?.trim() === "PLAY").click());
   log("loading", MAP);
