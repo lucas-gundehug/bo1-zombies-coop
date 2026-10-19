@@ -55,6 +55,8 @@ const WEAPONS = {
   sickle_knife_zm: "Sickle",
   m2_flamethrower_zm: "M2 Flamethrower",
   zombie_kar98k: "Kar98k",
+  kar98k_scoped_zombie: "Scoped Kar98k",
+  mine_bouncing_betty: "Bouncing Betties",
   zombie_type99_rifle: "Arisaka",
   zombie_gewehr43: "Gewehr 43",
   zombie_m1carbine: "M1 Carbine",

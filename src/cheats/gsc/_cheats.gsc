@@ -340,7 +340,9 @@ cheats_power_on( player )
 }
 
 // uses the perk's own machine for the player (the retail bottle, HUD and effect), as sandbox pad_perk(); free: the
-// points it costs are given first and the score is set back afterwards
+// points it costs are given first and the score is set back afterwards. The machine refuses a fifth perk (BO1's limit
+// of 4, counted in num_perks; seen in game on Shangri-La and Moon): the count is lowered while the machine is used and
+// set to the real number afterwards.
 cheats_perk( perk )
 {
 	machine = undefined;
@@ -368,8 +370,25 @@ cheats_perk( perk )
 	}
 	score = self.score;
 	self.score = score + 20000;
+	perks = self.num_perks;
+	if ( IsDefined( perks ) && perks >= 4 )
+	{
+		self.num_perks = 3;
+	}
 	for ( attempt = 0; attempt < 5 && !self HasPerk( perk ); attempt++ )
 	{
+		// The World at War maps power their own machines without the "power_on" flag, and vel.gg's added Mule Kick
+		// waits for that flag (seen on Verruckt: switch used, other perks given, power_on never set, Mule Kick
+		// untouched). After a failed try, with the switch already used: set it and send the machine's own event.
+		if ( attempt == 1 )
+		{
+			if ( !cheats_flag( "power_on" ) )
+			{
+				flag_set( "power_on" );
+			}
+			level notify( cheats_power_event( perk ) );
+			wait( 1 );
+		}
 		machine notify( "trigger", self );
 		for ( i = 0; i < 30 && !self HasPerk( perk ); i++ )
 		{
@@ -381,10 +400,17 @@ cheats_perk( perk )
 	{
 		wait( .1 );
 	}
+	spent = score + 20000 - self.score;
 	self.score = score;
 	if ( !self HasPerk( perk ) )
 	{
+		SetDvar( "cheats_debug", "perk " + perk + " origin " + machine.origin + " spent " + spent + " machine_origin_defined " + IsDefined( level.zombie_additionalprimaryweapon_machine_origin ) + " num_perks " + self.num_perks + " power " + cheats_flag( "power_on" ) );
+		self.num_perks = perks;
 		return "perk_failed " + perk;
+	}
+	if ( IsDefined( perks ) )
+	{
+		self.num_perks = perks + 1;
 	}
 	return "";
 }

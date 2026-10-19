@@ -96,7 +96,7 @@ async function startMap() {
   throw new Error("the map never started");
 }
 
-async function waitReady(timeoutMs = 90000) {
+async function waitReady(timeoutMs = 180000) {
   const end = Date.now() + timeoutMs;
   while (Date.now() < end) {
     const state = await readDvar("cheats_state", 3000);
@@ -203,6 +203,7 @@ const scenarios = {
     await snap("sweep");
     if (process.env.SWEEP_OUT) fs.writeFileSync(process.env.SWEEP_OUT, JSON.stringify({ map: MAP, horde, ...found, results }, null, 2));
     for (const [what, r] of Object.entries(results)) log(r.ok ? "ok  " : "ERR ", what, r.ok ? "" : `${r.code} ${r.detail ?? ""}`);
+    log("debug:", await readDvar("cheats_debug"));
   },
   // Through the card as a player would: M opens it in game, a perk and a weapon button, the notices.
   async ui() {

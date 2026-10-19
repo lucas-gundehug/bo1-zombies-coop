@@ -9,6 +9,8 @@
 // GUEST_FIRST_S=<s> guests click in first and the host that long after, guests standing still.
 //
 // EXT=<folder> tests another build of the extension (an unzipped release, say) instead of ./extension.
+// GUEST_EXT=<folder> gives the guests another build than the host (the public release while the host runs this fork).
+// CHEATS=1 (fork): once everyone is in, the host gives the first guest a Ray Gun and Juggernog through the cheat menu.
 //
 // LITE=1 is easy on the machine: one browser and one profile for everyone (the map pack is downloaded and stored once,
 // and later runs reuse it), small windows, vel.gg's low graphics quality at half resolution, no sound, and the game
@@ -44,9 +46,10 @@ const t0 = Date.now();
 const log = (...args) => console.log(((Date.now() - t0) / 1000).toFixed(1).padStart(6), ...args);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const extensionFor = (i) => (i > 0 && process.env.GUEST_EXT ? path.resolve(process.env.GUEST_EXT) : extension);
 const browserArgs = (i) => [
-  `--disable-extensions-except=${extension}`,
-  `--load-extension=${extension}`,
+  `--disable-extensions-except=${extensionFor(i)}`,
+  `--load-extension=${extensionFor(i)}`,
   "--disable-background-timer-throttling",
   "--disable-renderer-backgrounding",
   "--disable-backgrounding-occluded-windows",
@@ -257,6 +260,23 @@ if (allIn) {
   for (const g of guests) {
     const lobby = await g.page.evaluate(() => window.__bo1Coop.lobby?.players?.map((p) => `${p.n}:${p.status}${p.ping != null ? `:${p.ping}ms` : ""}`));
     log(`${g.name} sees the lobby`, JSON.stringify(lobby));
+  }
+  if (process.env.CHEATS && guests.length) {
+    // through the host's card handlers, as clicks on its buttons would; slot 1 is the first guest's player
+    const give = async (act, arg, done) => {
+      await host.page.evaluate(([a, x]) => window.__bo1Coop.card.handlers[a](x), [act, arg]);
+      const shown = await host.page
+        .waitForFunction((d) => (window.__bo1Coop.fun.notice ?? "").includes(d) && window.__bo1Coop.fun.notice, done, { timeout: 45000 })
+        .then((h) => h.jsonValue(), () => null);
+      const notice = await host.page.evaluate(() => window.__bo1Coop.fun.notice);
+      log(`cheat ${act} ${arg}: ${shown ?? `FAILED (notice: ${notice})`}`);
+      if (!shown) ok = false;
+    };
+    await host.page.waitForFunction(() => window.__bo1Coop.cheats?.ready && window.__bo1Coop.cheats.perks.length > 0, null, { timeout: 60000 });
+    await host.page.evaluate(() => window.__bo1Coop.card.handlers.cheatTarget("1"));
+    await give("cheatGive", "ray_gun_zm", "Ray Gun given to");
+    await give("cheatPerk", "specialty_armorvest", "Juggernog given to");
+    await wait(3000);
   }
   for (const p of players) await p.page.screenshot({ path: `${OUT}/${p.name}.png` }).catch(() => {});
 

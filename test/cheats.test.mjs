@@ -118,6 +118,8 @@ test("known ids get their in-game names", () => {
   assert.equal(weaponName("microwavegundw_zm"), "Zap Guns");
   assert.equal(weaponName("m1911_zm"), "M1911");
   assert.equal(weaponName("thundergun_zm"), "Thundergun");
+  assert.equal(weaponName("kar98k_scoped_zombie"), "Scoped Kar98k");
+  assert.equal(weaponName("mine_bouncing_betty"), "Bouncing Betties");
   assert.equal(perkName("specialty_armorvest"), "Juggernog");
   assert.equal(perkName("specialty_additionalprimaryweapon"), "Mule Kick");
   assert.equal(powerupName("full_ammo"), "Max Ammo");
