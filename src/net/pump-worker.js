@@ -2,16 +2,22 @@
 // rendering: it polls the engine's loopback queues every millisecond, batches what it finds to the relay, and writes
 // what the relay delivers back into the engine.
 //
+// Direct links (fork): the page hands over each link's two WebRTC data channels ("link"); while both are open, that
+// seat's game packets and control messages go over them instead of the relay (src/net/routes.js).
+//
 // Host: one reader per guest seat (what the server sends that guest) and one writer (the shared inbound queue, each
 // packet stamped with its sender's port). Guest: one reader (its client's outgoing queue) and one writer (its client's
 // incoming queue, port 0).
 import { decodePackets, decodeSeatPackets, encodePackets, encodeSeatPackets, MAX_BINARY_BYTES, parseControl, relaySocketUrl } from "../../relay/src/protocol.js";
 import { connectionlessCommand, QueueReader, QueueWriter } from "./queues.js";
+import { controlRoutes, createRoutes, isDirect, packetPath, relayPresence } from "./routes.js";
 
 const POLL_MS = 1;
 const FLUSH_MS = 4;
 const INBOX_LIMIT = 512;
 const PING_MS = 2000;
+// A direct game channel with this much still unsent is not keeping up: drop packets rather than queue them up.
+const DIRECT_BUFFER_LIMIT = 256 * 1024;
 
 const state = {
   role: null,
@@ -30,7 +36,10 @@ const state = {
   outbox: [],
   lastFlush: 0,
   looping: false,
-  stats: { packetsOut: 0, packetsIn: 0, bytesOut: 0, bytesIn: 0, framesOut: 0, framesIn: 0, dropped: 0, lost: 0, rtt: null, rtts: {} },
+  relayDown: false,
+  routes: createRoutes(),
+  // framesOut/In and textOut/In count relay frames only; packets and bytes count both paths.
+  stats: { packetsOut: 0, packetsIn: 0, bytesOut: 0, bytesIn: 0, framesOut: 0, framesIn: 0, textOut: 0, textIn: 0, dropped: 0, lost: 0, rtt: null, rtts: {}, paths: {} },
 };
 const hosting = () => state.role === "host";
 const post = (message) => self.postMessage(message);
@@ -63,6 +72,21 @@ self.onmessage = ({ data: message }) => {
     case "send":
       sendText(message.message);
       break;
+    case "link":
+      addLink(message.seat, message.game, message.control);
+      break;
+    case "unlink":
+      removeLink(message.seat);
+      break;
+    case "relay-down":
+      // Test hook (test/e2e.mjs RELAY_DOWN_S): behave as if the relay were gone for the rest of the day.
+      state.relayDown = true;
+      try {
+        state.socket?.close(1000, "relay-down");
+      } catch {
+        // already closed
+      }
+      break;
     case "close":
       state.closed = true;
       try {
@@ -75,7 +99,7 @@ self.onmessage = ({ data: message }) => {
 };
 
 function open() {
-  if (state.closed) return;
+  if (state.closed || state.relayDown) return;
   let socket;
   try {
     socket = new WebSocket(state.url);
@@ -94,6 +118,7 @@ function open() {
   socket.onmessage = ({ data }) => (typeof data === "string" ? onText(data) : onBinary(data));
   socket.onclose = (event) => {
     if (state.socket === socket) state.socket = null;
+    state.routes.relaySeats.clear();
     post({ type: "socket", state: "closed", code: event.code, reason: event.reason });
     // 4001: another tab took this seat; 4004: the room is full. Retrying would not help either.
     if (event.code === 4001 || event.code === 4004) state.closed = true;
@@ -105,7 +130,7 @@ function open() {
 }
 
 function retry() {
-  if (state.closed) return;
+  if (state.closed || state.relayDown) return;
   setTimeout(open, Math.min(5000, 250 * 2 ** state.retries));
   state.retries += 1;
 }
@@ -114,6 +139,11 @@ function onBinary(data) {
   const items = hosting() ? decodeSeatPackets(data) : decodePackets(data)?.map((packet) => ({ seat: 0, packet }));
   if (!items) return;
   state.stats.framesIn += 1;
+  receive(items);
+}
+
+/** Game packets from either path, into the inbox the engine is fed from. */
+function receive(items) {
   for (const item of items) {
     state.stats.packetsIn += 1;
     state.stats.bytesIn += item.packet.byteLength;
@@ -129,8 +159,15 @@ function onBinary(data) {
 }
 
 function onText(text) {
+  state.stats.textIn += 1;
   const message = parseControl(text);
   if (!message) return;
+  if (hosting()) relayPresence(state.routes, message);
+  onControl(message);
+}
+
+/** A control message from the relay or a direct link (stamped with its seat like the relay does). */
+function onControl(message) {
   if (message.t === "ping") {
     sendText(hosting() ? { t: "pong", ts: message.ts, to: message.from } : { t: "pong", ts: message.ts });
   } else if (message.t === "pong") {
@@ -149,9 +186,91 @@ function onText(text) {
 }
 
 function sendText(message) {
-  if (state.socket?.readyState !== WebSocket.OPEN) return false;
-  state.socket.send(JSON.stringify(message));
-  return true;
+  let sent = false;
+  for (const route of controlRoutes(state.routes, message, hosting())) {
+    if (route.via === "direct") {
+      try {
+        state.routes.links.get(route.seat).control.send(JSON.stringify(message));
+        sent = true;
+      } catch {
+        // the channel closed under us; its onclose moves the seat back to the relay
+      }
+    } else if (state.socket?.readyState === WebSocket.OPEN) {
+      state.socket.send(JSON.stringify(route.message));
+      state.stats.textOut += 1;
+      sent = true;
+    }
+  }
+  return sent;
+}
+
+function sendDirect(seat, packet) {
+  const channel = state.routes.links.get(seat).game;
+  if (channel.bufferedAmount > DIRECT_BUFFER_LIMIT) {
+    state.stats.dropped += 1;
+    return;
+  }
+  try {
+    channel.send(packet);
+    state.stats.packetsOut += 1;
+    state.stats.bytesOut += packet.byteLength;
+  } catch {
+    state.stats.dropped += 1;
+  }
+}
+
+/** Takes over a link's data channels (transferred by the page) and reports when the link opens and closes. */
+function addLink(seat, game, control) {
+  removeLink(seat);
+  const link = { game, control, reported: false };
+  state.routes.links.set(seat, link);
+  game.binaryType = "arraybuffer";
+  const opened = () => {
+    if (state.routes.links.get(seat) !== link || link.reported || !isDirect(state.routes, seat)) return;
+    link.reported = true;
+    post({ type: "link", seat, open: true });
+  };
+  const closed = () => {
+    if (state.routes.links.get(seat) === link) removeLink(seat);
+  };
+  for (const channel of [game, control]) {
+    channel.onopen = opened;
+    channel.onclose = closed;
+    channel.onerror = closed;
+  }
+  game.onmessage = ({ data }) => {
+    if (!(data instanceof ArrayBuffer)) return;
+    receive([{ seat, packet: new Uint8Array(data) }]);
+    pump();
+  };
+  control.onmessage = ({ data }) => {
+    const message = typeof data === "string" ? parseControl(data) : null;
+    if (!message) return;
+    if (hosting()) message.from = seat;
+    onControl(message);
+  };
+  opened();
+}
+
+function removeLink(seat) {
+  const link = state.routes.links.get(seat);
+  if (!link) return;
+  state.routes.links.delete(seat);
+  for (const channel of [link.game, link.control]) {
+    channel.onopen = channel.onclose = channel.onerror = channel.onmessage = null;
+    try {
+      channel.close();
+    } catch {
+      // already closed
+    }
+  }
+  if (link.reported) post({ type: "link", seat, open: false });
+}
+
+/** seat -> "direct" | "relay" for the stats (a guest has the one link to the host, seat 0). */
+function paths() {
+  const seats = hosting() ? new Set([...state.routes.links.keys(), ...state.routes.relaySeats]) : [0];
+  return Object.fromEntries([...seats].map((seat) => [seat, packetPath(state.routes, seat)]));
 }
 
 function flush(now) {
@@ -198,7 +317,10 @@ function pump() {
         packets = first < 0 ? [] : packets.slice(first);
         if (first >= 0) state.dropUntilConnect = false;
       }
-      for (const packet of packets) state.outbox.push({ seat, packet });
+      for (const packet of packets) {
+        if (packetPath(state.routes, seat) === "direct") sendDirect(seat, packet);
+        else state.outbox.push({ seat, packet });
+      }
     }
     state.stats.lost = lost;
   }
@@ -223,7 +345,7 @@ async function loop() {
     }
     if (now - lastStats >= 1000) {
       lastStats = now;
-      post({ type: "stats", stats: { ...state.stats, rtts: { ...state.stats.rtts }, inbox: state.inbox.length } });
+      post({ type: "stats", stats: { ...state.stats, rtts: { ...state.stats.rtts }, paths: paths(), inbox: state.inbox.length } });
     }
     // Atomics.waitAsync gives ~1 ms sleeps where setTimeout would be clamped.
     const wait = Atomics.waitAsync ? Atomics.waitAsync(tick, 0, 0, POLL_MS) : null;
