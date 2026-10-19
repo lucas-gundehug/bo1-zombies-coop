@@ -4399,13 +4399,15 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
 
   // src/cheats/hotkey.js
   var KEY2 = "KeyM";
-  function onCheatsKey(session, event, { playing, available, freeMouse }) {
+  function onCheatsKey(session, event, { playing, available, freeMouse, lockMouse }) {
     if (event.code !== KEY2 || event.repeat || event.ctrlKey || event.altKey || event.metaKey) return false;
     if (!playing || !available) return false;
     session.cheats.panel = !session.cheats.panel;
     if (session.cheats.panel) {
       session.fun.open = true;
       freeMouse();
+    } else {
+      lockMouse();
     }
     return true;
   }
@@ -4413,18 +4415,49 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     if (locked) session.cheats.panel = false;
   }
   function installCheatsKey(session) {
+    let hideUnlock = false;
+    const ctx = () => ({
+      playing: screen() === "playing",
+      available: funAvailable(session) && Boolean(session.engine),
+      freeMouse: () => {
+        if (!document.pointerLockElement) return;
+        hideUnlock = true;
+        document.exitPointerLock();
+      },
+      lockMouse: () => document.getElementById("game")?.requestPointerLock?.()?.catch?.(() => {
+      })
+    });
+    const showFun = () => setTimeout(() => session.card?.root.querySelector('[data-act="fun"]')?.scrollIntoView({ block: "start" }), 120);
     window.addEventListener(
       "keydown",
       (event) => {
-        const ctx = { playing: screen() === "playing", available: funAvailable(session) && Boolean(session.engine), freeMouse: () => document.exitPointerLock?.() };
-        if (!onCheatsKey(session, event, ctx)) return;
+        if (!onCheatsKey(session, event, ctx())) return;
+        if (session.cheats.panel) showFun();
         event.preventDefault();
         event.stopImmediatePropagation();
       },
       true
     );
-    window.addEventListener("keyup", (event) => event.code === KEY2 && session.cheats.panel !== void 0 && screen() === "playing" && funAvailable(session) && event.stopImmediatePropagation(), true);
-    document.addEventListener("pointerlockchange", () => onPointerLock(session, Boolean(document.pointerLockElement)));
+    window.addEventListener(
+      "keyup",
+      (event) => {
+        if (event.code === KEY2 && screen() === "playing" && funAvailable(session)) event.stopImmediatePropagation();
+      },
+      true
+    );
+    window.addEventListener(
+      "pointerlockchange",
+      (event) => {
+        const locked = Boolean(document.pointerLockElement);
+        if (!locked && hideUnlock) {
+          hideUnlock = false;
+          event.stopImmediatePropagation();
+          return;
+        }
+        onPointerLock(session, locked);
+      },
+      true
+    );
   }
 
   // src/util/updates.js

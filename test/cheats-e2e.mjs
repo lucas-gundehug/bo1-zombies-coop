@@ -152,7 +152,78 @@ const score = () =>
     return engine.int(client + f.client.score);
   });
 
+// Wonder weapons first: the sweep gives the first one the map lists.
+const WONDER = ["microwavegundw_zm", "microwavegun_zm", "shrink_ray_zm", "humangun_zm", "sniper_explosive_zm", "freezegun_zm", "thundergun_zm", "tesla_gun_zm", "ray_gun_zm"];
+
+async function lists() {
+  await until((s) => s.lists >= 1, 30000, "lists published");
+  const chunks = Number(await readDvar("cheats_weapons_count"));
+  const weapons = [];
+  for (let i = 0; i < chunks; i += 1) weapons.push(...((await readDvar(`cheats_weapons_${i}`)) ?? "").split(",").filter(Boolean));
+  const perks = ((await readDvar("cheats_perks")) ?? "").split(",").filter(Boolean);
+  const powerups = ((await readDvar("cheats_powerups")) ?? "").split(",").filter(Boolean);
+  return { weapons, perks, powerups };
+}
+
+/** Clicks a button in the card (its shadow root is closed; the session keeps a reference to it). */
+const clickCard = (selector) =>
+  page.evaluate((s) => {
+    const button = window.__bo1Coop.card.root.querySelector(s);
+    if (!button) throw new Error(`no ${s} in the card`);
+    button.click();
+  }, selector);
+const cardText = (pattern, timeout) => page.waitForFunction((p) => new RegExp(p).test(window.__bo1Coop.card.root.textContent), pattern, { timeout });
+const compact = () => page.evaluate(() => window.__bo1Coop.card.host.classList.contains("compact"));
+
 const scenarios = {
+  // Everything once on this map; writes what happened to SWEEP_OUT (JSON) and fails only when the script never loads.
+  async sweep() {
+    await setCheats(true);
+    await startMap();
+    assert.ok(await waitReady(), "the game script never reported ready");
+    await command("god");
+    const found = await lists();
+    log("weapons:", found.weapons.join(" "));
+    log("perks:", found.perks.join(" "));
+    log("power-ups:", found.powerups.join(" "));
+    const results = {};
+    const weapon = WONDER.find((w) => found.weapons.includes(w)) ?? found.weapons[0];
+    results[`give ${weapon}`] = await run(`give 0 ${weapon}`);
+    await wait(2500);
+    results.pap = await run("pap 0");
+    for (const perk of found.perks) results[`perk ${perk}`] = await run(`perk 0 ${perk}`, 40000);
+    if (found.powerups.length) results[`powerup ${found.powerups[0]}`] = await run(`powerup 0 ${found.powerups[0]}`);
+    const horde = (await state()).horde === 1;
+    results["round 5"] = await run("round 5");
+    if (!horde)
+      await until((s) => s.round === 5, 60000, "round 5").then(
+        () => (results["round 5 reached"] = { ok: true }),
+        (e) => (results["round 5 reached"] = { ok: false, code: e.message }),
+      );
+    await snap("sweep");
+    if (process.env.SWEEP_OUT) fs.writeFileSync(process.env.SWEEP_OUT, JSON.stringify({ map: MAP, horde, ...found, results }, null, 2));
+    for (const [what, r] of Object.entries(results)) log(r.ok ? "ok  " : "ERR ", what, r.ok ? "" : `${r.code} ${r.detail ?? ""}`);
+  },
+  // Through the card as a player would: M opens it in game, a perk and a weapon button, the notices.
+  async ui() {
+    await setCheats(true);
+    await startMap();
+    assert.ok(await waitReady(), "ready");
+    await command("god");
+    await page.waitForFunction(() => window.__bo1Coop.cheats.perks.length > 0 && window.__bo1Coop.cheats.weapons.length > 0, null, { timeout: 30000 });
+    assert.equal(await compact(), true, "the card is hidden while playing");
+    await page.keyboard.press("m");
+    await page.waitForFunction(() => !window.__bo1Coop.card.host.classList.contains("compact"), null, { timeout: 5000 });
+    assert.equal(await page.evaluate(() => window.__bo1Coop.engine.menuOpen()), false, "M must not open the pause menu");
+    await clickCard('button[data-act="cheatPerk"][data-arg="specialty_armorvest"]');
+    await cardText("Juggernog given to", 40000);
+    assert.equal(await page.evaluate(() => window.__bo1Coop.engine.menuOpen()), false, "still not paused after using the card");
+    await clickCard('button[data-act="cheatGive"][data-arg="thundergun_zm"]');
+    await cardText("Thundergun given to", 20000);
+    await snap("ui");
+    await page.mouse.click(300, 400); // back into the game takes the mouse and hides the card
+    await page.waitForFunction(() => window.__bo1Coop.card.host.classList.contains("compact"), null, { timeout: 5000 });
+  },
   async actions() {
     // Also sends "clear" (zombies left this round = 0, every zombie killed): what makes a round end on its own.
     await setCheats(true);
@@ -256,6 +327,14 @@ try {
   log(`PASS ${MAP} ${SCENARIO}`);
 } catch (error) {
   await snap("failed").catch(() => {});
+  const inside = await page
+    .evaluate(() => {
+      const s = window.__bo1Coop;
+      const c = s.cheats;
+      return { screen: window.five?.screen, menuOpen: s.engine?.menuOpen(), ok: c.ok, ready: c.ready, seq: c.seq, lastSeq: c.lastSeq, resultSeq: c.resultSeq, outbox: c.outbox, queue: s.fun.queue, notice: s.fun.notice, panel: c.panel, log: s.log.slice(-5) };
+    })
+    .catch((e) => e.message);
+  log("inside:", JSON.stringify(inside));
   log(`FAIL ${MAP} ${SCENARIO}: ${error.message}`);
   process.exitCode = 1;
 } finally {

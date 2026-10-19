@@ -134,7 +134,8 @@ test("unknown ids get a readable fallback", () => {
 test("M opens the cheat panel in game without pausing, and frees the mouse", () => {
   const session = { cheats: { panel: false }, fun: { open: false } };
   let freed = 0;
-  const ctx = { playing: true, available: true, freeMouse: () => (freed += 1) };
+  let locked = 0;
+  const ctx = { playing: true, available: true, freeMouse: () => (freed += 1), lockMouse: () => (locked += 1) };
   const event = { code: "KeyM", repeat: false, ctrlKey: false, altKey: false, metaKey: false };
   assert.equal(onCheatsKey(session, event, ctx), true, "handled (the game must not see it)");
   assert.equal(session.cheats.panel, true);
@@ -142,12 +143,13 @@ test("M opens the cheat panel in game without pausing, and frees the mouse", () 
   assert.equal(freed, 1);
   assert.equal(onCheatsKey(session, event, ctx), true);
   assert.equal(session.cheats.panel, false, "M again closes it");
+  assert.equal(locked, 1, "and gives the mouse back to the game");
 });
 
 test("M does nothing for a guest, outside a game, on key repeat or with a modifier", () => {
   const event = { code: "KeyM", repeat: false, ctrlKey: false, altKey: false, metaKey: false };
   const fresh = () => ({ cheats: { panel: false }, fun: { open: false } });
-  const ctx = { playing: true, available: true, freeMouse: () => {} };
+  const ctx = { playing: true, available: true, freeMouse: () => {}, lockMouse: () => {} };
   for (const [what, e, c] of [
     ["guest", event, { ...ctx, available: false }],
     ["menu", event, { ...ctx, playing: false }],
