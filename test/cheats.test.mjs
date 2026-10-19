@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { addCheatsMod, modBase } from "../src/cheats/mod.js";
 import { gameSettings } from "../src/game/page.js";
+import { perkName, powerupName, weaponName } from "../src/cheats/names.js";
 import { cheatCommand, cheatsTick, createBridge, onCheatsLine, parseDvarPrint, parseState, sendCheat } from "../src/cheats/bridge.js";
 
 const tests = [];
@@ -110,6 +111,23 @@ test("a result is matched to the command it answers", () => {
   assert.deepEqual(results, [[{ seq: 1, ok: false, code: "perk_failed", detail: "specialty_rof" }, { action: "perk", target: 1, arg: "specialty_rof" }]]);
   onCheatsLine(session, '"cheats_result" is: "1 err perk_failed specialty_rof^7" default: "^7"');
   assert.equal(results.length, 1, "a result is reported once");
+});
+
+test("known ids get their in-game names", () => {
+  assert.equal(weaponName("microwavegundw_zm"), "Zap Guns");
+  assert.equal(weaponName("m1911_zm"), "M1911");
+  assert.equal(weaponName("thundergun_zm"), "Thundergun");
+  assert.equal(perkName("specialty_armorvest"), "Juggernog");
+  assert.equal(perkName("specialty_additionalprimaryweapon"), "Mule Kick");
+  assert.equal(powerupName("full_ammo"), "Max Ammo");
+  assert.equal(powerupName("minigun"), "Death Machine");
+});
+
+test("unknown ids get a readable fallback", () => {
+  assert.equal(weaponName("foo_bar_zm"), "Foo Bar");
+  assert.equal(weaponName("zombie_new_thing"), "New Thing");
+  assert.equal(perkName("specialty_newperk"), "Newperk");
+  assert.equal(powerupName("free_stuff"), "Free Stuff");
 });
 
 let failed = 0;
