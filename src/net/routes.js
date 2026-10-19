@@ -1,6 +1,6 @@
 // Which path each message takes: a seat's direct link while both its data channels are open, the relay otherwise.
 // Runs in the pump worker. On a guest, seat 0 is the link to the host.
-import { MAX_GUESTS } from "../../relay/src/protocol.js";
+import { isPeerMessage, MAX_GUESTS, parseControl } from "../../relay/src/protocol.js";
 import { RTC_TYPES } from "./rtc-messages.js";
 
 export function createRoutes() {
@@ -36,6 +36,21 @@ export function controlRoutes(routes, message, hosting) {
 }
 
 const isSeat = (seat) => Number.isInteger(seat) && seat >= 1 && seat <= MAX_GUESTS;
+
+/**
+ * A control message read from a direct link, or null. A peer may not send what only the relay sends (welcome, peer,
+ * error), as the relay itself refuses (isPeerMessage); on the host the link's seat replaces any `from` or `seat` the
+ * peer wrote, as the relay's stamp does.
+ */
+export function fromDirect(text, seat, hosting) {
+  const message = parseControl(text);
+  if (!isPeerMessage(message)) return null;
+  if (hosting) {
+    delete message.seat;
+    message.from = seat;
+  }
+  return message;
+}
 
 /** Host: keeps `relaySeats` in step with the relay's own `welcome` and `peer` messages. */
 export function relayPresence(routes, message) {

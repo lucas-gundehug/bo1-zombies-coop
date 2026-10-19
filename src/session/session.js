@@ -42,8 +42,13 @@ export function createSession(search = location.search) {
     pump: null,
     stats: null,
     usage: null,
-    /** Host: some guest is in the room. Guest: the host is in the room. */
+    /** Host: some guest is in the room. Guest: the host is in the room. Either path counts (syncPresence). */
     peer: false,
+    // direct links (src/net/direct.js): seat -> "direct" while that link is open (seat 0 on a guest is the host)
+    direct: null,
+    links: new Map(),
+    relayGuests: new Set(), // host: the seats the relay says are in the room
+    relayPeer: false, // guest: the relay says the host is in the room
 
     // host
     queues: null,
@@ -89,13 +94,7 @@ export function createSession(search = location.search) {
   session.onSocket = ({ state, code }) => {
     session.socket = state;
     if (state === "closed" && code === 4005) session.overQuota ??= { resetsAt: null };
-    if (state !== "open") {
-      session.peer = false;
-      for (const guest of session.guests.values()) {
-        if (guest.present) guest.leftAt = Date.now();
-        guest.present = false;
-      }
-    }
+    // Who is still here once the relay is gone: relayClosed (src/session/messages.js), called by src/net/pump.js.
     if (state === "closed" && code === 4001) session.fail("replaced");
     if (state === "closed" && code === 4004) session.fail("full", MAX_GUESTS + 1);
     session.note(`relay ${state}${code ? ` ${code}` : ""}`);

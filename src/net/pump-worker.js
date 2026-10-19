@@ -10,7 +10,7 @@
 // incoming queue, port 0).
 import { decodePackets, decodeSeatPackets, encodePackets, encodeSeatPackets, MAX_BINARY_BYTES, parseControl, relaySocketUrl } from "../../relay/src/protocol.js";
 import { connectionlessCommand, QueueReader, QueueWriter } from "./queues.js";
-import { controlRoutes, createRoutes, isDirect, packetPath, relayPresence } from "./routes.js";
+import { controlRoutes, createRoutes, fromDirect, isDirect, packetPath, relayPresence } from "./routes.js";
 
 const POLL_MS = 1;
 const FLUSH_MS = 4;
@@ -244,10 +244,8 @@ function addLink(seat, game, control) {
     pump();
   };
   control.onmessage = ({ data }) => {
-    const message = typeof data === "string" ? parseControl(data) : null;
-    if (!message) return;
-    if (hosting()) message.from = seat;
-    onControl(message);
+    const message = typeof data === "string" ? fromDirect(data, seat, hosting()) : null;
+    if (message) onControl(message);
   };
   opened();
 }

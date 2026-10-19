@@ -2,11 +2,13 @@
 import { MAX_GUESTS } from "../../relay/src/protocol.js";
 import { currentGuns, currentHorde, currentZone, MAP_SLUGS } from "../game/page.js";
 import { send } from "../net/pump.js";
+import { RTC_TYPES } from "../net/rtc-messages.js";
 import { followHostMap } from "./guest.js";
 import { validSeat, VERSION } from "./session.js";
 
 export function onControl(session, message) {
-  if (session.mode === "host") onHostMessage(session, message);
+  if (RTC_TYPES.includes(message.t)) session.direct?.onSignal(message);
+  else if (session.mode === "host") onHostMessage(session, message);
   else onGuestMessage(session, message);
 }
 
@@ -14,12 +16,14 @@ function onHostMessage(session, message) {
   switch (message.t) {
     case "welcome":
       session.overQuota = null;
-      for (const seat of Array.isArray(message.guests) ? message.guests : []) guestArrived(session, seat);
+      session.relayGuests = new Set((Array.isArray(message.guests) ? message.guests : []).filter(validSeat));
+      for (let seat = 1; seat <= MAX_GUESTS; seat += 1) syncPresence(session, seat);
       break;
     case "peer":
       if (!validSeat(message.seat)) return;
-      if (message.present) guestArrived(session, message.seat);
-      else guestLeft(session, message.seat);
+      if (message.present) session.relayGuests.add(message.seat);
+      else session.relayGuests.delete(message.seat);
+      syncPresence(session, message.seat);
       break;
     case "state":
       if (validSeat(message.from)) guest(session, message.from).state = message;
@@ -40,17 +44,15 @@ function onGuestMessage(session, message) {
     case "welcome":
       session.overQuota = null;
       session.seat = validSeat(message.seat) ? message.seat : null;
-      session.peer = Boolean(message.peer);
+      session.relayPeer = Boolean(message.peer);
+      syncPresence(session, 0);
       if (session.peer) introduce(session);
       break;
     case "peer":
-      session.peer = Boolean(message.present);
+      session.relayPeer = Boolean(message.present);
+      syncPresence(session, 0);
       if (session.peer) introduce(session);
-      else {
-        session.hostLeftAt = Date.now();
-        session.remotePause = false;
-      }
-      session.note(`host ${session.peer ? "joined" : "left"} the room`);
+      session.note(`host ${session.relayPeer ? "joined" : "left"} the room (relay)`);
       break;
     case "info":
       session.hostInfo = message;
@@ -87,6 +89,40 @@ export function guest(session, seat) {
     session.guests.set(seat, record);
   }
   return record;
+}
+
+/**
+ * Who is here, from both paths: a guest (host side) or the host (guest side, seat 0) counts as present while the relay
+ * says so or its direct link is open, so a game with direct links outlives the relay (src/net/direct.js).
+ */
+export function syncPresence(session, seat) {
+  const direct = session.links.get(seat) === "direct";
+  if (session.mode === "host") {
+    const present = session.relayGuests.has(seat) || direct;
+    const record = session.guests.get(seat);
+    if (present && !record?.present) guestArrived(session, seat);
+    else if (!present && record?.present) guestLeft(session, seat);
+    session.peer = [...session.guests.values()].some((g) => g.present);
+    return;
+  }
+  const was = session.peer;
+  session.peer = session.relayPeer || direct;
+  if (was && !session.peer) {
+    session.hostLeftAt = Date.now();
+    session.remotePause = false;
+    session.note("host left");
+  }
+}
+
+/** The relay socket closed: only direct links still say who is here. */
+export function relayClosed(session) {
+  if (session.mode === "host") {
+    session.relayGuests.clear();
+    for (let seat = 1; seat <= MAX_GUESTS; seat += 1) syncPresence(session, seat);
+  } else if (session.mode === "guest") {
+    session.relayPeer = false;
+    syncPresence(session, 0);
+  }
 }
 
 function guestArrived(session, seat) {
