@@ -16,6 +16,8 @@ import { DEFAULT_RELAY, inviteLink, normalizeRelay } from "./util/relay.js";
 import { createFun, funActions, funTick, watchConsole } from "./fun/fun.js";
 import { cheatsSettingActions, createCheats } from "./cheats/setup.js";
 import { installCheatsKey } from "./cheats/hotkey.js";
+import { createMap } from "./map/state.js";
+import { mapTick } from "./map/live.js";
 import { cleanName, guestIdFor, saveSetting } from "./util/settings.js";
 import { checkForUpdate, RELAY_GUIDE } from "./util/updates.js";
 
@@ -32,6 +34,7 @@ function start() {
   window.__bo1Coop = session;
   session.fun = createFun();
   session.cheats = createCheats();
+  session.map = createMap();
   installCheatsKey(session);
   watchConsole(session);
   if (session.mode) keepSinglePlayer(session.room);
@@ -85,6 +88,7 @@ function tick(session) {
     else if (session.mode === "guest") guestTick(session);
     if (session.mode) reportHidden(session);
     funTick(session);
+    mapTick(session, Date.now());
   } catch (error) {
     session.error = error.message;
     session.note(`tick failed: ${error.stack ?? error}`);
