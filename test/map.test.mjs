@@ -56,6 +56,21 @@ test("floorOf picks the floor for a feet height", () => {
   assert.equal(floorOf(boxPlan(10, 10), 5000), 0);
 });
 
+test("a floor with an area only takes points inside it (Moon's No Man's Land)", () => {
+  const plan = boxPlan(100, 100);
+  plan.floors = [
+    { name: "No Man's Land", below: null, area: [10000, -20000, 20000, -10000] },
+    { name: "Lower", below: -250 },
+    { name: "Upper", below: null },
+  ];
+  assert.equal(floorOf(plan, -600, 14000, -14500), 0);
+  assert.equal(floorOf(plan, -600, 0, 3000), 1);
+  assert.equal(floorOf(plan, 50, 0, 3000), 2);
+  assert.equal(validPlan(plan), true);
+  plan.floors[0].area = [1, 2, 3];
+  assert.equal(validPlan(plan), false);
+});
+
 test("validPlan accepts a good plan", () => {
   assert.equal(validPlan(fixturePlan()), true);
   assert.equal(validPlan(boxPlan(100, 100)), true);

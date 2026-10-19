@@ -51,7 +51,7 @@ export function onMapLine(session, name, value) {
     for (const p of live.players) {
       const n = numbers.get(p.ent);
       if (!n) continue;
-      map.live.set(n, { x: p.x, y: p.y, z: p.z, yaw: p.yaw, room: p.room, s: p.s, floor: map.plan ? floorOf(map.plan, p.z) : 0, at: now });
+      map.live.set(n, { x: p.x, y: p.y, z: p.z, yaw: p.yaw, room: p.room, s: p.s, floor: map.plan ? floorOf(map.plan, p.z, p.x, p.y) : 0, at: now });
     }
     map.liveV = live.v;
     // A lower counter is a restarted game (game over in the same page): its state is new, not old.

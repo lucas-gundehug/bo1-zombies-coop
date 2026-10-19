@@ -1,6 +1,7 @@
 // A map's floor plan, made once per map from the game (scripts/map-plan.mjs) and bundled. World units, z up.
 //   { v: 1, slug, sig: "z<rooms>d<doors>",
-//     floors: [{ name, below }],                       feet z < below → that floor; the last floor has below: null
+//     floors: [{ name, below, area? }],                feet z < below → that floor (below null: any height); the last floor
+//                                                      has below null; area [x0, y0, x1, y1] limits a floor to a region
 //     rooms: [{ id, label: [floor, x, y], rects: [[floor, x0, y0, x1, y1], ...] }],
 //     doors: [{ kind: "door" | "debris" | "power", cost, at: [floor, x, y], rooms: [a, b] }],
 //     pois: [{ kind: "perk" | "pap" | "power" | "box", id, at: [floor, x, y] }] }   boxes in the game's chest order
@@ -19,7 +20,9 @@ export function validPlan(plan) {
   const { floors, rooms, doors, pois } = plan;
   if (!Array.isArray(floors) || !floors.length || !Array.isArray(rooms) || !Array.isArray(doors) || !Array.isArray(pois)) return false;
   const n = floors.length;
-  const floorsOk = floors.every((f, i) => typeof f?.name === "string" && (i === n - 1 ? f.below === null : finite(f.below)));
+  const floorsOk = floors.every(
+    (f, i) => typeof f?.name === "string" && (f.area === undefined || numbers(f.area, 4)) && (i === n - 1 ? f.below === null : finite(f.below) || (f.below === null && f.area !== undefined)),
+  );
   const roomsOk = rooms.every(
     (r) => typeof r?.id === "string" && at(r.label, n) && Array.isArray(r.rects) && r.rects.length > 0 && r.rects.every((rect) => numbers(rect, 5) && floorIndex(rect[0], n)),
   );
@@ -30,8 +33,11 @@ export function validPlan(plan) {
   return floorsOk && roomsOk && doorsOk && poisOk;
 }
 
-export function floorOf(plan, z) {
-  const i = plan.floors.findIndex((f) => f.below !== null && z < f.below);
+const inside = (area, x, y) => !area || (x >= area[0] && x <= area[2] && y >= area[1] && y <= area[3]);
+
+/** The floor a player at (x, y) with feet height z is on: the first whose area holds the point and whose below is above z. */
+export function floorOf(plan, z, x, y) {
+  const i = plan.floors.findIndex((f) => inside(f.area, x, y) && (f.below === null || z < f.below));
   return i < 0 ? plan.floors.length - 1 : i;
 }
 
