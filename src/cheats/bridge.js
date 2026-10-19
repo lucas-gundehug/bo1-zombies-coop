@@ -4,9 +4,10 @@
 // watchConsole hands those lines to onCheatsLine).
 
 const STATE_EVERY_MS = 1000;
+const STATE_BUSY_MS = 250; // while a command waits to be sent or taken
 const RESULT_EVERY_MS = 500;
 const SEND_EVERY_MS = 250;
-const RESULT_WAIT_MS = 30000;
+const RESULT_WAIT_MS = 120000; // a perk for everyone can take half a minute per player
 const SAFE = /^[\w.-]+$/;
 
 export function createBridge() {
@@ -20,11 +21,10 @@ export function createBridge() {
     perks: [],
     powerups: [],
     seq: 0,
-    outbox: [], // command texts not sent yet
-    sent: new Map(), // seq -> { action, target, arg } waiting for a result
+    outbox: [], // [seq, command text] not sent yet
+    sent: new Map(), // seq -> { action, target, arg, until } waiting for a result
     lastSeq: 0, // latest seq sent
-    resultSeq: 0, // latest seq a result was reported for
-    resultUntil: 0,
+    scriptSeq: 0, // latest seq the script has taken (cheats_state seq=)
     scriptLists: 0, // the lists counter the script published last
     listsLoaded: 0, // the lists counter the lists were last asked for
     weaponChunks: null,
@@ -61,19 +61,24 @@ export function cheatCommand(seq, action, target, arg) {
 export function sendCheat(session, action, target, arg) {
   const cheats = session.cheats;
   cheats.seq += 1;
-  cheats.outbox.push(cheatCommand(cheats.seq, action, target, arg));
-  cheats.sent.set(cheats.seq, { action, target, arg });
+  cheats.outbox.push([cheats.seq, cheatCommand(cheats.seq, action, target, arg)]);
+  cheats.sent.set(cheats.seq, { action, target, arg, until: Infinity });
 }
 
 function ask(session, name) {
   if (!session.fun.queue.includes(name)) session.fun.queue.push(name);
 }
 
-/** Called every tick: asks for the state and the lists, sends queued commands, asks for results. */
+/**
+ * Called every tick: asks for the state and the lists, sends queued commands, asks for results. A command is sent only
+ * once the script has taken the previous one (cheats_state seq=): a second `set cheats_cmd` before that would overwrite
+ * the first, e.g. while the server is paused.
+ */
 export function cheatsTick(session, now, playing) {
   const cheats = session.cheats;
   if (!cheats?.ok || !playing) return;
-  if (now - cheats.lastStateAt >= STATE_EVERY_MS) {
+  const busy = cheats.outbox.length > 0 || cheats.scriptSeq < cheats.lastSeq;
+  if (now - cheats.lastStateAt >= (busy ? STATE_BUSY_MS : STATE_EVERY_MS)) {
     cheats.lastStateAt = now;
     ask(session, "cheats_state");
   }
@@ -81,16 +86,19 @@ export function cheatsTick(session, now, playing) {
     cheats.listsLoaded = cheats.scriptLists;
     for (const name of ["cheats_weapons_count", "cheats_perks", "cheats_powerups"]) ask(session, name);
   }
-  if (cheats.outbox.length && now - cheats.lastSendAt >= SEND_EVERY_MS) {
+  if (cheats.outbox.length && cheats.scriptSeq >= cheats.lastSeq && now - cheats.lastSendAt >= SEND_EVERY_MS) {
     cheats.lastSendAt = now;
-    const text = cheats.outbox.shift();
+    const [seq, text] = cheats.outbox.shift();
     session.fun.queue.push(text);
-    cheats.lastSeq = Number(text.match(/"(\d+)/)[1]);
-    cheats.resultUntil = now + RESULT_WAIT_MS;
+    cheats.lastSeq = seq;
+    const sent = cheats.sent.get(seq);
+    if (sent) sent.until = now + RESULT_WAIT_MS;
   }
-  if (cheats.resultSeq < cheats.lastSeq && now < cheats.resultUntil && now - cheats.lastResultAt >= RESULT_EVERY_MS) {
+  for (const [seq, sent] of cheats.sent) if (now > sent.until) cheats.sent.delete(seq);
+  const waiting = [...cheats.sent.keys()].some((seq) => seq <= cheats.lastSeq);
+  if (waiting && now - cheats.lastResultAt >= RESULT_EVERY_MS) {
     cheats.lastResultAt = now;
-    ask(session, "cheats_result");
+    ask(session, "cheats_results");
   }
 }
 
@@ -104,6 +112,10 @@ export function onCheatsLine(session, line) {
   if (name === "cheats_state") {
     const state = parseState(value);
     Object.assign(cheats, { ready: state.ready, round: state.round, frozen: state.frozen, power: state.power, horde: state.horde, scriptLists: state.lists });
+    // The script's counter. It starts again from 0 when the game restarts in the same page (game over): then
+    // nothing sent before can still be taken, so stop waiting for it.
+    if (state.seq < cheats.scriptSeq) cheats.lastSeq = state.seq;
+    cheats.scriptSeq = state.seq;
   } else if (name === "cheats_weapons_count") {
     const count = Number(value) || 0;
     cheats.weaponChunks = new Array(count).fill(null);
@@ -117,13 +129,15 @@ export function onCheatsLine(session, line) {
     cheats.perks = list();
   } else if (name === "cheats_powerups") {
     cheats.powerups = list();
-  } else if (name === "cheats_result") {
-    const [seqText, status, code = "", ...rest] = value.split(" ");
-    const seq = Number(seqText);
-    if (!(seq > cheats.resultSeq)) return;
-    cheats.resultSeq = seq;
-    const sent = cheats.sent.get(seq);
-    for (const old of cheats.sent.keys()) if (old <= seq) cheats.sent.delete(old);
-    if (sent) cheats.onResult?.({ seq, ok: status === "ok", code, detail: rest.join(" ") }, sent);
+  } else if (name === "cheats_results") {
+    // newest first: "<seq> ok;<seq> err <code> [detail];..."; each is reported once, while it is still waited for
+    for (const entry of value.split(";").filter(Boolean)) {
+      const [seqText, status, code = "", ...rest] = entry.split(" ");
+      const seq = Number(seqText);
+      const sent = cheats.sent.get(seq);
+      if (!sent) continue;
+      cheats.sent.delete(seq);
+      cheats.onResult?.({ seq, ok: status === "ok", code, detail: rest.join(" ") }, { action: sent.action, target: sent.target, arg: sent.arg });
+    }
   }
 }

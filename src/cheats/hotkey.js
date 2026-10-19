@@ -12,6 +12,9 @@ const KEY = "KeyM";
 /** Returns true when the key was ours (the game must not get it). */
 export function onCheatsKey(session, event, { playing, available, freeMouse, lockMouse }) {
   if (event.code !== KEY || event.repeat || event.ctrlKey || event.altKey || event.metaKey) return false;
+  // typing an "m" (the card's name or relay field, a console) is text; the card's shadow DOM shows up in composedPath
+  const target = event.composedPath?.()[0];
+  if (target && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName ?? "") || target.isContentEditable)) return false;
   if (!playing || !available) return false;
   session.cheats.panel = !session.cheats.panel;
   if (session.cheats.panel) {

@@ -35,6 +35,7 @@ export const C = {
   frozenOn: "Round frozen: it will not end until you unfreeze it.",
   frozenOff: "Round unfrozen.",
   errNoPlayer: "That player is no longer in the game.",
+  errNotSpawned: "That player is still waiting to spawn (until the next round). Try again then.",
   errNoWeapon: (w) => `${w} is not on this map.`,
   errNoUpgrade: (w) => `${w} can't be Pack-a-Punched.`,
   errHasUpgrade: "That weapon is already Pack-a-Punched.",

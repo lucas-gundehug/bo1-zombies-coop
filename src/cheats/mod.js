@@ -7,7 +7,7 @@ export const MOD_NAME = "cheats";
 /** The base folder the engine reads mods from: its fs_b argument, "/opfs/pack-kino/files" -> "pack-kino/files". */
 export function modBase(args) {
   const i = args.findIndex((arg, at) => arg === "fs_b" && args[at - 1] === "+set");
-  const value = i < 0 ? "" : args[i + 1];
+  const value = i < 0 ? "" : (args[i + 1] ?? "");
   return value.startsWith("/opfs/") ? value.slice("/opfs/".length) : null;
 }
 

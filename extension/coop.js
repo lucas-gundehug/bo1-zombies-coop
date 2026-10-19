@@ -1498,9 +1498,10 @@
 
   // src/cheats/bridge.js
   var STATE_EVERY_MS = 1e3;
+  var STATE_BUSY_MS = 250;
   var RESULT_EVERY_MS = 500;
   var SEND_EVERY_MS = 250;
-  var RESULT_WAIT_MS = 3e4;
+  var RESULT_WAIT_MS = 12e4;
   var SAFE = /^[\w.-]+$/;
   function createBridge() {
     return {
@@ -1514,14 +1515,13 @@
       powerups: [],
       seq: 0,
       outbox: [],
-      // command texts not sent yet
+      // [seq, command text] not sent yet
       sent: /* @__PURE__ */ new Map(),
-      // seq -> { action, target, arg } waiting for a result
+      // seq -> { action, target, arg, until } waiting for a result
       lastSeq: 0,
       // latest seq sent
-      resultSeq: 0,
-      // latest seq a result was reported for
-      resultUntil: 0,
+      scriptSeq: 0,
+      // latest seq the script has taken (cheats_state seq=)
       scriptLists: 0,
       // the lists counter the script published last
       listsLoaded: 0,
@@ -1552,8 +1552,8 @@
   function sendCheat(session, action, target2, arg) {
     const cheats = session.cheats;
     cheats.seq += 1;
-    cheats.outbox.push(cheatCommand(cheats.seq, action, target2, arg));
-    cheats.sent.set(cheats.seq, { action, target: target2, arg });
+    cheats.outbox.push([cheats.seq, cheatCommand(cheats.seq, action, target2, arg)]);
+    cheats.sent.set(cheats.seq, { action, target: target2, arg, until: Infinity });
   }
   function ask(session, name) {
     if (!session.fun.queue.includes(name)) session.fun.queue.push(name);
@@ -1561,7 +1561,8 @@
   function cheatsTick(session, now, playing) {
     const cheats = session.cheats;
     if (!cheats?.ok || !playing) return;
-    if (now - cheats.lastStateAt >= STATE_EVERY_MS) {
+    const busy = cheats.outbox.length > 0 || cheats.scriptSeq < cheats.lastSeq;
+    if (now - cheats.lastStateAt >= (busy ? STATE_BUSY_MS : STATE_EVERY_MS)) {
       cheats.lastStateAt = now;
       ask(session, "cheats_state");
     }
@@ -1569,16 +1570,19 @@
       cheats.listsLoaded = cheats.scriptLists;
       for (const name of ["cheats_weapons_count", "cheats_perks", "cheats_powerups"]) ask(session, name);
     }
-    if (cheats.outbox.length && now - cheats.lastSendAt >= SEND_EVERY_MS) {
+    if (cheats.outbox.length && cheats.scriptSeq >= cheats.lastSeq && now - cheats.lastSendAt >= SEND_EVERY_MS) {
       cheats.lastSendAt = now;
-      const text = cheats.outbox.shift();
+      const [seq, text] = cheats.outbox.shift();
       session.fun.queue.push(text);
-      cheats.lastSeq = Number(text.match(/"(\d+)/)[1]);
-      cheats.resultUntil = now + RESULT_WAIT_MS;
+      cheats.lastSeq = seq;
+      const sent = cheats.sent.get(seq);
+      if (sent) sent.until = now + RESULT_WAIT_MS;
     }
-    if (cheats.resultSeq < cheats.lastSeq && now < cheats.resultUntil && now - cheats.lastResultAt >= RESULT_EVERY_MS) {
+    for (const [seq, sent] of cheats.sent) if (now > sent.until) cheats.sent.delete(seq);
+    const waiting = [...cheats.sent.keys()].some((seq) => seq <= cheats.lastSeq);
+    if (waiting && now - cheats.lastResultAt >= RESULT_EVERY_MS) {
       cheats.lastResultAt = now;
-      ask(session, "cheats_result");
+      ask(session, "cheats_results");
     }
   }
   function onCheatsLine(session, line) {
@@ -1590,6 +1594,8 @@
     if (name === "cheats_state") {
       const state = parseState(value);
       Object.assign(cheats, { ready: state.ready, round: state.round, frozen: state.frozen, power: state.power, horde: state.horde, scriptLists: state.lists });
+      if (state.seq < cheats.scriptSeq) cheats.lastSeq = state.seq;
+      cheats.scriptSeq = state.seq;
     } else if (name === "cheats_weapons_count") {
       const count = Number(value) || 0;
       cheats.weaponChunks = new Array(count).fill(null);
@@ -1603,14 +1609,15 @@
       cheats.perks = list();
     } else if (name === "cheats_powerups") {
       cheats.powerups = list();
-    } else if (name === "cheats_result") {
-      const [seqText, status, code = "", ...rest] = value.split(" ");
-      const seq = Number(seqText);
-      if (!(seq > cheats.resultSeq)) return;
-      cheats.resultSeq = seq;
-      const sent = cheats.sent.get(seq);
-      for (const old of cheats.sent.keys()) if (old <= seq) cheats.sent.delete(old);
-      if (sent) cheats.onResult?.({ seq, ok: status === "ok", code, detail: rest.join(" ") }, sent);
+    } else if (name === "cheats_results") {
+      for (const entry of value.split(";").filter(Boolean)) {
+        const [seqText, status, code = "", ...rest] = entry.split(" ");
+        const seq = Number(seqText);
+        const sent = cheats.sent.get(seq);
+        if (!sent) continue;
+        cheats.sent.delete(seq);
+        cheats.onResult?.({ seq, ok: status === "ok", code, detail: rest.join(" ") }, { action: sent.action, target: sent.target, arg: sent.arg });
+      }
     }
   }
 
@@ -1635,7 +1642,8 @@ register()
 //   cheats_weapons_count   number of cheats_weapons_<i> chunks (comma-separated weapon names)
 //   cheats_perks           perk machines on this map (their perk names)
 //   cheats_powerups        power-ups this map includes
-//   cheats_result          "<seq> ok" or "<seq> err <code> [detail]" for the latest command
+//   cheats_results         the latest results, newest first, ";"-separated: "<seq> ok" or "<seq> err <code> [detail]"
+//                          (commands run in threads of their own, so a slow perk can answer after a later command)
 // Every effect calls the retail scripts' own functions, as the decompiled repo's mods/sandbox does.
 
 main_end()
@@ -1645,8 +1653,9 @@ main_end()
 	level.cheats_frozen = false;
 	level.cheats_hold = false;
 	level.cheats_round_active = false;
+	level.cheats_results = [];
 	SetDvar( "cheats_cmd", "" );
-	SetDvar( "cheats_result", "" );
+	SetDvar( "cheats_results", "" );
 	level thread cheats_round_tracker();
 	level thread cheats_main();
 }
@@ -1823,12 +1832,33 @@ cheats_handle( cmd )
 	}
 	if ( result == "" )
 	{
-		SetDvar( "cheats_result", seq + " ok" );
+		cheats_publish_result( seq + " ok" );
 	}
 	else
 	{
-		SetDvar( "cheats_result", seq + " err " + result );
+		cheats_publish_result( seq + " err " + result );
 	}
+}
+
+cheats_publish_result( entry )
+{
+	results = [];
+	results[0] = entry;
+	for ( i = 0; i < level.cheats_results.size && results.size < 8; i++ )
+	{
+		results[results.size] = level.cheats_results[i];
+	}
+	level.cheats_results = results;
+	text = "";
+	for ( i = 0; i < results.size; i++ )
+	{
+		if ( i > 0 )
+		{
+			text = text + ";";
+		}
+		text = text + results[i];
+	}
+	SetDvar( "cheats_results", text );
 }
 
 // runs a player action for one player or everyone: ok when it worked for anyone, else the first error
@@ -1836,12 +1866,23 @@ cheats_for_players( action, target, arg )
 {
 	players = get_players();
 	chosen = [];
+	waiting = false;
 	for ( i = 0; i < players.size; i++ )
 	{
 		if ( target == "all" || players[i] GetEntityNumber() == int( target ) )
 		{
+			// a player who joined mid-round spectates until the next one: what they got now would be lost
+			if ( !IsDefined( players[i].sessionstate ) || players[i].sessionstate != "playing" )
+			{
+				waiting = true;
+				continue;
+			}
 			chosen[chosen.size] = players[i];
 		}
+	}
+	if ( chosen.size == 0 && waiting )
+	{
+		return "not_spawned";
 	}
 	if ( chosen.size == 0 || target == "" )
 	{
@@ -1966,11 +2007,25 @@ cheats_power_on( player )
 	}
 }
 
+// One perk at a time per player: the free-points and perk-count bookkeeping below must not interleave (two quick
+// clicks ran in two threads and left the player 20000 points).
+cheats_perk( perk )
+{
+	while ( is_true( self.cheats_perk_busy ) )
+	{
+		wait( .1 );
+	}
+	self.cheats_perk_busy = true;
+	result = self cheats_perk_now( perk );
+	self.cheats_perk_busy = false;
+	return result;
+}
+
 // uses the perk's own machine for the player (the retail bottle, HUD and effect), as sandbox pad_perk(); free: the
 // points it costs are given first and the score is set back afterwards. The machine refuses a fifth perk (BO1's limit
 // of 4, counted in num_perks; seen in game on Shangri-La and Moon): the count is lowered while the machine is used and
 // set to the real number afterwards.
-cheats_perk( perk )
+cheats_perk_now( perk )
 {
 	machine = undefined;
 	vending = GetEntArray( "zombie_vending", "targetname" );
@@ -2027,11 +2082,9 @@ cheats_perk( perk )
 	{
 		wait( .1 );
 	}
-	spent = score + 20000 - self.score;
 	self.score = score;
 	if ( !self HasPerk( perk ) )
 	{
-		SetDvar( "cheats_debug", "perk " + perk + " origin " + machine.origin + " spent " + spent + " machine_origin_defined " + IsDefined( level.zombie_additionalprimaryweapon_machine_origin ) + " num_perks " + self.num_perks + " power " + cheats_flag( "power_on" ) );
 		self.num_perks = perks;
 		return "perk_failed " + perk;
 	}
@@ -2394,7 +2447,7 @@ nazizombies_checking_for_cheats()\r
   var MOD_NAME = "cheats";
   function modBase(args) {
     const i = args.findIndex((arg, at) => arg === "fs_b" && args[at - 1] === "+set");
-    const value = i < 0 ? "" : args[i + 1];
+    const value = i < 0 ? "" : args[i + 1] ?? "";
     return value.startsWith("/opfs/") ? value.slice("/opfs/".length) : null;
   }
   function addCheatsMod(args, { horde }) {
@@ -2479,6 +2532,7 @@ nazizombies_checking_for_cheats()\r
     frozenOn: "Round frozen: it will not end until you unfreeze it.",
     frozenOff: "Round unfrozen.",
     errNoPlayer: "That player is no longer in the game.",
+    errNotSpawned: "That player is still waiting to spawn (until the next round). Try again then.",
     errNoWeapon: (w) => `${w} is not on this map.`,
     errNoUpgrade: (w) => `${w} can't be Pack-a-Punched.`,
     errHasUpgrade: "That weapon is already Pack-a-Punched.",
@@ -2503,12 +2557,17 @@ nazizombies_checking_for_cheats()\r
   var wantsCheats = (session) => session.cheats.enabled && session.mode !== "guest" && session.patched;
   async function prepareCheats(session, args) {
     if (!wantsCheats(session)) return;
-    const base = modBase(args);
-    const timeout = new Promise((resolve) => setTimeout(() => resolve(false), WRITE_TIMEOUT_MS));
-    const ok = base ? await Promise.race([writeModFiles(base, MOD_FILES), timeout]) : false;
-    session.cheats.ok = ok;
-    if (ok) addCheatsMod(args, { horde: currentHorde() });
-    session.note(`cheat menu: ${ok ? "mod loaded" : "mod not written"}`);
+    try {
+      const base = modBase(args);
+      const timeout = new Promise((resolve) => setTimeout(() => resolve(false), WRITE_TIMEOUT_MS));
+      const ok = base ? await Promise.race([writeModFiles(base, MOD_FILES), timeout]) : false;
+      if (ok) addCheatsMod(args, { horde: currentHorde() });
+      session.cheats.ok = ok;
+      session.note(`cheat menu: ${ok ? "mod loaded" : "mod not written"}`);
+    } catch (error) {
+      session.cheats.ok = false;
+      session.note(`cheat menu failed: ${error?.stack ?? error}`);
+    }
   }
   function cheatsSettingBlocks(session) {
     const on = session.cheats.enabled;
@@ -3691,6 +3750,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
   }
   var ERRORS = {
     no_player: () => C.errNoPlayer,
+    not_spawned: () => C.errNotSpawned,
     no_weapon: (d) => C.errNoWeapon(weaponName(d)),
     no_upgrade: (d) => C.errNoUpgrade(weaponName(d)),
     has_upgrade: () => C.errHasUpgrade,
@@ -4429,6 +4489,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
   var KEY2 = "KeyM";
   function onCheatsKey(session, event, { playing, available, freeMouse, lockMouse }) {
     if (event.code !== KEY2 || event.repeat || event.ctrlKey || event.altKey || event.metaKey) return false;
+    const target2 = event.composedPath?.()[0];
+    if (target2 && (/^(INPUT|TEXTAREA|SELECT)$/.test(target2.tagName ?? "") || target2.isContentEditable)) return false;
     if (!playing || !available) return false;
     session.cheats.panel = !session.cheats.panel;
     if (session.cheats.panel) {

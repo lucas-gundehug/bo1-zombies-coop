@@ -8,7 +8,8 @@
 //   cheats_weapons_count   number of cheats_weapons_<i> chunks (comma-separated weapon names)
 //   cheats_perks           perk machines on this map (their perk names)
 //   cheats_powerups        power-ups this map includes
-//   cheats_result          "<seq> ok" or "<seq> err <code> [detail]" for the latest command
+//   cheats_results         the latest results, newest first, ";"-separated: "<seq> ok" or "<seq> err <code> [detail]"
+//                          (commands run in threads of their own, so a slow perk can answer after a later command)
 // Every effect calls the retail scripts' own functions, as the decompiled repo's mods/sandbox does.
 
 main_end()
@@ -18,8 +19,9 @@ main_end()
 	level.cheats_frozen = false;
 	level.cheats_hold = false;
 	level.cheats_round_active = false;
+	level.cheats_results = [];
 	SetDvar( "cheats_cmd", "" );
-	SetDvar( "cheats_result", "" );
+	SetDvar( "cheats_results", "" );
 	level thread cheats_round_tracker();
 	level thread cheats_main();
 }
@@ -196,12 +198,33 @@ cheats_handle( cmd )
 	}
 	if ( result == "" )
 	{
-		SetDvar( "cheats_result", seq + " ok" );
+		cheats_publish_result( seq + " ok" );
 	}
 	else
 	{
-		SetDvar( "cheats_result", seq + " err " + result );
+		cheats_publish_result( seq + " err " + result );
 	}
+}
+
+cheats_publish_result( entry )
+{
+	results = [];
+	results[0] = entry;
+	for ( i = 0; i < level.cheats_results.size && results.size < 8; i++ )
+	{
+		results[results.size] = level.cheats_results[i];
+	}
+	level.cheats_results = results;
+	text = "";
+	for ( i = 0; i < results.size; i++ )
+	{
+		if ( i > 0 )
+		{
+			text = text + ";";
+		}
+		text = text + results[i];
+	}
+	SetDvar( "cheats_results", text );
 }
 
 // runs a player action for one player or everyone: ok when it worked for anyone, else the first error
@@ -209,12 +232,23 @@ cheats_for_players( action, target, arg )
 {
 	players = get_players();
 	chosen = [];
+	waiting = false;
 	for ( i = 0; i < players.size; i++ )
 	{
 		if ( target == "all" || players[i] GetEntityNumber() == int( target ) )
 		{
+			// a player who joined mid-round spectates until the next one: what they got now would be lost
+			if ( !IsDefined( players[i].sessionstate ) || players[i].sessionstate != "playing" )
+			{
+				waiting = true;
+				continue;
+			}
 			chosen[chosen.size] = players[i];
 		}
+	}
+	if ( chosen.size == 0 && waiting )
+	{
+		return "not_spawned";
 	}
 	if ( chosen.size == 0 || target == "" )
 	{
@@ -339,11 +373,25 @@ cheats_power_on( player )
 	}
 }
 
+// One perk at a time per player: the free-points and perk-count bookkeeping below must not interleave (two quick
+// clicks ran in two threads and left the player 20000 points).
+cheats_perk( perk )
+{
+	while ( is_true( self.cheats_perk_busy ) )
+	{
+		wait( .1 );
+	}
+	self.cheats_perk_busy = true;
+	result = self cheats_perk_now( perk );
+	self.cheats_perk_busy = false;
+	return result;
+}
+
 // uses the perk's own machine for the player (the retail bottle, HUD and effect), as sandbox pad_perk(); free: the
 // points it costs are given first and the score is set back afterwards. The machine refuses a fifth perk (BO1's limit
 // of 4, counted in num_perks; seen in game on Shangri-La and Moon): the count is lowered while the machine is used and
 // set to the real number afterwards.
-cheats_perk( perk )
+cheats_perk_now( perk )
 {
 	machine = undefined;
 	vending = GetEntArray( "zombie_vending", "targetname" );
@@ -400,11 +448,9 @@ cheats_perk( perk )
 	{
 		wait( .1 );
 	}
-	spent = score + 20000 - self.score;
 	self.score = score;
 	if ( !self HasPerk( perk ) )
 	{
-		SetDvar( "cheats_debug", "perk " + perk + " origin " + machine.origin + " spent " + spent + " machine_origin_defined " + IsDefined( level.zombie_additionalprimaryweapon_machine_origin ) + " num_perks " + self.num_perks + " power " + cheats_flag( "power_on" ) );
 		self.num_perks = perks;
 		return "perk_failed " + perk;
 	}

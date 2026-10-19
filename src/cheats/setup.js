@@ -22,14 +22,20 @@ export function createCheats() {
 export const wantsCheats = (session) => session.cheats.enabled && session.mode !== "guest" && session.patched;
 
 /** Right before the engine starts: writes the mod and names it on the command line. */
+// Never throws: whatever goes wrong here, the game must still start (without the mod).
 export async function prepareCheats(session, args) {
   if (!wantsCheats(session)) return;
-  const base = modBase(args);
-  const timeout = new Promise((resolve) => setTimeout(() => resolve(false), WRITE_TIMEOUT_MS));
-  const ok = base ? await Promise.race([writeModFiles(base, MOD_FILES), timeout]) : false;
-  session.cheats.ok = ok;
-  if (ok) addCheatsMod(args, { horde: currentHorde() });
-  session.note(`cheat menu: ${ok ? "mod loaded" : "mod not written"}`);
+  try {
+    const base = modBase(args);
+    const timeout = new Promise((resolve) => setTimeout(() => resolve(false), WRITE_TIMEOUT_MS));
+    const ok = base ? await Promise.race([writeModFiles(base, MOD_FILES), timeout]) : false;
+    if (ok) addCheatsMod(args, { horde: currentHorde() });
+    session.cheats.ok = ok;
+    session.note(`cheat menu: ${ok ? "mod loaded" : "mod not written"}`);
+  } catch (error) {
+    session.cheats.ok = false;
+    session.note(`cheat menu failed: ${error?.stack ?? error}`);
+  }
 }
 
 export function cheatsSettingBlocks(session) {

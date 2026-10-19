@@ -65,11 +65,12 @@ test("cheatCommand builds the console command and refuses unsafe text", () => {
 
 const fakeSession = () => ({ cheats: { ok: true, ...createBridge() }, fun: { queue: [] } });
 
-test("commands go out in order, one per 250 ms", () => {
+test("commands go out in order, at most one per 250 ms", () => {
   const session = fakeSession();
   sendCheat(session, "give", 0, "ray_gun_zm");
   sendCheat(session, "pap", 0);
   cheatsTick(session, 1000, true);
+  onCheatsLine(session, '"cheats_state" is: "ready=1 seq=1 round=1 frozen=0 power=0 horde=0 lists=0^7" default: "^7"');
   cheatsTick(session, 1100, true);
   cheatsTick(session, 1300, true);
   const sent = session.fun.queue.filter((c) => c.startsWith("set cheats_cmd"));
@@ -110,10 +111,10 @@ test("a result is matched to the command it answers", () => {
   sendCheat(session, "perk", 1, "specialty_rof");
   cheatsTick(session, 1000, true);
   cheatsTick(session, 1600, true);
-  assert.ok(session.fun.queue.includes("cheats_result"));
-  onCheatsLine(session, '"cheats_result" is: "1 err perk_failed specialty_rof^7" default: "^7"');
+  assert.ok(session.fun.queue.includes("cheats_results"));
+  onCheatsLine(session, '"cheats_results" is: "1 err perk_failed specialty_rof^7" default: "^7"');
   assert.deepEqual(results, [[{ seq: 1, ok: false, code: "perk_failed", detail: "specialty_rof" }, { action: "perk", target: 1, arg: "specialty_rof" }]]);
-  onCheatsLine(session, '"cheats_result" is: "1 err perk_failed specialty_rof^7" default: "^7"');
+  onCheatsLine(session, '"cheats_results" is: "1 err perk_failed specialty_rof^7" default: "^7"');
   assert.equal(results.length, 1, "a result is reported once");
 });
 
@@ -179,6 +180,66 @@ test("the fork's version matches the manifest, and a fork release is not newer t
   assert.equal(FORK_VERSION, manifest.version);
   assert.equal(isNewer(`v${FORK_VERSION}`, FORK_VERSION), false);
   assert.equal(isNewer("v2.2.3.1", FORK_VERSION), true);
+});
+
+test("review I1: the next command waits until the script has taken the previous one", () => {
+  const session = fakeSession();
+  sendCheat(session, "give", 0, "ray_gun_zm");
+  sendCheat(session, "perk", 0, "specialty_armorvest");
+  cheatsTick(session, 1000, true);
+  cheatsTick(session, 1300, true);
+  cheatsTick(session, 1600, true);
+  const sent = () => session.fun.queue.filter((c) => c.startsWith("set cheats_cmd"));
+  assert.equal(sent().length, 1, "not before the script took seq 1 (a paused server would lose it)");
+  onCheatsLine(session, '"cheats_state" is: "ready=1 seq=1 round=1 frozen=0 power=0 horde=0 lists=0^7" default: "^7"');
+  cheatsTick(session, 1900, true);
+  assert.equal(sent().length, 2);
+});
+
+test("review I2: every result in the script's recent list is reported once, even an older seq after a newer one", () => {
+  const session = fakeSession();
+  const results = [];
+  session.cheats.onResult = (result, sent) => results.push([result.seq, result.ok, result.code, sent.action]);
+  sendCheat(session, "perk", 0, "specialty_armorvest");
+  sendCheat(session, "give", 0, "ray_gun_zm");
+  onCheatsLine(session, '"cheats_results" is: "2 ok;1 err perk_failed specialty_armorvest^7" default: "^7"');
+  assert.deepEqual(results, [[2, true, "", "give"], [1, false, "perk_failed", "perk"]]);
+  onCheatsLine(session, '"cheats_results" is: "2 ok;1 err perk_failed specialty_armorvest^7" default: "^7"');
+  assert.equal(results.length, 2, "reported once");
+});
+
+test("review I2: results are asked for as long as a command is unanswered", () => {
+  const session = fakeSession();
+  sendCheat(session, "perk", "all", "specialty_armorvest");
+  onCheatsLine(session, '"cheats_state" is: "ready=1 seq=0 round=1 frozen=0 power=0 horde=0 lists=0^7" default: "^7"');
+  cheatsTick(session, 1000, true);
+  session.fun.queue.length = 0;
+  cheatsTick(session, 70000, true);
+  assert.ok(session.fun.queue.includes("cheats_results"), "still asking 69 s later");
+});
+
+test("review I4: M typed into a text field is text, not the hotkey", () => {
+  const session = { cheats: { panel: true }, fun: { open: true } };
+  const ctx = { playing: true, available: true, freeMouse: () => {}, lockMouse: () => {} };
+  const input = { tagName: "INPUT", isContentEditable: false };
+  const event = { code: "KeyM", repeat: false, ctrlKey: false, altKey: false, metaKey: false, composedPath: () => [input] };
+  assert.equal(onCheatsKey(session, event, ctx), false);
+  assert.equal(session.cheats.panel, true);
+});
+
+test("review M1: modBase with fs_b as the last argument does not throw", () => {
+  assert.equal(modBase(["+set", "fs_b"]), null);
+});
+
+test("after a game restart in the same page (the script counts from 0 again) commands still go out", () => {
+  const session = fakeSession();
+  sendCheat(session, "next");
+  cheatsTick(session, 1000, true);
+  onCheatsLine(session, '"cheats_state" is: "ready=1 seq=1 round=3 frozen=0 power=0 horde=0 lists=1^7" default: "^7"');
+  onCheatsLine(session, '"cheats_state" is: "ready=1 seq=0 round=1 frozen=0 power=0 horde=0 lists=1^7" default: "^7"');
+  sendCheat(session, "next");
+  cheatsTick(session, 2000, true);
+  assert.ok(session.fun.queue.includes('set cheats_cmd "2 next"'));
 });
 
 let failed = 0;

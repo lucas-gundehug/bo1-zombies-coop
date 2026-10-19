@@ -32,6 +32,7 @@ function who(session, players, slot) {
 
 const ERRORS = {
   no_player: () => C.errNoPlayer,
+  not_spawned: () => C.errNotSpawned,
   no_weapon: (d) => C.errNoWeapon(weaponName(d)),
   no_upgrade: (d) => C.errNoUpgrade(weaponName(d)),
   has_upgrade: () => C.errHasUpgrade,

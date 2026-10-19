@@ -107,17 +107,17 @@ async function waitReady(timeoutMs = 180000) {
 }
 
 let seq = 0;
-/** Sends one cheat command and waits for its result: { ok, code, detail }. */
+/** Sends one cheat command straight to the console and waits for its result: { ok, code, detail }. */
 async function run(cmd, timeoutMs = 20000) {
   seq += 1;
   const mine = seq;
   await command(`set cheats_cmd "${mine} ${cmd}"`);
   const end = Date.now() + timeoutMs;
   while (Date.now() < end) {
-    const result = await readDvar("cheats_result", 2000);
-    if (result?.startsWith(`${mine} `)) {
-      const [, status, code = "", ...rest] = result.split(" ");
-      log(`  ${cmd} -> ${result}`);
+    const entry = ((await readDvar("cheats_results", 2000)) ?? "").split(";").find((e) => e.startsWith(`${mine} `));
+    if (entry) {
+      const [, status, code = "", ...rest] = entry.split(" ");
+      log(`  ${cmd} -> ${entry}`);
       return { ok: status === "ok", code, detail: rest.join(" ") };
     }
     await wait(300);
@@ -176,6 +176,34 @@ const cardText = (pattern, timeout) => page.waitForFunction((p) => new RegExp(p)
 const compact = () => page.evaluate(() => window.__bo1Coop.card.host.classList.contains("compact"));
 
 const scenarios = {
+  // Quick clicks through the card (the bridge sends them in turn): every one answered, perks still free.
+  async race() {
+    await setCheats(true);
+    await startMap();
+    assert.ok(await waitReady(), "ready");
+    await command("god");
+    await page.waitForFunction(() => window.__bo1Coop.cheats.perks.length > 0, null, { timeout: 30000 });
+    const before = await score();
+    await page.evaluate(() => {
+      const c = window.__bo1Coop.cheats;
+      const shown = c.onResult;
+      window.__results = [];
+      c.onResult = (r, s) => {
+        window.__results.push([r.seq, r.ok, r.code, s.action, s.arg]);
+        shown(r, s);
+      };
+      const h = window.__bo1Coop.card.handlers;
+      h.cheatPerk("specialty_armorvest");
+      h.cheatPerk("specialty_fastreload");
+      h.cheatGive("ray_gun_zm");
+    });
+    await page.waitForFunction(() => window.__results.length >= 3, null, { timeout: 120000 }).catch(() => {});
+    const results = await page.evaluate(() => window.__results);
+    log("results:", JSON.stringify(results));
+    assert.equal(results.length, 3, "every click answered");
+    assert.ok(results.every((r) => r[1]), "every click worked");
+    assert.equal(await score(), before, "two perks at once are still free");
+  },
   // Everything once on this map; writes what happened to SWEEP_OUT (JSON) and fails only when the script never loads.
   async sweep() {
     await setCheats(true);
@@ -203,7 +231,6 @@ const scenarios = {
     await snap("sweep");
     if (process.env.SWEEP_OUT) fs.writeFileSync(process.env.SWEEP_OUT, JSON.stringify({ map: MAP, horde, ...found, results }, null, 2));
     for (const [what, r] of Object.entries(results)) log(r.ok ? "ok  " : "ERR ", what, r.ok ? "" : `${r.code} ${r.detail ?? ""}`);
-    log("debug:", await readDvar("cheats_debug"));
   },
   // Through the card as a player would: M opens it in game, a perk and a weapon button, the notices.
   async ui() {
