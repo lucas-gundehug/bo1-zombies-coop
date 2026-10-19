@@ -9,6 +9,7 @@ import { DEFAULT_RELAY } from "../util/relay.js";
 import { cleanName } from "../util/settings.js";
 import { T } from "./strings.js";
 import { funAvailable, funSection } from "../fun/fun.js";
+import { cheatsSettingBlocks } from "../cheats/setup.js";
 
 const COPIED_MS = 2000;
 const CONNECTED = ["ingame", "ready", "lobby"];
@@ -194,7 +195,7 @@ function settingsSection(session, inRoom) {
     if (session.stats?.lost) items.push([T.dropped, String(session.stats.lost)]);
     blocks.push({ kind: "kv", items });
   }
-  blocks.push(...controllerBlocks(session), ...relayBlocks(session), { kind: "credits", text: T.credits });
+  blocks.push(...controllerBlocks(session), ...cheatsSettingBlocks(session), ...relayBlocks(session), { kind: "credits", text: T.credits });
   return { kind: "section", title: T.settings, act: "settings", open: session.showSettings, blocks };
 }
 

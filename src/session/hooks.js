@@ -1,5 +1,6 @@
 // Hooks into vel.gg's page that let the extension get at the engine: patching the wasm while it is instantiated,
 // running setup code right before the engine's main() starts, and holding the host's click-to-start.
+import { prepareCheats, wantsCheats } from "../cheats/setup.js";
 import { BUILDS } from "../engine/builds.js";
 import { EngineMemory } from "../engine/memory.js";
 import { patchEngine } from "../engine/patch.js";
@@ -69,7 +70,10 @@ export function hookMain(session) {
         writable: true,
         value(args) {
           if (!session.mode && session.patched) session.engine = new EngineMemory(Module, session.build);
-          if (!session.mode || !session.patched) return original.call(this, args);
+          if (!session.mode || !session.patched) {
+            if (!wantsCheats(session)) return original.call(this, args);
+            return prepareCheats(session, args).then(() => original.call(this, args));
+          }
           return (async () => {
             try {
               if (session.mode === "host") prepareHost(session, Module, args);
@@ -82,6 +86,8 @@ export function hookMain(session) {
               session.note(`setup failed: ${error.stack ?? error}`);
               session.engine?.useInboundQueue(0);
             }
+            // After prepareHost: what it captured for guests (session.gameSettings) must not name our mod.
+            if (session.mode === "host") await prepareCheats(session, args);
             return original.call(this, args);
           })();
         },

@@ -1496,6 +1496,343 @@
     return true;
   }
 
+  // src/cheats/gsc/_hooks.gsc
+  var hooks_default = `// CHEAT MENU - part of the BO1 Zombies Co-op extension's fork, not of the game. Loaded through +set fs_mods "... cheats"
+// (mods/_stack/maps/_modstack.gsc runs each stacked mod's register()).
+
+register()
+{
+	maps\\_modstack::add( "_zombiemode_ffotd::main_end", maps\\cheats\\_cheats::main_end );
+}
+`;
+
+  // src/cheats/gsc/_cheats.gsc
+  var cheats_default = `#include maps\\_utility;
+#include common_scripts\\utility;
+#include maps\\_zombiemode_utility;
+
+// CHEAT MENU - the game side of Fun mode's weapons, perks, power-ups and rounds. The card sends commands in the dvar
+// cheats_cmd and reads what this script publishes in cheats_* dvars (src/cheats/bridge.js).
+
+main_end()
+{
+	level thread cheats_main();
+}
+
+cheats_main()
+{
+	flag_wait( "all_players_connected" );
+	SetDvar( "cheats_state", "ready=1" );
+}
+`;
+
+  // src/cheats/gsc/_stack/_modstack.gsc
+  var modstack_default = `// bo1-coop-cheats: copied from github.com/MisaDev4/bo1-zombies-decompiled mods/_stack/maps/_modstack.gsc; written only where vel.gg ships none.
+// FS_MODS BASE - not part of the original game. mods/_stack goes on top of the search path only with +set fs_mods
+// (src/universal/com_files.cpp FS_Startup); without fs_mods nothing here is read and the game is retail.
+//
+// Several mods at once: +set fs_mods "mapkit horde zinfo" puts mods/mapkit, mods/horde, mods/zinfo on the search path in
+// that order (a later mod's plain file wins over an earlier one's). The retail "fix for the day" hooks that every mod
+// wants to ship (maps\\zombie_pentagon_ffotd.gsc, maps\\_zombiemode_ffotd.gsc) would shadow each other, so mods/_stack ships
+// them (retail body + one run() line) and each mod registers what it wants run there instead, in its own file:
+//
+//   mods/<name>/maps/<name>/_hooks.gsc
+//   register()
+//   {
+//       maps\\_modstack::add( "zombie_pentagon_ffotd::main_start", maps\\<name>\\_<name>::main_start );
+//   }
+//
+// Hook names: "<ffotd file>::main_start" / "::main_end" of zombie_pentagon_ffotd and _zombiemode_ffotd. run() starts every
+// registered function as a level thread, in fs_mods order: it runs at once up to its first wait (same frame, same order as a
+// direct call), and a hook that waits does not hold back the next mod's. A mod without _hooks.gsc only adds files.
+// maps\\_modstack_list.gsc is not a file: the engine writes it from fs_mods (Scr_ReadFile, src/clientscript/cscr_parser.cpp).
+
+add( hook, func )
+{
+	if ( !IsDefined( level._modstack_hooks[hook] ) )
+	{
+		level._modstack_hooks[hook] = [];
+	}
+	level._modstack_hooks[hook][level._modstack_hooks[hook].size] = func;
+}
+
+run( hook )
+{
+	if ( !IsDefined( level._modstack_hooks ) )
+	{
+		level._modstack_hooks = [];
+		maps\\_modstack_list::register_all();
+	}
+	funcs = level._modstack_hooks[hook];
+	if ( !IsDefined( funcs ) )
+	{
+		return;
+	}
+	for ( i = 0; i < funcs.size; i++ )
+	{
+		level thread [[ funcs[i] ]]();
+	}
+}
+`;
+
+  // src/cheats/gsc/_stack/_zombiemode_ffotd.gsc
+  var zombiemode_ffotd_default = `// bo1-coop-cheats: copied from github.com/MisaDev4/bo1-zombies-decompiled mods/_stack/maps/_zombiemode_ffotd.gsc; written only where vel.gg ships none.
+#include maps\\_utility;\r
+#include common_scripts\\utility;\r
+#include maps\\_zombiemode_utility;\r
+#include animscripts\\zombie_Utility;\r
+\r
+\r
+main_start()\r
+{\r
+	//This will turn off the new path method if added\r
+	//level.calc_closest_player_using_paths = false;\r
+	\r
+	\r
+	//Disable friends list and dev list from spaceman name if we want\r
+	//setsaveddvar( "r_zombieNameAllowFriendsList", "1" );\r
+	//setsaveddvar( "r_zombieNameAllowDevList", "1" );\r
+	\r
+	//We can disable additional primary machines here on a per map basis\r
+	//just set level.zombie_additionalprimaryweapon_machine_origin to undefined and it will ignore it\r
+	\r
+	//Turn off 3 weapon perk machines for other maps based on dvars\r
+	disable_additionalprimaryweapon_machine_locations();\r
+	maps\\_modstack::run( "_zombiemode_ffotd::main_start" ); // mod: fs_mods - each stacked mod's hook (maps\\_modstack.gsc)\r
+}\r
+\r
+\r
+main_end()\r
+{\r
+	level thread onPlayerConnect();\r
+	maps\\_modstack::run( "_zombiemode_ffotd::main_end" ); // mod: fs_mods\r
+}\r
+\r
+\r
+// FS_MODS BASE - not part of the original game. mods/_stack goes on top of the search path only with +set fs_mods\r
+// (src/universal/com_files.cpp FS_Startup). Retail maps\\_zombiemode_ffotd.gsc (common_zombie_patch), the shared "fix for\r
+// the day" hook every zombie map's maps\\_zombiemode::main() runs, is this file without the two maps\\_modstack::run lines.\r
+\r
+disable_additionalprimaryweapon_machine_locations()\r
+{\r
+	enabled = 0;\r
+\r
+	switch ( Tolower( GetDvar( #"mapname" ) ) )\r
+	{\r
+	case "zombie_theater":\r
+		enabled = GetDvarInt( #"scr_zm_extra_perk_theater" );\r
+		break;\r
+	case "zombie_pentagon":\r
+		enabled = GetDvarInt( #"scr_zm_extra_perk_pentagon" );\r
+		break;\r
+	case "zombie_cosmodrome":\r
+		enabled = GetDvarInt( #"scr_zm_extra_perk_cosmodrome" );\r
+		break;\r
+	case "zombie_coast":\r
+		enabled = GetDvarInt( #"scr_zm_extra_perk_coast" );\r
+		break;\r
+	case "zombie_temple":\r
+		enabled = GetDvarInt( #"scr_zm_extra_perk_temple" );\r
+		break;\r
+	case "zombie_moon":\r
+		enabled = 1;\r
+		break;\r
+	case "zombie_cod5_prototype":\r
+		enabled = GetDvarInt( #"scr_zm_extra_perk_cod5_prototype" );\r
+		break;\r
+	case "zombie_cod5_asylum":\r
+		enabled = GetDvarInt( #"scr_zm_extra_perk_cod5_asylum" );\r
+		break;\r
+	case "zombie_cod5_sumpf":\r
+		enabled = GetDvarInt( #"scr_zm_extra_perk_cod5_sumpf" );\r
+		break;\r
+	case "zombie_cod5_factory":\r
+		enabled = GetDvarInt( #"scr_zm_extra_perk_cod5_factory" );\r
+		break;\r
+	}\r
+\r
+	if ( GetDvarInt( #"scr_zm_extra_perk_all" ) )\r
+	{\r
+		enabled = 1;\r
+	}\r
+\r
+	if ( !enabled )\r
+	{\r
+		level.zombie_additionalprimaryweapon_machine_origin = undefined;\r
+	}\r
+}\r
+\r
+\r
+onPlayerConnect()\r
+{\r
+	for ( ;; )\r
+	{\r
+		level waittill( "connecting", player );\r
+\r
+		player thread claymore_to_notsolid();\r
+	}\r
+}\r
+\r
+\r
+claymore_to_notsolid()\r
+{\r
+	self endon( "disconnect" );\r
+\r
+	for ( ;; )\r
+	{\r
+		self waittill( "grenade_fire", claymore, weapname );\r
+		if ( weapname == "claymore_zm" || weapname == "spikemore_zm" )\r
+		{\r
+			claymore NotSolid();\r
+		}\r
+	}\r
+}\r
+\r
+\r
+//Cheaters logic added here because its a small file (for any ffotd updates)\r
+//TODO: Next game move to its own file\r
+nazizombies_checking_for_cheats()\r
+{\r
+//WIP - PETER\r
+// 	players = get_players();		\r
+// 	for( i = 0; i < players.size; i++ )\r
+// 	{\r
+// 		total_kills = players[i].stats["kills"];\r
+// 		total_points = players[i].stats["score"];\r
+// 		total_rounds = (level.round_number - 1); // rounds survived\r
+// 		total_downs = players[i].stats["downs"];\r
+// 		total_revives = players[i].stats["revives"];\r
+// 		total_perks = players[i].stats["perks"];\r
+// 		total_headshots = players[i].stats["headshots"];\r
+// 		total_zombie_gibs = players[i].stats["zombie_gibs"];\r
+// 	}\r
+\r
+\r
+	return false;  // no cheater found\r
+}\r
+\0`;
+
+  // src/cheats/files.js
+  var MOD_FILES = [
+    { path: "mods/cheats/maps/cheats/_hooks.gsc", text: hooks_default },
+    { path: "mods/cheats/maps/cheats/_cheats.gsc", text: cheats_default },
+    { path: "mods/_stack/maps/_modstack.gsc", text: modstack_default },
+    { path: "mods/_stack/maps/_zombiemode_ffotd.gsc", text: zombiemode_ffotd_default }
+  ];
+
+  // src/cheats/mod.js
+  var MOD_NAME = "cheats";
+  function modBase(args) {
+    const i = args.findIndex((arg, at) => arg === "fs_b" && args[at - 1] === "+set");
+    const value = i < 0 ? "" : args[i + 1];
+    return value.startsWith("/opfs/") ? value.slice("/opfs/".length) : null;
+  }
+  function addCheatsMod(args, { horde }) {
+    const i = args.findIndex((arg, at) => arg === "fs_mods" && args[at - 1] === "+set");
+    if (i < 0) {
+      insertBeforeDevmap(args, ["+set", "fs_mods", MOD_NAME]);
+    } else {
+      const names = args[i + 1].split(/[\s,;]+/).filter(Boolean);
+      if (!names.includes(MOD_NAME)) args[i + 1] = [...names, MOD_NAME].join(" ");
+    }
+    if (horde && !args.includes("cheats_horde")) insertBeforeDevmap(args, ["+set", "cheats_horde", "1"]);
+  }
+
+  // src/cheats/opfs.js
+  var MARKER = "// bo1-coop-cheats";
+  async function dir(root, parts2) {
+    let d = root;
+    for (const part of parts2) d = await d.getDirectoryHandle(part, { create: true });
+    return d;
+  }
+  async function existingText(folder, name) {
+    try {
+      return await (await (await folder.getFileHandle(name)).getFile()).text();
+    } catch {
+      return null;
+    }
+  }
+  async function writeModFiles(base, files) {
+    try {
+      const root = await navigator.storage.getDirectory();
+      for (const { path, text } of files) {
+        const parts2 = `${base}/${path}`.split("/").filter(Boolean);
+        const name = parts2.pop();
+        const folder = await dir(root, parts2);
+        if (path.startsWith("mods/_stack/")) {
+          const old = await existingText(folder, name);
+          if (old != null && !old.startsWith(MARKER)) continue;
+        }
+        const writable = await (await folder.getFileHandle(name, { create: true })).createWritable();
+        await writable.write(text);
+        await writable.close();
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // src/cheats/strings.js
+  var TEXT = {
+    en: {
+      setting: "Cheat menu",
+      on: "On",
+      off: "Off",
+      turnOn: "Turn on",
+      turnOff: "Turn off",
+      reload: "Reload the page to apply.",
+      note: "Weapons, perks, power-ups and rounds in Fun mode. Only the host needs it."
+    },
+    pt: {
+      setting: "Menu de cheats",
+      on: "Ligado",
+      off: "Desligado",
+      turnOn: "Ligar",
+      turnOff: "Desligar",
+      reload: "Recarregue a página para aplicar.",
+      note: "Armas, perks, power-ups e rounds no Modo diversão. Só o host precisa."
+    }
+  };
+  var C = TEXT[LANG] ?? TEXT.en;
+
+  // src/cheats/setup.js
+  var WRITE_TIMEOUT_MS = 5e3;
+  function createCheats() {
+    return {
+      enabled: readSetting("cheats", "1") !== "0",
+      /** true once the mod was handed to the engine, false when it could not be, null before the game starts. */
+      ok: null
+    };
+  }
+  var wantsCheats = (session) => session.cheats.enabled && session.mode !== "guest" && session.patched;
+  async function prepareCheats(session, args) {
+    if (!wantsCheats(session)) return;
+    const base = modBase(args);
+    const timeout = new Promise((resolve) => setTimeout(() => resolve(false), WRITE_TIMEOUT_MS));
+    const ok = base ? await Promise.race([writeModFiles(base, MOD_FILES), timeout]) : false;
+    session.cheats.ok = ok;
+    if (ok) addCheatsMod(args, { horde: currentHorde() });
+    session.note(`cheat menu: ${ok ? "mod loaded" : "mod not written"}`);
+  }
+  function cheatsSettingBlocks(session) {
+    const on = session.cheats.enabled;
+    return [
+      { kind: "kv", items: [[C.setting, on ? C.on : C.off]] },
+      { kind: "text", cls: "muted small", text: C.note },
+      { kind: "buttons", buttons: [{ act: "cheatsSetting", label: on ? C.turnOff : C.turnOn, style: "ghost" }] }
+    ];
+  }
+  function cheatsSettingActions(session) {
+    return {
+      cheatsSetting: () => {
+        session.cheats.enabled = !session.cheats.enabled;
+        saveSetting("cheats", session.cheats.enabled ? "1" : "0");
+        session.notice = C.reload;
+      }
+    };
+  }
+
   // src/engine/wasm.js
   function encodeU32(value) {
     const out = [];
@@ -2094,7 +2431,10 @@
           writable: true,
           value(args) {
             if (!session.mode && session.patched) session.engine = new EngineMemory(Module, session.build);
-            if (!session.mode || !session.patched) return original.call(this, args);
+            if (!session.mode || !session.patched) {
+              if (!wantsCheats(session)) return original.call(this, args);
+              return prepareCheats(session, args).then(() => original.call(this, args));
+            }
             return (async () => {
               try {
                 if (session.mode === "host") prepareHost(session, Module, args);
@@ -2106,6 +2446,7 @@
                 session.note(`setup failed: ${error.stack ?? error}`);
                 session.engine?.useInboundQueue(0);
               }
+              if (session.mode === "host") await prepareCheats(session, args);
               return original.call(this, args);
             })();
           }
@@ -2521,7 +2862,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
   };
 
   // src/fun/fun.js
-  var TEXT = {
+  var TEXT2 = {
     en: {
       title: "Fun mode",
       note: "Host only. Changes apply to everyone in your game.",
@@ -2589,7 +2930,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       cheatsOff: "Este mapa está com cheats desligados: os comandos não vão funcionar."
     }
   };
-  var F = TEXT[LANG];
+  var F = TEXT2[LANG];
   var PLAYER_TOGGLES = ["god", "demigod", "notarget", "noclip", "ufo"];
   var SPEEDS = [0.5, 0.75, 1, 1.5, 2, 3];
   var TIMESCALES = [0.25, 0.5, 0.75, 1, 1.5, 2];
@@ -2827,8 +3168,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       },
       funWorld: (arg) => {
         if (!engineReady()) return;
-        const [what, dir] = String(arg).split(":");
-        const direction = dir === "up" ? 1 : -1;
+        const [what, dir2] = String(arg).split(":");
+        const direction = dir2 === "up" ? 1 : -1;
         if (what === "timescale") {
           fun.timescale = step(TIMESCALES, fun.timescale, direction);
           fun.queue.push(`timescale ${fun.timescale}`);
@@ -3105,7 +3446,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       if (session.stats?.lost) items.push([T.dropped, String(session.stats.lost)]);
       blocks.push({ kind: "kv", items });
     }
-    blocks.push(...controllerBlocks(session), ...relayBlocks(session), { kind: "credits", text: T.credits });
+    blocks.push(...controllerBlocks(session), ...cheatsSettingBlocks(session), ...relayBlocks(session), { kind: "credits", text: T.credits });
     return { kind: "section", title: T.settings, act: "settings", open: session.showSettings, blocks };
   }
   function controllerBlocks(session) {
@@ -3187,6 +3528,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     const session = createSession();
     window.__bo1Coop = session;
     session.fun = createFun();
+    session.cheats = createCheats();
     watchConsole(session);
     if (session.mode) keepSinglePlayer(session.room);
     hookWasm(session);
@@ -3292,7 +3634,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       },
       aimDown: () => setAim(session, session.aimLevel - 1),
       aimUp: () => setAim(session, session.aimLevel + 1),
-      ...funActions(session)
+      ...funActions(session),
+      ...cheatsSettingActions(session)
     };
   }
   function setAim(session, level) {
