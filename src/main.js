@@ -18,6 +18,8 @@ import { cheatsSettingActions, createCheats } from "./cheats/setup.js";
 import { installCheatsKey } from "./cheats/hotkey.js";
 import { createMap } from "./map/state.js";
 import { mapTick } from "./map/live.js";
+import { installMapKey } from "./map/hotkey.js";
+import { MapOverlay } from "./map/overlay.js";
 import { cleanName, guestIdFor, saveSetting } from "./util/settings.js";
 import { checkForUpdate, RELAY_GUIDE } from "./util/updates.js";
 
@@ -36,6 +38,9 @@ function start() {
   session.cheats = createCheats();
   session.map = createMap();
   installCheatsKey(session);
+  session.mapOverlay = new MapOverlay();
+  session.mapOverlay.mount();
+  installMapKey(session, session.mapOverlay);
   watchConsole(session);
   if (session.mode) keepSinglePlayer(session.room);
 

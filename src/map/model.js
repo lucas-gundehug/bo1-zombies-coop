@@ -54,7 +54,7 @@ export function mapModel(session, now, { view = latestView() } = {}) {
     room: room >= 0 ? roomName(plan.slug, plan.rooms[room].id) : null,
     floor,
     floors: plan.floors.map((f, i) => ({ name: f.name, current: i === floor, others: i === floor ? [] : players.filter((p) => !p.me && p.floor === i).map((p) => p.letter) })),
-    rooms: plan.rooms.map((r, i) => ({ index: i, open: state ? Boolean(state.rooms[i]) : null, current: i === room })),
+    rooms: plan.rooms.map((r, i) => ({ index: i, name: roomName(plan.slug, r.id), open: state ? Boolean(state.rooms[i]) : null, current: i === room })),
     doors: state ? plan.doors.flatMap((d, i) => (state.doors[i] ? [] : [{ index: i, cost: d.cost, kind: d.kind, at: d.at }])) : [],
     pois: plan.pois.map((p) => {
       if (p.kind === "box") boxIndex += 1;

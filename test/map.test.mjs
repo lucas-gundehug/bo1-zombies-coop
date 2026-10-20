@@ -11,6 +11,11 @@ import { mapModel } from "../src/map/model.js";
 import { roomName } from "../src/map/names.js";
 import { PLAYER_COLORS } from "../src/ui/card.js";
 import { onMapMessage } from "../src/map/net.js";
+import { onMapKey } from "../src/map/hotkey.js";
+import { buildPlan } from "../scripts/plan-build.mjs";
+import { planFor } from "../src/map/plans/index.js";
+import { FLOORS as FLOOR_TABLE } from "../src/map/names.js";
+import { MAP_SLUGS } from "../src/game/page.js";
 
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
@@ -309,7 +314,8 @@ test("mapModel draws each player with their colour and first letter; mine from m
   const [me, jonas] = model.players;
   assert.deepEqual([me.n, me.letter, me.color, me.me, me.x, me.y, me.yaw], [1, "L", PLAYER_COLORS[0], true, 120, 130, 45]);
   assert.deepEqual([jonas.n, jonas.letter, jonas.color, jonas.me], [2, "J", PLAYER_COLORS[1], false]);
-  assert.equal(model.room, "Foyer");
+  assert.equal(model.room, "Lobby"); // kino has a name table: foyer_zone is the Lobby
+  assert.deepEqual(model.rooms.map((r) => r.name), ["Lobby", "Side", "Balcony"]);
   assert.deepEqual(model.legend.map((l) => l.name), ["Lucas", "jonas"]);
 });
 
@@ -497,6 +503,120 @@ test("map messages stay small", () => {
   assert.ok(JSON.stringify({ t: "mapp", p }).length < 1000);
   const bits = "01".repeat(32);
   assert.ok(JSON.stringify({ t: "maps", slug: "shangrila", sig: "z64d64", doors: bits, rooms: bits, box: [1, 2, 3, 4, 5, 6, 7, 8], power: 1 }).length < 1000);
+});
+
+// ---- plans from the game's dump (scripts/plan-build.mjs) ----
+
+const DUMP = [
+  "Z,a_zone,0,0,0;Z,b_zone,500,0,0;Z,empty_zone,900,900,0",
+  "D,door,250,0,0,1000,t1;P,perk,specialty_armorvest,10,10,0;P,box,-,100,0,0;P,box,-,600,0,200",
+  "N,0,0,0,0;N,100,0,0,0;N,500,0,0,1;N,600,0,200,1",
+].join(";");
+const FLOORS = [
+  { name: "Ground floor", below: 120 },
+  { name: "Upstairs", below: null },
+];
+
+test("buildPlan turns the dump into a valid plan", () => {
+  const plan = buildPlan(DUMP, { slug: "kino", floors: FLOORS });
+  assert.equal(validPlan(plan), true);
+  assert.equal(plan.sig, "z3d1");
+  assert.deepEqual(
+    plan.rooms.map((r) => r.id),
+    ["a_zone", "b_zone", "empty_zone"],
+  );
+  assert.deepEqual(plan.doors, [{ kind: "door", cost: 1000, at: [0, 250, 0], rooms: [0, 1] }]);
+  assert.deepEqual(plan.pois, [
+    { kind: "perk", id: "specialty_armorvest", at: [0, 10, 10] },
+    { kind: "box", id: null, at: [0, 100, 0] },
+    { kind: "box", id: null, at: [1, 600, 0] },
+  ]);
+});
+
+test("buildPlan draws rooms only on the floors their nodes are on", () => {
+  const plan = buildPlan(DUMP, { slug: "kino", floors: FLOORS });
+  assert.ok(plan.rooms[0].rects.every((r) => r[0] === 0));
+  assert.deepEqual([...new Set(plan.rooms[1].rects.map((r) => r[0]))].sort(), [0, 1]);
+  const covers = (room, x, y, f) => room.rects.some(([rf, x0, y0, x1, y1]) => rf === f && x >= x0 && x <= x1 && y >= y0 && y <= y1);
+  assert.ok(covers(plan.rooms[0], 0, 0, 0) && covers(plan.rooms[0], 100, 0, 0));
+  assert.ok(covers(plan.rooms[1], 600, 0, 1));
+  assert.ok(!covers(plan.rooms[0], 600, 0, 1));
+});
+
+test("a cell between two rooms goes to the nearer room's node", () => {
+  const plan = buildPlan(DUMP, { slug: "kino", floors: FLOORS });
+  const owner = (x, y) => plan.rooms.findIndex((room) => room.rects.some(([f, x0, y0, x1, y1]) => f === 0 && x > x0 && x < x1 && y > y0 && y < y1));
+  assert.equal(owner(110, 10), 0);
+  assert.equal(owner(490, 10), 1);
+});
+
+test("a room's name goes on the floor with most of its nodes, not its biggest patch elsewhere", () => {
+  // room b: two nodes spread out downstairs (the bigger patch), three on one spot upstairs (most nodes)
+  const dump = DUMP.replace("N,500,0,0,1;N,600,0,200,1", "N,400,0,0,1;N,560,0,0,1;N,600,0,200,1;N,600,0,201,1;N,601,0,200,1");
+  const plan = buildPlan(dump, { slug: "kino", floors: FLOORS });
+  const area = ([, x0, y0, x1, y1]) => (x1 - x0) * (y1 - y0);
+  const biggest = plan.rooms[1].rects.reduce((a, b) => (area(b) > area(a) ? b : a));
+  assert.equal(biggest[0], 0, "the fixture's biggest patch is downstairs");
+  assert.equal(plan.rooms[1].label[0], 1);
+});
+
+test("a room without nodes gets a small square at its volume", () => {
+  const plan = buildPlan(DUMP, { slug: "kino", floors: FLOORS });
+  const [[f, x0, y0, x1, y1]] = plan.rooms[2].rects;
+  assert.equal(f, 0);
+  assert.ok(x0 < 900 && x1 > 900 && y0 < 900 && y1 > 900);
+  assert.deepEqual(plan.rooms[2].label, [0, 900, 900]);
+});
+
+test("every map has a valid bundled plan", () => {
+  for (const slug of Object.values(MAP_SLUGS)) {
+    const plan = planFor(slug);
+    assert.ok(plan, `no plan for ${slug}`);
+    assert.equal(plan.slug, slug);
+    assert.equal(plan.sig, `z${plan.rooms.length}d${plan.doors.length}`);
+    assert.ok(plan.rooms.length >= 3, `${slug}: ${plan.rooms.length} rooms`);
+  }
+  assert.ok(planFor("kino").rooms.length >= 10);
+  assert.equal(planFor("atlantis"), null);
+});
+
+test("the floors of a plan match the floor table", () => {
+  assert.deepEqual(
+    planFor("five").floors.map((f) => f.name),
+    FLOOR_TABLE.five.map((f) => f.name),
+  );
+  assert.equal(planFor("riese").floors.length, 1);
+  // Moon's No Man's Land, where the game starts, is its own floor
+  assert.equal(floorOf(planFor("moon"), -679, 13929, -14020), 0);
+});
+
+// ---- the N key (src/map/hotkey.js) ----
+
+const key = (code, extra = {}) => ({ code, repeat: false, ctrlKey: false, altKey: false, metaKey: false, composedPath: () => [{ tagName: "CANVAS" }], ...extra });
+
+test("N in a game toggles the map", () => {
+  const session = hostSession();
+  assert.equal(onMapKey(session, key("KeyN"), { playing: true }), true);
+  assert.equal(session.map.open, true);
+  assert.ok(session.map.openedAt > 0);
+  assert.equal(onMapKey(session, key("KeyN"), { playing: true }), true);
+  assert.equal(session.map.open, false);
+});
+
+test("N is left alone outside a game, with modifiers, repeated, or typed into a field", () => {
+  const session = hostSession();
+  const cases = [
+    [key("KeyN"), false],
+    [key("KeyN", { ctrlKey: true }), true],
+    [key("KeyN", { altKey: true }), true],
+    [key("KeyN", { metaKey: true }), true],
+    [key("KeyN", { repeat: true }), true],
+    [key("KeyN", { composedPath: () => [{ tagName: "INPUT" }] }), true],
+    [key("KeyN", { composedPath: () => [{ tagName: "DIV", isContentEditable: true }] }), true],
+    [key("KeyM"), true],
+  ];
+  for (const [event, playing] of cases) assert.equal(onMapKey(session, event, { playing }), false);
+  assert.equal(session.map.open, false);
 });
 
 let failed = 0;

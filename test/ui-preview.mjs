@@ -88,7 +88,44 @@ const scenes = [
     stats: { rtt: 38, rtts: { 1: 38 } } } } },
 ];
 
+// Fork: the in-game map (N), staged from a bundled plan: three players in three open rooms, the rest closed.
+const stageMap = ({ plan, players }) => {
+  const c = window.__bo1Coop;
+  const later = Date.now() + 3600e3; // samples "from the future" never go stale while the shot is taken
+  const open = plan.rooms.map((r) => r.label[0] === 0);
+  const spots = plan.rooms.map((r, i) => [i, r.label]).filter(([, l]) => l[0] === 0).slice(0, players.length);
+  Object.assign(c.map, { slug: plan.slug, plan, planOk: true, open: true, openedAt: Date.now() });
+  c.map.state = { v: 1, sig: plan.sig, doors: plan.doors.map((d, i) => i % 3 === 0), rooms: open.map((o, i) => o && i < 4), box: [0], power: true, at: later };
+  window.five.views = [];
+  spots.forEach(([room, [, x, y]], i) => {
+    const yaw = 40 + 90 * i;
+    c.map.live.set(i + 1, { x, y, z: 0, yaw, room, s: i === 2 ? 1 : 0, floor: 0, at: later });
+    c.map.tracks.set(i + 1, [{ at: later, x, y, yaw }]);
+    if (i === 0) window.five.views.push({ origin: [x, y, 60], angles: [0, yaw, 0], ms: 1, flags: 0 });
+  });
+  c.mapOverlay.show(c);
+};
+const mapScenes = ["kino", "five", "moon"].flatMap((slug) => [
+  { name: `10-map-${slug}`, slug, size: { width: 1280, height: 720 } },
+  { name: `11-map-${slug}-small`, slug, size: { width: 1100, height: 650 } },
+]);
+
 // ONLY=<text> shoots only the scenes whose name contains it.
+for (const scene of mapScenes.filter((s) => (!process.env.ONLY || s.name.includes(process.env.ONLY)) && fs.existsSync(`src/map/plans/${s.slug}.json`))) {
+  const page = await ctx.newPage();
+  await page.setViewportSize(scene.size);
+  await page.goto(`https://vel.gg/bsz/#coop=host&coopRoom=${ROOM}&coopRelay=http%3A%2F%2F127.0.0.1%3A9`);
+  await page.waitForFunction(() => window.__bo1Coop?.mapOverlay);
+  const zone = Object.entries({ zombie_theater: "kino", zombie_pentagon: "five", zombie_moon: "moon" }).find(([, s]) => s === scene.slug)[0];
+  await page.evaluate(fake, { screen: "playing", coop: { set: { zone, name: "Lucas", peer: true }, clients: [{ slot: 1, state: 5, loopback: true, port: 2406 }, { slot: 2, state: 5, loopback: true, port: 2407 }],
+    guests: [{ seat: 1, state: { phase: "connected", name: "Jonas" }, slot: { slot: 1, state: 5 } }, { seat: 2, state: { phase: "connected", name: "Mads" }, slot: { slot: 2, state: 5 } }], stats: { rtt: 38, rtts: { 1: 38, 2: 40 } } } });
+  await page.evaluate(stageMap, { plan: JSON.parse(fs.readFileSync(`src/map/plans/${scene.slug}.json`, "utf8")), players: ["Lucas", "Jonas", "Mads"] });
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: `${OUT}/${scene.name}.png` });
+  console.log("shot", scene.name);
+  await page.close();
+}
+
 for (const scene of scenes.filter((s) => !process.env.ONLY || s.name.includes(process.env.ONLY))) {
   const page = await ctx.newPage();
   if (scene.tall) await page.setViewportSize({ width: 1100, height: 2600 });
