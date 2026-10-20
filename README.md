@@ -22,9 +22,13 @@ connections between players for smoother co-op.
 
 <table>
   <tr>
-    <td align="center" width="50%"><img src="docs/images/map-kino.png" alt="The in-game map on Kino der Toten" width="100%"><br><b>🗺️ The map (N)</b></td>
-    <td align="center" width="25%"><img src="docs/images/fork-cheats.png" alt="The cheat menu: give to, weapons on this map, perks, power-ups and rounds" width="100%"><br><b>🔫 The cheat menu (M)</b></td>
-    <td align="center" width="25%"><img src="docs/images/fork-lobby.png" alt="The lobby: four players, two on a direct link and one on the relay" width="100%"><br><b>🔗 Direct connections</b></td>
+    <td align="center" colspan="4" valign="top"><img src="docs/images/map-kino.png" alt="The in-game map on Kino der Toten: rooms, the player in the Lobby, closed doors with prices, the game's perk icons and Mystery Box spots" width="100%"><br><b>🗺️ The map (N)</b><br><sub>Rooms, your friends, closed doors with prices, perks, the box, Pack-a-Punch and power</sub></td>
+    <td align="center" colspan="2" valign="top"><img src="docs/images/minimap.png" alt="The minimap in the top left corner: the room name on top, the player in the middle" width="100%"><br><b>🧭 The minimap</b><br><sub>Always in the corner, scrolls with you</sub></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2" valign="top"><img src="docs/images/fork-cheats.png" alt="The cheat menu: give to, weapons on this map, Pack-a-Punch, free perks, health levels, power-ups and rounds" width="100%"><br><b>🔫 The cheat menu (M)</b><br><sub>Weapons, perks, health, power-ups, rounds</sub></td>
+    <td align="center" colspan="2" valign="top"><img src="docs/images/fork-fun.png" alt="Fun mode: god mode, can't die, invisible, noclip, fly, speed and points per player; ammo, zombies and world settings" width="100%"><br><b>🕹️ Fun mode</b><br><sub>God mode, flying, speed, points, ammo, gravity</sub></td>
+    <td align="center" colspan="2" valign="top"><img src="docs/images/fork-lobby.png" alt="The lobby with four players: two on a direct link, one on the relay" width="100%"><br><b>🔗 Co-op for 4</b><br><sub>Direct connections, relay as a fallback</sub></td>
   </tr>
 </table>
 

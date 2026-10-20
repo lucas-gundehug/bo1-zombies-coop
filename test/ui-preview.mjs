@@ -146,9 +146,16 @@ const readmeScenes = [
     clients: [1, 2, 3].map((slot) => ({ slot, state: 5, loopback: true, port: 2405 + slot })), guests: friends,
     stats: { rtt: 12, rtts: { 1: 12, 2: 18, 3: 64 }, lost: 0 } } } },
   { name: "readme-cheats", from: "Give to", run: { screen: "ready", coop: {
-    set: { zone: "zombie_theater", name: "Lucas", peer: true, cheats: { enabled: true, ok: true, ready: true, round: 12, frozen: false, power: true, horde: false, target: 1, noticeArea: "perks", ...cheatLists } },
+    set: { zone: "zombie_theater", name: "Lucas", peer: true, cheats: { enabled: true, ok: true, ready: true, round: 12, frozen: false, power: true, horde: false, target: 1, noticeArea: "health", ...cheatLists,
+      weapons: ["ray_gun_zm", "thundergun_zm", "zombie_cymbal_monkey", "galil_zm", "famas_zm", "spas_zm", "python_zm", "m1911_zm"], health: { 1: 200 } } },
     clients: [1, 2].map((slot) => ({ slot, state: 5, loopback: true, port: 2405 + slot })), guests: friends.slice(0, 2),
-    fun: { open: true, notice: "Juggernog given to Jonas.", noticeAt: Date.now() + 3600e3, timescale: 1, jump: 39, gravity: 800, players: {} },
+    fun: { open: true, notice: "Health 200% for Jonas.", noticeAt: Date.now() + 3600e3, timescale: 1, jump: 39, gravity: 800, players: {} },
+    stats: { rtt: 12, rtts: { 1: 12, 2: 18 } } } } },
+  { name: "readme-fun", from: "Players", to: "Give to", run: { screen: "ready", coop: {
+    set: { zone: "zombie_theater", name: "Lucas", peer: true, cheats: { enabled: true, ok: true, ready: true, round: 12, frozen: false, power: true, horde: false, target: 1, ...cheatLists } },
+    clients: [1, 2].map((slot) => ({ slot, state: 5, loopback: true, port: 2405 + slot })), guests: friends.slice(0, 2),
+    fun: { open: true, infiniteClip: true, timescale: 1, jump: 150, gravity: 400,
+      players: { 0: { god: true, demigod: false, notarget: false, noclip: false, ufo: false, speed: 1.5 }, 1: { god: false, demigod: true, notarget: true, noclip: false, ufo: false, speed: 1 } } },
     stats: { rtt: 12, rtts: { 1: 12, 2: 18 } } } } },
 ];
 for (const scene of readmeScenes.filter((s) => !process.env.ONLY || s.name.includes(process.env.ONLY))) {
@@ -167,8 +174,15 @@ for (const scene of readmeScenes.filter((s) => !process.env.ONLY || s.name.inclu
         return el ? el.getBoundingClientRect().top - 10 : null;
       }, scene.from)
     : null;
+  const bottom = scene.to
+    ? await page.evaluate((label) => {
+        const root = window.__bo1Coop.card.root;
+        const el = [...root.querySelectorAll("*")].find((e) => e.children.length === 0 && e.textContent.trim().toLowerCase() === label.toLowerCase());
+        return el ? el.getBoundingClientRect().top - 6 : null;
+      }, scene.to)
+    : null;
   const y = top ?? box.y - 8;
-  const height = Math.min(box.y + box.height + 8, 3390) - y;
+  const height = (bottom ?? Math.min(box.y + box.height + 8, 3390)) - y;
   await page.screenshot({ path: `${OUT}/${scene.name}.png`, clip: { x: Math.max(0, box.x - 8), y, width: box.width + 16, height } });
   console.log("shot", scene.name);
   await page.close();
