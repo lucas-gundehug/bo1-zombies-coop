@@ -220,6 +220,7 @@ function fakeSession(mode) {
     relayPeer: mode === "guest",
     links: new Map(),
     relayGuests: new Set(),
+    relayLeft: new Set(),
     guests: new Map(),
     log: [],
     note() {},
@@ -408,6 +409,31 @@ test("host: the relay announcing a direct guest again (its relay reconnect) keep
   onControl(session, { t: "peer", seat: 2, present: true });
   assert.equal(FakePc.all[0].closed, undefined);
   assert.equal(direct.state(2), "direct");
+  assert.equal(session.guests.get(2).present, true);
+});
+
+test("host: a guest's page that connects again (the invite opening the map page) gets the game info again", () => {
+  const session = fakeSession("host");
+  directFor(session);
+  onControl(session, { t: "peer", seat: 1, present: true });
+  onControl(session, { t: "peer", seat: 1, present: true });
+  assert.equal(sent(session, "info").filter((m) => m.to === 1).length, 2);
+  assert.equal(session.guests.get(1).present, true);
+});
+
+test("host: a guest that left and came back while the host stayed on the relay gets a fresh link", async () => {
+  const session = fakeSession("host");
+  const { direct } = directFor(session);
+  onControl(session, { t: "welcome", guests: [] });
+  onControl(session, { t: "peer", seat: 2, present: true });
+  direct.onSignal({ t: "rtc-offer", n: 1, sdp: "offer-sdp", from: 2 });
+  await settle();
+  direct.onLink(2, true);
+  onControl(session, { t: "peer", seat: 2, present: false });
+  assert.equal(direct.state(2), "direct");
+  onControl(session, { t: "peer", seat: 2, present: true });
+  assert.ok(FakePc.all[0].closed);
+  assert.equal(direct.state(2), "relay");
   assert.equal(session.guests.get(2).present, true);
 });
 

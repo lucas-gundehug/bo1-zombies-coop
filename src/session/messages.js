@@ -17,14 +17,24 @@ function onHostMessage(session, message) {
     case "welcome":
       session.overQuota = null;
       session.relayGuests = new Set((Array.isArray(message.guests) ? message.guests : []).filter(validSeat));
+      session.relayLeft = new Set();
       for (let seat = 1; seat <= MAX_GUESTS; seat += 1) syncPresence(session, seat);
       break;
     case "peer":
       if (!validSeat(message.seat)) return;
-      // A direct link is kept when the relay announces its seat again: that is nearly always the same guest back from a
-      // relay hiccup. Someone new on the seat would offer a link of their own, which replaces the old one.
-      if (message.present) session.relayGuests.add(message.seat);
-      else session.relayGuests.delete(message.seat);
+      // Whoever the relay seats after a guest left (seen by this host connection) may be someone else: the direct link
+      // made with the one who left is dropped, and the seat's player sets up a fresh one. A relay restart that drops
+      // everyone, the host included, starts over at "welcome" and keeps the links; a new offer replaces a link anyway.
+      if (message.present && session.relayLeft.delete(message.seat)) session.direct?.drop(message.seat);
+      if (message.present) {
+        session.relayGuests.add(message.seat);
+        // A guest page that (re)connects needs the map and settings, even if the seat never looked empty (the invite
+        // page handing over to the map page replaces its socket without a "left" in between).
+        guestArrived(session, message.seat);
+      } else {
+        session.relayGuests.delete(message.seat);
+        session.relayLeft.add(message.seat);
+      }
       syncPresence(session, message.seat);
       break;
     case "state":

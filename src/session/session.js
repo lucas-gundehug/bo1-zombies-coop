@@ -48,6 +48,7 @@ export function createSession(search = location.search) {
     direct: null,
     links: new Map(),
     relayGuests: new Set(), // host: the seats the relay says are in the room
+    relayLeft: new Set(), // host: seats the relay reported gone since this host connection's welcome
     relayPeer: false, // guest: the relay says the host is in the room
 
     // host

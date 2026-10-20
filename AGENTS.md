@@ -36,8 +36,9 @@ reliable), transferred to the pump worker right after creation (`postMessage(ch,
 sends per seat over them while both are open, else over the relay (`src/net/routes.js`), and a host broadcast reaches
 each guest once on its own path. Direct control messages get the relay's `from` stamp and may not use the relay's own
 types (`fromDirect`). Presence is "relay says present OR direct link open" (`syncPresence`, `relayClosed` in
-`src/session/messages.js`), so a game with direct links outlives the relay. A relay hiccup must not drop direct links
-(the relay re-announcing a seat keeps its link; a new offer for a seat replaces it). Players on a direct link see each other's IP address (Lucas accepted this). The card shows Direct / Relay per
+`src/session/messages.js`), so a game with direct links outlives the relay. A relay restart must not drop direct links
+(after the host's own `welcome` the links stay); a guest the host's live relay connection saw leave and come back gets
+a fresh link (`relayLeft`), and a new offer for a seat always replaces its link. Players on a direct link see each other's IP address (Lucas accepted this). The card shows Direct / Relay per
 player. Other features (the in-game map) send through `send()` and get the direct path for free; `session.links`
 says which seats are direct.
 
