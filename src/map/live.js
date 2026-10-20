@@ -12,6 +12,7 @@ import { floorOf } from "./plan.js";
 import { planFor } from "./plans/index.js";
 import { pushSample } from "./track.js";
 import { sendMap } from "./net.js";
+import { loadIcons } from "./icons.js";
 
 const LIVE_EVERY_MS = 250;
 const BITS = /^[01]*$/;
@@ -88,7 +89,8 @@ export function mapTick(session, now, { playing = screen() === "playing", slug =
   const map = session.map;
   if (!map) return;
   if (slug !== map.slug) {
-    Object.assign(map, { slug, plan: planFor(slug), state: null, planOk: false, liveV: null });
+    Object.assign(map, { slug, plan: planFor(slug), state: null, planOk: false, liveV: null, icons: new Map() });
+    if (slug && globalThis.navigator?.storage?.getDirectory) loadIcons(slug).then((icons) => map.slug === slug && (map.icons = icons));
     map.live.clear();
     map.tracks.clear();
   }

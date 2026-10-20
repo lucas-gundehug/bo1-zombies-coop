@@ -55,6 +55,11 @@ for a one-off dump (each room's path nodes) and builds the plan; the raw dumps s
 `node scripts/map-plan.mjs rebuild` remakes the plans from them (after changing the floors or names in
 `src/map/names.js`). A plan whose `sig` doesn't match the game hides the doors, so regenerate the plans when vel.gg
 changes a map. Findings behind it: `docs/superpowers/specs/2026-10-20-in-game-map-spike.md`.
+The perk and Mystery Box icons are the game's own: `src/map/icons.js` reads them at run time from the map pack's
+`.iwd` archives in OPFS (`pack-<slug>/files/main`, zip files of `.iwi` images; perks in `iw_06` / `iw_36`, the box's
+`minimap_icon_mystery_box` in `iw_05`) and decodes their DXT data, so no game artwork is in the repo; without them the
+map draws text labels. The corner minimap (`src/map/minimap.js`, on unless Settings → Minimap is off) copies the
+square around the player out of a cached drawing of the floor each frame and hides while the big map is open.
 
 ## Checks
 

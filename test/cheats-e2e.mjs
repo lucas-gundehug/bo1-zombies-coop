@@ -412,8 +412,20 @@ const scenarios = {
           }),
         ms,
       );
+    // the corner minimap is on by itself, with the room; the setting turns it off; frames are as smooth either way
+    await page.waitForFunction(() => window.__bo1Coop.minimap.shown && window.__bo1Coop.minimap.model?.room, null, { timeout: 10000 });
+    log("minimap room:", await page.evaluate(() => window.__bo1Coop.minimap.model.room));
+    await snap("minimap");
+    const withMinimap = await frames(10000);
+    await page.evaluate(() => window.__bo1Coop.card.handlers.minimapSetting());
+    await page.waitForFunction(() => !window.__bo1Coop.minimap.shown, null, { timeout: 2000 });
     const closed = await frames(10000);
+    log("frames with the minimap:", JSON.stringify(withMinimap), "without:", JSON.stringify(closed));
+    assert.ok(withMinimap.p95 <= closed.p95 * 1.2 + 2, `frame time with the minimap: p95 ${withMinimap.p95.toFixed(1)} ms vs ${closed.p95.toFixed(1)} ms without`);
+    await page.evaluate(() => window.__bo1Coop.card.handlers.minimapSetting());
+    await page.waitForFunction(() => window.__bo1Coop.minimap.shown, null, { timeout: 2000 });
     await page.keyboard.press("n");
+    await page.waitForFunction(() => !window.__bo1Coop.minimap.shown, null, { timeout: 2000 }); // hidden under the big map
     const opened = await page.evaluate(() => {
       const c = window.__bo1Coop;
       return { open: c.map.open, screen: window.five?.screen, menuOpen: c.engine.menuOpen(), locked: Boolean(document.pointerLockElement) };
@@ -438,6 +450,7 @@ const scenarios = {
     await snap("map-door-open");
     await page.keyboard.press("n");
     await page.waitForFunction(() => window.__bo1Coop.mapOverlay.host.style.display === "none", null, { timeout: 2000 });
+    await page.waitForFunction(() => window.__bo1Coop.minimap.shown, null, { timeout: 2000 }); // back once the big map closes
     assert.equal(await page.evaluate(() => window.five?.screen), "playing");
   },
   async load() {

@@ -2620,6 +2620,151 @@
     return plan && validPlan(plan) ? plan : null;
   }
 
+  // src/map/icons.js
+  var ICON_FILES = {
+    specialty_armorvest: "images/specialty_juggernaut_zombies.iwi",
+    specialty_fastreload: "images/specialty_fastreload_zombies.iwi",
+    specialty_rof: "images/specialty_doubletap_zombies.iwi",
+    specialty_quickrevive: "images/specialty_quickrevive_zombies.iwi",
+    specialty_additionalprimaryweapon: "images/specialty_three_guns_zombies.iwi",
+    specialty_flakjacket: "images/specialty_divetonuke_zombies.iwi",
+    specialty_longersprint: "images/specialty_marathon_zombies.iwi",
+    specialty_deadshot: "images/specialty_ads_zombies.iwi",
+    box: "images/minimap_icon_mystery_box.iwi"
+  };
+  var FORMATS = { 11: "dxt1", 12: "dxt3", 13: "dxt5" };
+  function zipEntries(cd) {
+    const view2 = new DataView(cd.buffer, cd.byteOffset, cd.byteLength);
+    const decoder = new TextDecoder();
+    const out = [];
+    for (let p = 0; p + 46 <= cd.byteLength && view2.getUint32(p, true) === 33639248; ) {
+      const nameLength = view2.getUint16(p + 28, true);
+      const extra = view2.getUint16(p + 30, true);
+      const comment = view2.getUint16(p + 32, true);
+      out.push({
+        name: decoder.decode(cd.subarray(p + 46, p + 46 + nameLength)),
+        method: view2.getUint16(p + 10, true),
+        size: view2.getUint32(p + 20, true),
+        offset: view2.getUint32(p + 42, true)
+      });
+      p += 46 + nameLength + extra + comment;
+    }
+    return out;
+  }
+  function parseIwi(bytes) {
+    if (bytes.length < 48 || bytes[0] !== 73 || bytes[1] !== 87 || bytes[2] !== 105) return null;
+    const view2 = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const format = FORMATS[bytes[4]];
+    const width = view2.getUint16(6, true);
+    const height = view2.getUint16(8, true);
+    const end = view2.getUint32(16, true);
+    const start2 = view2.getUint32(20, true);
+    if (!format || !width || !height || start2 < 48 || end > bytes.length || end <= start2) return null;
+    return { width, height, format, data: bytes.subarray(start2, end) };
+  }
+  var rgb565 = (c) => [(c >> 11 & 31) * 255 / 31, (c >> 5 & 63) * 255 / 63, (c & 31) * 255 / 31];
+  var mix = (a, b, wa, wb) => a.map((v, i) => (v * wa + b[i] * wb) / (wa + wb));
+  function decodeDxt(data, width, height, format) {
+    const out = new Uint8ClampedArray(width * height * 4);
+    const blockBytes = format === "dxt1" ? 8 : 16;
+    const blocksX = Math.max(1, Math.ceil(width / 4));
+    const blocksY = Math.max(1, Math.ceil(height / 4));
+    for (let by = 0; by < blocksY; by += 1) {
+      for (let bx = 0; bx < blocksX; bx += 1) {
+        const at2 = (by * blocksX + bx) * blockBytes;
+        if (at2 + blockBytes > data.length) return out;
+        const colorAt = format === "dxt1" ? at2 : at2 + 8;
+        const c0 = data[colorAt] | data[colorAt + 1] << 8;
+        const c1 = data[colorAt + 2] | data[colorAt + 3] << 8;
+        const p0 = rgb565(c0);
+        const p1 = rgb565(c1);
+        const fourColors = format !== "dxt1" || c0 > c1;
+        const palette = fourColors ? [p0, p1, mix(p0, p1, 2, 1), mix(p0, p1, 1, 2)] : [p0, p1, mix(p0, p1, 1, 1), [0, 0, 0]];
+        const alphas = format === "dxt5" ? dxt5Alphas(data[at2], data[at2 + 1]) : null;
+        for (let y = 0; y < 4; y += 1) {
+          for (let x = 0; x < 4; x += 1) {
+            const px = bx * 4 + x;
+            const py = by * 4 + y;
+            if (px >= width || py >= height) continue;
+            const index = data[colorAt + 4 + y] >> 2 * x & 3;
+            const o = (py * width + px) * 4;
+            [out[o], out[o + 1], out[o + 2]] = palette[index];
+            if (format === "dxt1") out[o + 3] = !fourColors && index === 3 ? 0 : 255;
+            else if (format === "dxt3") out[o + 3] = (data[at2 + 2 * y + (x >> 1)] >> 4 * (x & 1) & 15) * 17;
+            else out[o + 3] = alphas[dxt5Index(data, at2, y * 4 + x)];
+          }
+        }
+      }
+    }
+    return out;
+  }
+  function dxt5Alphas(a0, a1) {
+    if (a0 > a1) return [a0, a1, ...[6, 5, 4, 3, 2, 1].map((w) => (w * a0 + (7 - w) * a1) / 7)];
+    return [a0, a1, ...[4, 3, 2, 1].map((w) => (w * a0 + (5 - w) * a1) / 5), 0, 255];
+  }
+  function dxt5Index(data, at2, i) {
+    const bit = i * 3;
+    const byte = at2 + 2 + (bit >> 3);
+    const value = data[byte] | (data[byte + 1] ?? 0) << 8;
+    return value >> (bit & 7) & 7;
+  }
+  async function loadIcons(slug) {
+    const icons = /* @__PURE__ */ new Map();
+    try {
+      const root = await navigator.storage.getDirectory();
+      const main = await findMain(root, slug);
+      if (!main) return icons;
+      const wanted = new Map(Object.entries(ICON_FILES).map(([id, file]) => [file, id]));
+      for await (const [name, handle] of main.entries()) {
+        if (!wanted.size) break;
+        if (!name.endsWith(".iwd") || handle.kind !== "file") continue;
+        const file = await handle.getFile();
+        for (const entry of await archiveEntries(file)) {
+          const id = wanted.get(entry.name);
+          if (!id) continue;
+          wanted.delete(entry.name);
+          const image = parseIwi(await entryBytes(file, entry));
+          if (image) icons.set(id, toCanvas(image));
+        }
+      }
+    } catch {
+    }
+    return icons;
+  }
+  async function findMain(root, slug) {
+    for (const pack of [`pack-${slug}`, "pack"]) {
+      try {
+        return await (await (await root.getDirectoryHandle(pack)).getDirectoryHandle("files")).getDirectoryHandle("main");
+      } catch {
+      }
+    }
+    return null;
+  }
+  async function archiveEntries(file) {
+    const tail = new Uint8Array(await file.slice(Math.max(0, file.size - 65557)).arrayBuffer());
+    const view2 = new DataView(tail.buffer);
+    for (let i = tail.length - 22; i >= 0; i -= 1) {
+      if (view2.getUint32(i, true) !== 101010256) continue;
+      const size = view2.getUint32(i + 12, true);
+      const offset = view2.getUint32(i + 16, true);
+      return zipEntries(new Uint8Array(await file.slice(offset, offset + size).arrayBuffer()));
+    }
+    return [];
+  }
+  async function entryBytes(file, entry) {
+    const head = new DataView(await file.slice(entry.offset, entry.offset + 30).arrayBuffer());
+    const start2 = entry.offset + 30 + head.getUint16(26, true) + head.getUint16(28, true);
+    const raw = file.slice(start2, start2 + entry.size);
+    if (entry.method === 0) return new Uint8Array(await raw.arrayBuffer());
+    const stream = raw.stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+  function toCanvas({ width, height, format, data }) {
+    const canvas = new OffscreenCanvas(width, height);
+    canvas.getContext("2d").putImageData(new ImageData(decodeDxt(data, width, height, format), width, height), 0, 0);
+    return canvas;
+  }
+
   // src/map/live.js
   var LIVE_EVERY_MS = 250;
   var BITS = /^[01]*$/;
@@ -2681,7 +2826,8 @@
     const map = session.map;
     if (!map) return;
     if (slug !== map.slug) {
-      Object.assign(map, { slug, plan: planFor(slug), state: null, planOk: false, liveV: null });
+      Object.assign(map, { slug, plan: planFor(slug), state: null, planOk: false, liveV: null, icons: /* @__PURE__ */ new Map() });
+      if (slug && globalThis.navigator?.storage?.getDirectory) loadIcons(slug).then((icons) => map.slug === slug && (map.icons = icons));
       map.live.clear();
       map.tracks.clear();
     }
@@ -4100,6 +4246,1124 @@ nazizombies_checking_for_cheats()\r
     }
   }
 
+  // src/ui/styles.js
+  var STYLE = `
+:host { all: initial; position: fixed; top: 12px; right: 12px; z-index: 2147483647; font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--fg);
+  --bg: #121110; --bg2: #1b1917; --bg3: #24211e; --line: #34302b; --fg: #ece6dc; --muted: #9d958a; --dim: #6f685f;
+  --accent: #e2552f; --accent2: #f07a4f; --ok: #63d471; --wait: #f4c542; --bad: #ff6b5a; }
+* { box-sizing: border-box; }
+.card { width: 312px; max-height: calc(100vh - 24px); overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.55); scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: linear-gradient(180deg, #1d1a17, var(--bg)); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 1; }
+.mark { display: grid; grid-template-columns: 6px 6px; gap: 2px; flex: none; }
+.mark i { width: 6px; height: 6px; border-radius: 1.5px; opacity: .9; }
+.title { flex: 1; min-width: 0; }
+.title b { display: block; font-size: 13px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+.title span { display: block; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip { flex: none; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 99px; background: var(--bg3); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
+.chip.ok { color: var(--ok); border-color: rgba(99,212,113,.35); background: rgba(99,212,113,.08); }
+.chip.wait { color: var(--wait); border-color: rgba(244,197,66,.35); background: rgba(244,197,66,.08); }
+.chip.bad { color: var(--bad); border-color: rgba(255,107,90,.4); background: rgba(255,107,90,.08); }
+.chip.live::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; margin-right: 5px; vertical-align: 1px; animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+button.icon { all: unset; cursor: pointer; color: var(--muted); width: 22px; height: 22px; display: grid; place-items: center; border-radius: 5px; font-size: 15px; }
+button.icon:hover { background: var(--bg3); color: var(--fg); }
+.body { padding: 12px; display: grid; gap: 10px; }
+:host(.collapsed) .body { display: none; }
+:host(.collapsed) .head { border-bottom: 0; }
+.muted { color: var(--muted); } .small { font-size: 12px; } .error { color: var(--bad); }
+.label { font-size: 10.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; display: flex; justify-content: space-between; align-items: baseline; }
+.label em { font-style: normal; letter-spacing: 0; text-transform: none; font-weight: 600; color: var(--muted); font-size: 11px; }
+.panel { background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+.panel .code { font: 700 17px/1.2 ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: .05em; color: #fff; user-select: all; white-space: nowrap; margin-bottom: 9px; }
+.map { display: flex; align-items: center; gap: 10px; }
+.map .glyph { width: 34px; height: 34px; border-radius: 6px; flex: none; display: grid; place-items: center; background: radial-gradient(circle at 30% 30%, #3a2a22, #1a1411); border: 1px solid #4a3328; color: var(--accent2); font-weight: 900; font-size: 15px; }
+.map .name { font-weight: 700; font-size: 14px; }
+.map .sub { font-size: 11.5px; color: var(--muted); }
+.tag { display: inline-block; font-size: 9.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; padding: 1px 5px; border-radius: 4px; vertical-align: 1px; margin-left: 5px; }
+.tag.host { background: rgba(226,85,47,.18); color: var(--accent2); }
+.tag.you { background: rgba(255,255,255,.1); color: var(--fg); }
+.tag.hell { background: rgba(255,107,90,.15); color: var(--bad); }
+.players { display: grid; gap: 6px; }
+.player { display: flex; align-items: center; gap: 10px; padding: 7px 9px; border-radius: 7px; background: var(--bg3); border: 1px solid transparent; }
+.player.me { border-color: var(--line); }
+.player.empty { background: transparent; border: 1px dashed var(--line); }
+.badge { width: 26px; height: 26px; border-radius: 50%; flex: none; display: grid; place-items: center; font-weight: 800; font-size: 12px; color: #111; position: relative; }
+.player.empty .badge { background: transparent !important; color: var(--dim); box-shadow: inset 0 0 0 1.5px var(--line); }
+.who { flex: 1; min-width: 0; }
+.who .name { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.player.empty .who .name { color: var(--dim); font-weight: 500; }
+.who .st { font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex: none; }
+.dot.ok { background: var(--ok); } .dot.wait { background: var(--wait); animation: pulse 1.6s ease-in-out infinite; } .dot.bad { background: var(--bad); }
+.ping { flex: none; text-align: right; font: 600 11px ui-monospace, Menlo, monospace; color: var(--muted); display: grid; justify-items: end; gap: 2px; }
+.ping .path { font: 500 10px system-ui, sans-serif; color: var(--dim); }
+.bars { display: flex; gap: 2px; align-items: flex-end; height: 10px; }
+.bars i { width: 3px; border-radius: 1px; background: var(--line); }
+.bars i:nth-child(1) { height: 4px; } .bars i:nth-child(2) { height: 7px; } .bars i:nth-child(3) { height: 10px; }
+.bars.q3 i { background: var(--ok); } .bars.q2 i:nth-child(-n+2) { background: var(--wait); } .bars.q1 i:nth-child(1) { background: var(--bad); }
+.steps { display: flex; align-items: flex-start; }
+.step { flex: 1; display: grid; justify-items: center; gap: 4px; position: relative; font-size: 10.5px; color: var(--dim); text-align: center; }
+.step::before { content: ""; position: absolute; top: 6px; left: -50%; width: 100%; height: 2px; background: var(--line); z-index: 0; }
+.step:first-child::before { display: none; }
+.step i { width: 14px; height: 14px; border-radius: 50%; background: var(--bg); border: 2px solid var(--line); z-index: 1; }
+.step.done { color: var(--muted); } .step.done::before { background: var(--accent); } .step.done i { background: var(--accent); border-color: var(--accent); }
+.step.now { color: var(--fg); font-weight: 700; } .step.now::before { background: var(--accent); } .step.now i { border-color: var(--accent2); box-shadow: 0 0 0 3px rgba(226,85,47,.25); }
+.step.now.fail i { border-color: var(--bad); box-shadow: 0 0 0 3px rgba(255,107,90,.2); }
+.call { border-radius: 8px; padding: 9px 10px; background: var(--bg2); border: 1px solid var(--line); border-left: 3px solid var(--muted); display: grid; gap: 8px; }
+.call.info { border-left-color: #5aa8ff; } .call.ok { border-left-color: var(--ok); } .call.wait { border-left-color: var(--wait); } .call.bad { border-left-color: var(--bad); background: rgba(255,107,90,.06); }
+.call b { font-weight: 700; }
+.row { display: flex; gap: 6px; } .row > * { flex: 1; }
+button.act { all: unset; box-sizing: border-box; text-align: center; cursor: pointer; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg3); color: var(--fg); font-weight: 650; font-size: 12.5px; transition: background .12s, border-color .12s; }
+button.act:hover, button.act:focus-visible { background: #2e2a26; border-color: #4a443d; }
+button.act.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.act.primary:hover { background: var(--accent2); border-color: var(--accent2); }
+button.act.ghost { background: transparent; color: var(--muted); }
+button.act.ghost:hover { color: var(--fg); }
+button.act.done { background: rgba(99,212,113,.15); border-color: rgba(99,212,113,.4); color: var(--ok); }
+button.act.slim { flex: 0 0 auto; padding: 6px 10px; }
+button.act[disabled] { opacity: .5; cursor: default; }
+input { all: unset; box-sizing: border-box; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: #0c0b0a; color: var(--fg); font: 12.5px ui-monospace, Menlo, monospace; min-width: 0; flex: 1; }
+input:focus { border-color: var(--accent); }
+input::placeholder { color: var(--dim); }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12px; margin: 0; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; text-align: right; }
+.meter { height: 5px; border-radius: 3px; background: var(--bg3); overflow: hidden; margin-top: 5px; }
+.meter > span { display: block; height: 100%; background: var(--ok); }
+.meter.warn > span { background: var(--wait); } .meter.full > span { background: var(--bad); }
+.section { border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 10px; }
+.section > button.toggle { all: unset; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-size: 10.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.section > button.toggle:hover { color: var(--muted); }
+.section > button.toggle::after { content: "\\25BE"; font-size: 12px; transition: transform .15s; }
+.section.closed > button.toggle::after { transform: rotate(-90deg); }
+.credits { font-size: 11px; color: var(--dim); text-align: center; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+button.tchip { all: unset; cursor: pointer; font-size: 11.5px; font-weight: 650; padding: 4px 9px; border-radius: 99px; border: 1px solid var(--line); background: var(--bg3); color: var(--muted); }
+button.tchip:hover { color: var(--fg); border-color: #4a443d; }
+button.tchip.on { background: rgba(226,85,47,.2); border-color: var(--accent); color: #fff; }
+button.tchip.plain { border-style: dashed; }
+.stepper { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.stepper .flabel { flex: 1; }
+.sval { min-width: 46px; text-align: center; font: 600 12px ui-monospace, Menlo, monospace; color: var(--fg); }
+button.sbtn { all: unset; cursor: pointer; width: 24px; height: 22px; display: grid; place-items: center; border-radius: 6px; background: var(--bg3); border: 1px solid var(--line); color: var(--fg); font-weight: 700; }
+button.sbtn:hover { border-color: var(--accent); }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
+.fplayer { display: grid; gap: 7px; padding: 9px; border-radius: 8px; background: var(--bg2); border: 1px solid var(--line); }
+.fhead { display: flex; align-items: center; gap: 8px; }
+.fhead b { flex: 1; font-weight: 700; }
+.fbadge { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 800; color: #111; flex: none; }
+.fmoney { font: 600 12px ui-monospace, Menlo, monospace; color: var(--ok); }
+.frow { display: flex; align-items: center; gap: 5px; }
+.frow .flabel { flex: 1; font-size: 12px; }
+.flabel { color: var(--muted); }
+.pill { display: none; }
+:host(.compact) .card { display: none; }
+:host(.compact) .pill { display: flex; align-items: center; gap: 8px; pointer-events: none; background: rgba(12,11,10,.72); border: 1px solid rgba(255,255,255,.08); border-radius: 99px; padding: 4px 10px; font: 600 11.5px system-ui, sans-serif; color: #ddd; backdrop-filter: blur(4px); }
+:host(.compact) .pill:empty { display: none; }
+.pill .pd { width: 9px; height: 9px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px currentColor; color: var(--dim); }
+.pill .pd.on { background: currentColor; }
+.pill .sep { width: 1px; height: 12px; background: rgba(255,255,255,.15); }
+`;
+
+  // src/ui/card.js
+  var PLAYER_COLORS = ["#f2efe9", "#5aa8ff", "#f4c542", "#63d471"];
+  var Card = class {
+    constructor(handlers) {
+      this.handlers = handlers;
+      this.host = document.createElement("bo1-coop-card");
+      this.root = this.host.attachShadow({ mode: "closed" });
+      const mark = PLAYER_COLORS.map((c) => `<i style="background:${c}"></i>`).join("");
+      this.root.innerHTML = `<style>${STYLE}</style><div class="card"><div class="head"><span class="mark">${mark}</span><span class="title"><b>Co-op</b><span class="tagline"></span></span><span class="chip"></span><button class="icon" data-act="collapse" title="Minimise">–</button></div><div class="body"></div></div><div class="pill"></div>`;
+      this.body = this.root.querySelector(".body");
+      this.chip = this.root.querySelector(".chip");
+      this.tagline = this.root.querySelector(".tagline");
+      this.pill = this.root.querySelector(".pill");
+      this.collapseButton = this.root.querySelector('[data-act="collapse"]');
+      this.view = null;
+      for (const type of ["keydown", "keyup", "keypress", "click", "mousedown", "mouseup", "pointerdown", "pointerup", "wheel"]) {
+        this.host.addEventListener(type, (event) => event.stopPropagation());
+      }
+      this.root.addEventListener("click", (event) => {
+        const button = event.target.closest?.("[data-act]");
+        if (!button || button.disabled) return;
+        const act = button.dataset.act;
+        if (act === "collapse") {
+          const collapsed = this.host.classList.toggle("collapsed");
+          this.collapseButton.textContent = collapsed ? "+" : "–";
+          return;
+        }
+        const field = button.dataset.field ? this.root.querySelector(`input[data-field="${button.dataset.field}"]`) : null;
+        this.handlers[act]?.(field ? field.value : button.dataset.arg);
+      });
+      this.root.addEventListener("keydown", (event) => {
+        const input = event.target.matches?.("input[data-act]") ? event.target : null;
+        if (event.key === "Enter" && input) this.handlers[input.dataset.act]?.(input.value);
+      });
+    }
+    mount() {
+      const attach = () => {
+        if (!this.host.isConnected) document.documentElement.append(this.host);
+      };
+      if (document.documentElement) attach();
+      else document.addEventListener("readystatechange", attach, { once: true });
+    }
+    /** Re-renders only when the view changes, so typing in an input is never interrupted. */
+    render(view2) {
+      const key = JSON.stringify(view2);
+      if (key === this.view) return;
+      const focused = this.root.activeElement?.dataset?.field;
+      const previous = new Map([...this.root.querySelectorAll("input[data-field]")].map((i) => [i.dataset.field, i.value]));
+      this.view = key;
+      this.chip.className = `chip ${view2.chip?.tone ?? ""}`;
+      this.chip.textContent = view2.chip?.text ?? "";
+      this.tagline.textContent = view2.tagline ?? "";
+      this.host.classList.toggle("compact", Boolean(view2.compact));
+      this.pill.replaceChildren(...this.pillParts(view2.pill));
+      this.body.replaceChildren(...view2.blocks.map((block) => this.block(block)));
+      for (const input of this.root.querySelectorAll("input[data-field]")) {
+        if (previous.has(input.dataset.field)) input.value = previous.get(input.dataset.field);
+        if (input.dataset.field === focused) input.focus();
+      }
+    }
+    toggleChip(c) {
+      const e = document.createElement("button");
+      e.className = `tchip ${c.on ? "on" : ""} ${c.plain ? "plain" : ""}`;
+      e.textContent = c.label;
+      e.dataset.act = c.act;
+      if (c.arg != null) e.dataset.arg = c.arg;
+      return e;
+    }
+    stepper(s) {
+      const box = document.createElement("div");
+      box.className = "stepper";
+      const label = document.createElement("span");
+      label.className = "flabel";
+      label.textContent = s.label;
+      const value = document.createElement("span");
+      value.className = "sval";
+      value.textContent = s.value;
+      const make = (b, text3) => {
+        const e = document.createElement("button");
+        e.className = "sbtn";
+        e.textContent = text3;
+        e.dataset.act = b.act;
+        e.dataset.arg = b.arg;
+        return e;
+      };
+      box.append(label, make(s.dec, "−"), value, make(s.inc, "+"));
+      return box;
+    }
+    pillParts(pill) {
+      if (!pill) return [];
+      const parts2 = [];
+      for (const p of pill.players ?? []) {
+        const d = document.createElement("span");
+        d.className = `pd ${p.on ? "on" : ""}`;
+        d.style.color = PLAYER_COLORS[p.n - 1];
+        parts2.push(d);
+      }
+      for (const text3 of pill.texts ?? []) {
+        if (parts2.length) parts2.push(Object.assign(document.createElement("span"), { className: "sep" }));
+        parts2.push(document.createTextNode(text3));
+      }
+      return parts2;
+    }
+    block(block) {
+      const el = (tag, cls, text3) => {
+        const e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (text3 != null) e.textContent = text3;
+        return e;
+      };
+      const button = (b) => {
+        const e = el("button", `act ${b.style ?? ""}`, b.label);
+        e.dataset.act = b.act;
+        if (b.arg != null) e.dataset.arg = b.arg;
+        if (b.field) e.dataset.field = b.field;
+        if (b.disabled) e.disabled = true;
+        return e;
+      };
+      switch (block.kind) {
+        case "text":
+          return el("div", block.cls ?? "", block.text);
+        case "label": {
+          const box = el("div", "label", block.text);
+          if (block.aside) box.append(el("em", "", block.aside));
+          return box;
+        }
+        case "room": {
+          const box = el("div", "panel");
+          const label = el("div", "label", block.label);
+          if (block.aside) label.append(el("em", "", block.aside));
+          box.append(label, el("div", "code", block.code));
+          if (block.buttons?.length) {
+            const row = el("div", "row");
+            for (const b of block.buttons) row.append(button(b));
+            box.append(row);
+          }
+          return box;
+        }
+        case "map": {
+          const box = el("div", "map");
+          box.append(el("div", "glyph", block.glyph ?? "?"));
+          const info = el("div");
+          const name = el("div", "name", block.name);
+          if (block.tag) name.append(el("span", "tag hell", block.tag));
+          info.append(name, el("div", "sub", block.sub ?? ""));
+          box.append(info);
+          return box;
+        }
+        case "players": {
+          const box = el("div");
+          const label = el("div", "label", block.label);
+          if (block.aside) label.append(el("em", "", block.aside));
+          const list = el("div", "players");
+          for (const p of block.players) {
+            const row = el("div", `player ${p.empty ? "empty" : ""} ${p.me ? "me" : ""}`);
+            const badge = el("div", "badge", String(p.n));
+            badge.style.background = PLAYER_COLORS[p.n - 1];
+            const who2 = el("div", "who");
+            const name = el("div", "name", p.name);
+            for (const t of p.tags ?? []) name.append(el("span", `tag ${t.cls}`, t.text));
+            const st = el("div", "st");
+            if (p.status) st.append(el("span", `dot ${p.tone ?? ""}`), document.createTextNode(p.status));
+            who2.append(name, st);
+            row.append(badge, who2);
+            if (p.ping != null) {
+              const ping = el("div", "ping");
+              const bars = el("span", `bars q${p.ping < 80 ? 3 : p.ping < 180 ? 2 : 1}`);
+              bars.append(el("i"), el("i"), el("i"));
+              ping.append(bars, el("span", "", `${p.ping} ms`));
+              if (p.path) ping.append(el("span", "path", p.path));
+              row.append(ping);
+            }
+            list.append(row);
+          }
+          box.append(label, list);
+          return box;
+        }
+        case "steps": {
+          const box = el("div", "steps");
+          block.steps.forEach((text3, i) => {
+            const state = i < block.current ? "done" : i === block.current ? `now ${block.fail ? "fail" : ""}` : "";
+            const step2 = el("div", `step ${state}`);
+            step2.append(el("i"), el("span", "", text3));
+            box.append(step2);
+          });
+          return box;
+        }
+        case "callout": {
+          const box = el("div", `call ${block.tone ?? ""}`);
+          const text3 = el("div");
+          if (block.title) text3.append(el("b", "", `${block.title} `));
+          text3.append(document.createTextNode(block.text ?? ""));
+          box.append(text3);
+          if (block.buttons?.length) {
+            const row = el("div", "row");
+            for (const b of block.buttons) row.append(button(b));
+            box.append(row);
+          }
+          return box;
+        }
+        case "buttons": {
+          const row = el("div", "row");
+          for (const b of block.buttons) row.append(button(b));
+          return row;
+        }
+        case "input": {
+          const box = el("div");
+          if (block.label) box.append(el("div", "label", block.label));
+          const row = el("div", "row");
+          const input = el("input");
+          input.placeholder = block.placeholder ?? "";
+          input.spellcheck = false;
+          if (block.maxLength) input.maxLength = block.maxLength;
+          input.dataset.field = block.field;
+          input.dataset.act = block.act;
+          if (block.value) input.value = block.value;
+          row.append(input, button({ act: block.act, label: block.button, field: block.field, style: `${block.style ?? ""} slim` }));
+          box.append(row);
+          return box;
+        }
+        case "kv": {
+          const box = el("dl", "kv");
+          for (const [k, v, cls] of block.items) box.append(el("dt", "", k), el("dd", cls ?? "", v));
+          return box;
+        }
+        case "meter": {
+          const box = el("div", "small muted");
+          box.append(document.createTextNode(block.label));
+          const bar = el("div", `meter ${block.fraction >= 1 ? "full" : block.fraction >= 0.75 ? "warn" : ""}`);
+          const fill = el("span");
+          fill.style.width = `${Math.round(Math.min(1, Math.max(0, block.fraction)) * 100)}%`;
+          bar.append(fill);
+          box.append(bar);
+          return box;
+        }
+        case "section": {
+          const box = el("div", `section ${block.open ? "" : "closed"}`);
+          const toggle = el("button", "toggle", block.title);
+          toggle.dataset.act = block.act;
+          box.append(toggle);
+          if (block.open) for (const child of block.blocks) box.append(this.block(child));
+          return box;
+        }
+        case "credits":
+          return el("div", "credits", block.text);
+        case "chips": {
+          const box = el("div", "chips");
+          for (const c of block.chips) box.append(this.toggleChip(c));
+          return box;
+        }
+        case "stepper":
+          return this.stepper(block);
+        case "grid": {
+          const box = el("div", "grid");
+          for (const b of block.buttons) box.append(button({ ...b, style: `${b.style ?? ""} tiny` }));
+          return box;
+        }
+        case "funPlayer": {
+          const box = el("div", "fplayer");
+          const head = el("div", "fhead");
+          const badge = el("span", "fbadge", block.n ? String(block.n) : "★");
+          badge.style.background = block.n ? PLAYER_COLORS[block.n - 1] : "var(--accent)";
+          head.append(badge, el("b", "", block.name));
+          if (block.money?.value) head.append(el("span", "fmoney", `$${block.money.value}`));
+          box.append(head);
+          const chips = el("div", "chips");
+          for (const c of block.chips) chips.append(this.toggleChip(c));
+          box.append(chips, this.stepper(block.speed));
+          const money = el("div", "frow");
+          money.append(el("span", "flabel", block.money.label));
+          for (const b of block.money.buttons) money.append(button({ ...b, style: "tiny" }));
+          box.append(money);
+          return box;
+        }
+        default:
+          return el("div");
+      }
+    }
+  };
+
+  // src/map/names.js
+  var ROOMS = {
+    nacht: { start_zone: "Main room", box_zone: "Back room", upstairs_zone: "Help room" },
+    verruckt: {
+      kitchen_upstairs_zone: "Kitchen",
+      power_upstairs_zone: "Power room",
+      south_upstairs_zone: "South upstairs",
+      south2_upstairs_zone: "South upstairs, back",
+      north_upstairs_zone: "North upstairs",
+      north2_upstairs_zone: "North upstairs, back",
+      north_downstairs_zone: "North downstairs",
+      west_downstairs_zone: "West downstairs",
+      west2_downstairs_zone: "West downstairs, back"
+    },
+    shinonuma: {
+      center_building_combined: "Main hut",
+      center_building_upstairs: "Main hut upstairs",
+      center_building_upstairs_buy: "Main hut stairs",
+      northwest_building: "Northwest hut",
+      northeast_building: "Northeast hut",
+      southwest_building: "Southwest hut",
+      southeast_building: "Southeast hut",
+      northwest_outside: "Northwest swamp",
+      northeast_outside: "Northeast swamp",
+      southwest_outside: "Southwest swamp",
+      southeast_outside: "Southeast swamp"
+    },
+    riese: {
+      receiver_zone: "Mainframe",
+      tp_west_zone: "West teleporter",
+      tp_south_zone: "South teleporter",
+      tp_east_zone: "East teleporter",
+      bridge_zone: "Bridge",
+      warehouse_top_zone: "Warehouse upstairs",
+      warehouse_bottom_zone: "Warehouse",
+      outside_south_zone: "South courtyard",
+      outside_west_zone: "West courtyard",
+      outside_east_zone: "East courtyard",
+      wnuen_zone: "Lab building",
+      wnuen_bridge_zone: "Lab walkway"
+    },
+    kino: {
+      foyer_zone: "Lobby",
+      foyer2_zone: "Upstairs lobby",
+      theater_zone: "Theater",
+      stage_zone: "Stage",
+      west_balcony_zone: "West balcony",
+      dressing_zone: "Dressing room",
+      alleyway_zone: "Alley",
+      dining_zone: "Dining room",
+      crematorium_zone: "Crematorium",
+      vip_zone: "VIP room"
+    },
+    five: {
+      conference_level1: "Conference room",
+      conference_level2: "Second conference room",
+      hallway_level1: "Top floor hallway",
+      hallway3_level1: "Top floor, east hallway",
+      war_room_zone_top: "War room, upper level",
+      war_room_zone_north: "War room north",
+      war_room_zone_south: "War room south",
+      war_room_zone_elevator: "War room elevator",
+      labs_elevator: "Lab elevator",
+      labs_hallway1: "Lab hallway",
+      labs_hallway2: "Lab hallway 2",
+      labs_zone1: "Lab 1",
+      labs_zone2: "Lab 2",
+      labs_zone3: "Lab 3"
+    },
+    ascension: {
+      base_entry_zone: "Base entrance",
+      base_entry_zone2: "Base entrance, back",
+      storage_zone: "Storage",
+      storage_zone2: "Storage, back",
+      storage_lander_zone: "Storage lander",
+      access_tunnel_zone: "Access tunnel",
+      power_building: "Power building",
+      power_building_roof: "Power building roof",
+      roof_connector_zone: "Roof walkway",
+      north_path_zone: "North path",
+      north_catwalk_zone3: "North catwalk",
+      centrifuge_zone: "Centrifuge",
+      centrifuge_zone2: "Centrifuge, upper",
+      centrifuge2power_zone: "Centrifuge to power",
+      control_room_zone: "Control room",
+      under_rocket_zone: "Under the rocket"
+    },
+    cotd: {
+      start_zone: "Start",
+      start_beach_zone: "Starting beach",
+      start_cave_zone: "Cave",
+      beach_zone: "Beach",
+      beach_zone2: "Upper beach",
+      rear_lagoon_zone: "Lagoon",
+      residence1_zone: "Residence",
+      residence_roof_zone: "Residence roof",
+      lighthouse1_zone: "Lighthouse",
+      lighthouse2_zone: "Lighthouse, upper floor",
+      catwalk_zone: "Lighthouse top",
+      shipfront_near_zone: "Ship bow",
+      shipfront_far_zone: "Ship bow, far end",
+      shipfront_bottom_zone: "Ship bow, lower deck",
+      shipfront_storage_zone: "Ship bow, storage",
+      shipfront_2_beach_zone: "Ship to beach",
+      shipback_near_zone: "Ship stern",
+      shipback_near2_zone: "Ship stern, upper deck",
+      shipback_far_zone: "Ship stern, far end",
+      shipback_level3_zone: "Ship stern, top deck"
+    },
+    shangrila: {
+      temple_start_zone: "Temple",
+      power_room_zone: "Power room",
+      pressure_plate_zone: "Pressure plates",
+      waterfall_upper_zone: "Waterfall top",
+      waterfall_upper1_zone: "Waterfall ledge",
+      waterfall_lower_zone: "Waterfall bottom",
+      waterfall_tunnel_zone: "Waterfall tunnel",
+      waterfall_tunnel_a_zone: "Waterfall tunnel, upper",
+      cave_tunnel_zone: "Cave tunnel",
+      caves1_zone: "Cave 1",
+      caves2_zone: "Cave 2",
+      caves3_zone: "Cave 3",
+      caves_water_zone: "Water cave"
+    },
+    moon: {
+      nml_zone: "No Man's Land",
+      bridge_zone: "Bridge",
+      water_zone: "Water tanks",
+      forest_zone: "Biodome",
+      enter_forest_east_zone: "Biodome, east entrance",
+      generator_zone: "Generator room",
+      generator_exit_east_zone: "Generator, east exit",
+      tower_zone_east: "East tower",
+      tower_zone_east2: "East tower, upper",
+      cata_left_start_zone: "Catacombs west, entrance",
+      cata_left_middle_zone: "Catacombs west",
+      cata_right_start_zone: "Catacombs east, entrance",
+      cata_right_middle_zone: "Catacombs east",
+      cata_right_end_zone: "Catacombs east, far end",
+      airlock_bridge_zone: "Airlock to the bridge",
+      airlock_biodome_zone: "Airlock to the biodome",
+      airlock_labs_2_biodome: "Airlock, labs to biodome",
+      airlock_digsite_zone: "Airlock to the dig site",
+      airlock_generator_zone: "Airlock to the generator",
+      airlock_east_zone: "East airlock",
+      airlock_east2_zone: "East airlock 2",
+      airlock_west_zone: "West airlock",
+      airlock_west2_zone: "West airlock 2"
+    }
+  };
+  function roomName(slug, id) {
+    const known = ROOMS[slug]?.[id];
+    if (known) return known;
+    const words = String(id).replace(/zone/g, " ").replace(/_/g, " ").replace(/([a-z])(\d)/g, "$1 $2").trim().replace(/\s+/g, " ");
+    return words ? words[0].toUpperCase() + words.slice(1) : String(id);
+  }
+
+  // src/map/model.js
+  var GONE_MS = 2e3;
+  var NO_DATA_MS = 5e3;
+  var text = (value) => typeof value === "string" ? value : value == null ? "" : String(value);
+  function names(session) {
+    if (session.mode !== "guest") return new Map(mapPlayers(session).map((p) => [p.n, text(p.name)]));
+    const known = new Map((session.lobby?.players ?? []).map((p) => [p.n, text(p?.name)]));
+    if (Number.isInteger(session.seat)) known.set(session.seat + 1, text(session.name));
+    return known;
+  }
+  var myNumber = (session) => session.mode === "guest" ? session.seat + 1 : 1;
+  function mapModel(session, now, { view: view2 = latestView() } = {}) {
+    const map = session.map;
+    const plan = map.plan;
+    if (!plan) return { status: "noPlan" };
+    const me = myNumber(session);
+    const known = names(session);
+    const players = [];
+    for (const [n, entry] of map.live) {
+      if (now - entry.at > GONE_MS) {
+        map.live.delete(n);
+        map.tracks.delete(n);
+        continue;
+      }
+      if (entry.s === 2) continue;
+      const name = known.get(n) || "";
+      let at2 = { x: entry.x, y: entry.y, yaw: entry.yaw };
+      if (n === me && view2) at2 = { x: view2.origin[0], y: view2.origin[1], yaw: view2.angles[1] };
+      else if (n !== me) at2 = sampleTrack(map.tracks.get(n) ?? [], now - RENDER_DELAY_MS) ?? at2;
+      players.push({ n, name, letter: (name.trim()[0] ?? String(n)).toUpperCase(), color: PLAYER_COLORS[n - 1] ?? PLAYER_COLORS[0], ...at2, floor: entry.floor, room: entry.room, downed: entry.s === 1, me: n === me });
+    }
+    players.sort((a, b) => a.n - b.n);
+    const mine = players.find((p) => p.me);
+    if (!players.length && !map.state) {
+      const waited = map.openedAt != null && now - map.openedAt > NO_DATA_MS;
+      return { status: waited ? "noData" : "waiting" };
+    }
+    const floor = mine?.floor ?? 0;
+    const room = map.planOk && mine && mine.room >= 0 && plan.rooms[mine.room] ? mine.room : -1;
+    const state = map.planOk ? map.state : null;
+    let boxIndex = -1;
+    return {
+      status: "ok",
+      room: room >= 0 ? roomName(plan.slug, plan.rooms[room].id) : null,
+      floor,
+      floors: plan.floors.map((f, i) => ({ name: f.name, current: i === floor, others: i === floor ? [] : players.filter((p) => !p.me && p.floor === i).map((p) => p.letter) })),
+      rooms: plan.rooms.map((r, i) => ({ index: i, name: roomName(plan.slug, r.id), open: state ? Boolean(state.rooms[i]) : null, current: i === room })),
+      doors: state ? plan.doors.flatMap((d, i) => state.doors[i] ? [] : [{ index: i, cost: d.cost, kind: d.kind, at: d.at }]) : [],
+      pois: plan.pois.map((p) => {
+        if (p.kind === "box") boxIndex += 1;
+        const active = p.kind === "box" ? Boolean(state?.box.includes(boxIndex)) : p.kind === "power" ? Boolean(state?.power) : false;
+        return { kind: p.kind, id: p.id, at: p.at, active };
+      }),
+      players: players.map(({ n, letter, color, x, y, yaw, floor: f, downed, me: isMe }) => ({ n, letter, color, x, y, yaw, floor: f, downed, me: isMe })),
+      legend: players.map((p) => ({ letter: p.letter, name: p.name, color: p.color })),
+      stale: Boolean(map.state && !map.planOk)
+    };
+  }
+
+  // src/map/strings.js
+  var M = {
+    noPlan: "There's no map for this level yet.",
+    waiting: "Waiting for the map…",
+    noData: "No map in this game. The host needs this version of the extension, with the cheat menu on.",
+    stale: "This level changed since its map was made, so doors aren't shown.",
+    close: "N to close",
+    youAreIn: "You are in",
+    minimap: "Minimap",
+    minimapNote: "A small map in the top left corner of the game, with the room you're in. N still opens the big map.",
+    on: "On",
+    off: "Off",
+    turnOn: "Turn on",
+    turnOff: "Turn off"
+  };
+
+  // src/map/overlay.js
+  var C2 = {
+    panel: "rgba(18,17,16,.9)",
+    line: "#34302b",
+    fg: "#ece6dc",
+    muted: "#9d958a",
+    dim: "#6f685f",
+    accent: "#e2552f",
+    accent2: "#f07a4f",
+    gold: "#f4c542",
+    bad: "#ff6b5a",
+    roomOpen: "#2a2622",
+    roomOpenEdge: "#6f685f",
+    roomShut: "#1d1a17",
+    roomShutEdge: "#4a443d",
+    roomUnknown: "#24211e",
+    current: "#3a2a22"
+  };
+  var FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  var PERK_LABELS = {
+    specialty_armorvest: "Jug",
+    specialty_quickrevive: "QR",
+    specialty_fastreload: "Spd",
+    specialty_rof: "DT",
+    specialty_longersprint: "Stm",
+    specialty_deadshot: "DS",
+    specialty_additionalprimaryweapon: "MK",
+    specialty_flakjacket: "PhD"
+  };
+  var HEAD = 52;
+  var FOOT = 34;
+  var PAD = 18;
+  var panelBox = (width, height) => ({ x: Math.round(width * 0.12), y: Math.round(height * 0.08), w: Math.round(width * 0.76), h: Math.round(height * 0.84) });
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, r);
+  }
+  function text2(ctx, value, x, y, { size = 13, weight = 600, color = C2.fg, align = "left", base = "middle" } = {}) {
+    ctx.font = `${weight} ${size}px ${FONT}`;
+    ctx.fillStyle = color;
+    ctx.textAlign = align;
+    ctx.textBaseline = base;
+    ctx.fillText(value, x, y);
+    return ctx.measureText(value).width;
+  }
+  function drawRooms(plan, model, view2, w, h, dpr, { labels = true } = {}) {
+    const canvas = new OffscreenCanvas(Math.max(1, Math.round(w * dpr)), Math.max(1, Math.round(h * dpr)));
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+    const s = view2.scale;
+    const rectOf = ([, x0, y0, x1, y1]) => {
+      const [ax, ay] = toScreen(view2, x0, y0);
+      const [bx, by] = toScreen(view2, x1, y1);
+      const left = Math.round(Math.min(ax, bx));
+      const top = Math.round(Math.min(ay, by));
+      return [left, top, Math.round(Math.max(ax, bx)) - left, Math.round(Math.max(ay, by)) - top];
+    };
+    const fill = (room, grow, color) => {
+      ctx.fillStyle = color;
+      for (const rect of room.rects) {
+        if (rect[0] !== model.floor) continue;
+        const [x, y, rw, rh] = rectOf(rect);
+        ctx.fillRect(x - grow, y - grow, rw + 2 * grow, rh + 2 * grow);
+      }
+    };
+    const look = (i) => {
+      const r = model.rooms[i];
+      if (r.current) return { edge: C2.accent, fill: C2.current, grow: 3, label: C2.accent2 };
+      if (r.open === true) return { edge: C2.roomOpenEdge, fill: C2.roomOpen, grow: 1.5, label: C2.muted };
+      if (r.open === false) return { edge: C2.roomShutEdge, fill: C2.roomShut, grow: 1.5, label: C2.dim };
+      return { edge: C2.roomShutEdge, fill: C2.roomUnknown, grow: 1.5, label: C2.muted };
+    };
+    const order = plan.rooms.map((_, i) => i).sort((a, b) => Number(model.rooms[a].current) - Number(model.rooms[b].current));
+    for (const i of order) {
+      fill(plan.rooms[i], look(i).grow, look(i).edge);
+      fill(plan.rooms[i], 0, look(i).fill);
+    }
+    const size = Math.max(10, Math.min(14, s * 160));
+    for (const i of labels ? order : []) {
+      const room = plan.rooms[i];
+      if (room.label[0] !== model.floor) continue;
+      const [lx, ly] = toScreen(view2, room.label[1], room.label[2]);
+      text2(ctx, model.rooms[i].name, lx, ly, { size, weight: 700, color: look(i).label, align: "center" });
+    }
+    return canvas;
+  }
+  function drawLock(ctx, x, y, door, compact = false) {
+    if (compact) {
+      ctx.beginPath();
+      ctx.arc(x, y, 7, 0, Math.PI * 2);
+      ctx.fillStyle = "#121110";
+      ctx.fill();
+      ctx.strokeStyle = C2.gold;
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      if (door.kind === "power") {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.scale(0.65, 0.65);
+        bolt(ctx, 0, 0, C2.gold);
+        ctx.restore();
+      } else {
+        ctx.strokeRect(x - 3, y - 1, 6, 4);
+        ctx.beginPath();
+        ctx.arc(x, y - 1.5, 2, Math.PI, 0);
+        ctx.stroke();
+      }
+      return;
+    }
+    const label = door.kind === "power" ? "" : String(door.cost);
+    ctx.font = `800 11px ${FONT}`;
+    const w = 26 + (label ? ctx.measureText(label).width : 0);
+    roundRect(ctx, x - w / 2, y - 10, w, 20, 10);
+    ctx.fillStyle = "#121110";
+    ctx.fill();
+    ctx.strokeStyle = C2.gold;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    const ix = x - w / 2 + 8;
+    if (door.kind === "power") {
+      bolt(ctx, x, y, C2.gold);
+      return;
+    }
+    ctx.strokeStyle = C2.gold;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(ix, y - 1, 8, 6);
+    ctx.beginPath();
+    ctx.arc(ix + 4, y - 2, 2.6, Math.PI, 0);
+    ctx.stroke();
+    text2(ctx, label, ix + 12, y + 0.5, { size: 11, weight: 800, color: C2.gold });
+  }
+  function bolt(ctx, x, y, color) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x + 1, y - 7);
+    ctx.lineTo(x - 4, y + 1);
+    ctx.lineTo(x, y + 1);
+    ctx.lineTo(x - 1, y + 7);
+    ctx.lineTo(x + 4, y - 1);
+    ctx.lineTo(x, y - 1);
+    ctx.closePath();
+    ctx.fill();
+  }
+  function drawPoi(ctx, x, y, poi, icons, size = 26) {
+    const icon = icons?.get(poi.kind === "box" ? "box" : poi.id);
+    if (icon && (poi.kind === "perk" || poi.kind === "box")) {
+      ctx.save();
+      ctx.globalAlpha = poi.kind === "box" && !poi.active ? 0.35 : 1;
+      ctx.drawImage(icon, x - size / 2, y - size / 2, size, size);
+      ctx.restore();
+      if (poi.kind === "box" && poi.active) {
+        ctx.strokeStyle = C2.gold;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(x, y, size / 2 + 3, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      return;
+    }
+    if (size !== 26) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(size / 26, size / 26);
+      drawPoi(ctx, 0, 0, poi, null, 26);
+      ctx.restore();
+      return;
+    }
+    if (poi.kind === "power") {
+      ctx.beginPath();
+      ctx.arc(x, y, 11, 0, Math.PI * 2);
+      ctx.fillStyle = poi.active ? "#1a2a3a" : "#1b1917";
+      ctx.fill();
+      ctx.strokeStyle = poi.active ? "#5aa8ff" : C2.dim;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      bolt(ctx, x, y, poi.active ? "#5aa8ff" : C2.muted);
+      return;
+    }
+    if (poi.kind === "box") {
+      roundRect(ctx, x - 13, y - 9, 26, 18, 3);
+      ctx.fillStyle = poi.active ? "#3b2a12" : "rgba(0,0,0,0)";
+      ctx.fill();
+      ctx.strokeStyle = poi.active ? C2.gold : C2.dim;
+      ctx.lineWidth = poi.active ? 1.5 : 1;
+      ctx.setLineDash(poi.active ? [] : [3, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      text2(ctx, "?", x, y + 0.5, { size: 12, weight: 900, color: poi.active ? C2.gold : C2.dim, align: "center" });
+      return;
+    }
+    const pap = poi.kind === "pap";
+    const label = pap ? "PaP" : PERK_LABELS[poi.id] ?? "Perk";
+    roundRect(ctx, x - 14, y - 11, 28, 22, 5);
+    ctx.fillStyle = pap ? "#2b1f3a" : "#3a1a17";
+    ctx.fill();
+    ctx.strokeStyle = pap ? "#b48cff" : C2.bad;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    text2(ctx, label, x, y + 0.5, { size: 10, weight: 800, color: pap ? "#d7c2ff" : "#fff", align: "center" });
+  }
+  function drawPlayer(ctx, view2, p, r = 11) {
+    const [x, y] = toScreen(view2, p.x, p.y);
+    const rad = p.yaw * Math.PI / 180;
+    const [fx, fy] = toScreen(view2, p.x + Math.cos(rad) * 100, p.y + Math.sin(rad) * 100);
+    const len = Math.hypot(fx - x, fy - y) || 1;
+    ctx.strokeStyle = p.color;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + (fx - x) / len * r * 2, y + (fy - y) / len * r * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = p.color;
+    ctx.fill();
+    ctx.lineWidth = p.downed ? 3 : 2;
+    ctx.strokeStyle = p.downed ? C2.bad : "#000";
+    ctx.stroke();
+    text2(ctx, p.letter, x, y + 0.5, { size: Math.round(r * 1.1), weight: 900, color: "#121110", align: "center" });
+  }
+  function drawMap(ctx, width, height, model, plan, cache, icons = null) {
+    ctx.clearRect(0, 0, width, height);
+    const box = panelBox(width, height);
+    roundRect(ctx, box.x, box.y, box.w, box.h, 10);
+    ctx.fillStyle = C2.panel;
+    ctx.fill();
+    ctx.strokeStyle = C2.line;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    const left = box.x + PAD;
+    const right = box.x + box.w - PAD;
+    if (model.status !== "ok") {
+      const message = { noPlan: M.noPlan, waiting: M.waiting, noData: M.noData }[model.status];
+      text2(ctx, message, box.x + box.w / 2, box.y + box.h / 2, { size: 15, color: C2.muted, align: "center" });
+      text2(ctx, M.close, right, box.y + box.h - FOOT / 2, { size: 12, color: C2.dim, align: "right" });
+      return;
+    }
+    text2(ctx, M.youAreIn.toUpperCase(), left, box.y + 18, { size: 10, weight: 700, color: C2.muted });
+    text2(ctx, model.room ?? "—", left, box.y + 36, { size: 17, weight: 800 });
+    if (model.floors.length > 1) {
+      let x2 = right;
+      for (const floor of [...model.floors].reverse()) {
+        ctx.font = `700 12px ${FONT}`;
+        const others = floor.others.join(" ");
+        const w = ctx.measureText(floor.name).width + (others ? ctx.measureText(others).width + 8 : 0) + 22;
+        x2 -= w;
+        roundRect(ctx, x2, box.y + 16, w, 24, 12);
+        ctx.fillStyle = floor.current ? C2.accent : "rgba(0,0,0,0)";
+        ctx.fill();
+        ctx.strokeStyle = floor.current ? C2.accent : C2.line;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        const tw = text2(ctx, floor.name, x2 + 11, box.y + 28.5, { size: 12, weight: 700, color: floor.current ? "#fff" : C2.muted });
+        if (others) text2(ctx, others, x2 + 19 + tw, box.y + 28.5, { size: 12, weight: 900, color: C2.gold });
+        x2 -= 6;
+      }
+    }
+    if (model.stale) text2(ctx, M.stale, box.x + box.w / 2, box.y + HEAD + 4, { size: 12, color: C2.gold, align: "center" });
+    const area = { x: box.x + PAD, y: box.y + HEAD + (model.stale ? 14 : 0), w: box.w - 2 * PAD, h: box.h - HEAD - FOOT - (model.stale ? 14 : 0) };
+    const view2 = fitView(plan, model.floor, area.w, area.h, 12);
+    const dpr = globalThis.devicePixelRatio || 1;
+    const key = JSON.stringify([plan.slug, model.floor, area.w, area.h, dpr, model.rooms.map((r) => [r.open, r.current])]);
+    if (cache.key !== key) {
+      cache.key = key;
+      cache.rooms = drawRooms(plan, model, view2, area.w, area.h, dpr);
+    }
+    ctx.drawImage(cache.rooms, area.x, area.y, area.w, area.h);
+    ctx.save();
+    ctx.translate(area.x, area.y);
+    ctx.beginPath();
+    ctx.rect(0, 0, area.w, area.h);
+    ctx.clip();
+    const placed = [];
+    const free = (x2, y, half) => !placed.some(([px, py, ph]) => Math.abs(px - x2) < ph + half && Math.abs(py - y) < 21);
+    for (const poi of model.pois) {
+      if (poi.at[0] !== model.floor) continue;
+      let [x2, y] = toScreen(view2, poi.at[1], poi.at[2]);
+      while (!free(x2, y, 14)) x2 += 30;
+      placed.push([x2, y, 14]);
+      drawPoi(ctx, x2, y, poi, icons);
+    }
+    for (const door of model.doors) {
+      if (door.at[0] !== model.floor) continue;
+      let [x2, y] = toScreen(view2, door.at[1], door.at[2]);
+      for (let tries = 0; tries < 6 && !free(x2, y, 28); tries += 1) y += 22;
+      placed.push([x2, y, 28]);
+      drawLock(ctx, x2, y, door);
+    }
+    const here = model.players.filter((p) => p.floor === model.floor);
+    for (const p of [...here.filter((q) => !q.me), ...here.filter((q) => q.me)]) drawPlayer(ctx, view2, p);
+    ctx.restore();
+    let x = left;
+    for (const entry of model.legend) {
+      x += text2(ctx, entry.letter, x, box.y + box.h - FOOT / 2, { size: 12, weight: 900, color: entry.color }) + 5;
+      x += text2(ctx, entry.name, x, box.y + box.h - FOOT / 2, { size: 12, color: C2.muted }) + 16;
+    }
+    text2(ctx, M.close, right, box.y + box.h - FOOT / 2, { size: 12, color: C2.dim, align: "right" });
+  }
+  var MapOverlay = class {
+    constructor() {
+      this.host = document.createElement("bo1-coop-map");
+      const root = this.host.attachShadow({ mode: "closed" });
+      root.innerHTML = `<style>:host { all: initial; position: fixed; left: 0; top: 0; z-index: 2147483646; pointer-events: none; display: none; } canvas { width: 100%; height: 100%; display: block; }</style><canvas></canvas>`;
+      this.canvas = root.querySelector("canvas");
+      this.cache = {};
+      this.running = false;
+    }
+    mount() {
+      const attach = () => {
+        if (!this.host.isConnected) document.documentElement.append(this.host);
+      };
+      if (document.documentElement) attach();
+      else document.addEventListener("DOMContentLoaded", attach, { once: true });
+    }
+    show(session) {
+      if (this.running) return;
+      this.running = true;
+      this.host.style.display = "block";
+      const frame = () => {
+        if (!session.map.open || screen() !== "playing") {
+          session.map.open = false;
+          this.running = false;
+          this.host.style.display = "none";
+          return;
+        }
+        try {
+          this.draw(session);
+        } catch (error) {
+          session.note?.(`map drawing failed: ${error?.stack ?? error}`);
+          session.map.open = false;
+        }
+        requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    }
+    draw(session) {
+      const dpr = window.devicePixelRatio || 1;
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const box = panelBox(width, height);
+      const style = this.host.style;
+      if (style.left !== `${box.x}px` || style.width !== `${box.w}px` || style.top !== `${box.y}px` || style.height !== `${box.h}px`) {
+        Object.assign(style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px` });
+      }
+      if (this.canvas.width !== Math.round(box.w * dpr) || this.canvas.height !== Math.round(box.h * dpr)) {
+        this.canvas.width = Math.round(box.w * dpr);
+        this.canvas.height = Math.round(box.h * dpr);
+      }
+      const ctx = this.canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, -box.x * dpr, -box.y * dpr);
+      this.model = mapModel(session, Date.now());
+      drawMap(ctx, width, height, this.model, session.map.plan, this.cache, session.map.icons);
+    }
+  };
+
+  // src/map/minimap.js
+  var SIZE = 200;
+  var BAR = 26;
+  var SCALE = 0.11;
+  var PAD2 = SIZE / 2 + 16;
+  var minimapEnabled = () => readSetting("minimap", "1") !== "0";
+  function minimapVisible(session, now, { playing = screen() === "playing" } = {}) {
+    const map = session.map;
+    if (!map?.minimap || !playing || map.open || !map.plan) return false;
+    return mapModel(session, now, { view: null }).status === "ok";
+  }
+  function minimapWindow(layer, x, y, size) {
+    const [sx, sy] = toScreen(layer, x, y);
+    return { sx: sx - size / 2, sy: sy - size / 2, size };
+  }
+  function minimapSettingBlocks(session) {
+    const on = session.map?.minimap !== false;
+    return [
+      { kind: "kv", items: [[M.minimap, on ? M.on : M.off]] },
+      { kind: "text", cls: "muted small", text: M.minimapNote },
+      { kind: "buttons", buttons: [{ act: "minimapSetting", label: on ? M.turnOff : M.turnOn, style: "ghost" }] }
+    ];
+  }
+  function minimapActions(session, save = saveSetting) {
+    return {
+      minimapSetting: () => {
+        session.map.minimap = !session.map.minimap;
+        save("minimap", session.map.minimap ? "1" : "0");
+      }
+    };
+  }
+  function floorLayer(plan, model, dpr) {
+    const b = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const room of plan.rooms) {
+      for (const [f, x0, y0, x1, y1] of room.rects) {
+        if (f !== model.floor) continue;
+        b[0] = Math.min(b[0], x0);
+        b[1] = Math.min(b[1], y0);
+        b[2] = Math.max(b[2], x1);
+        b[3] = Math.max(b[3], y1);
+      }
+    }
+    if (!Number.isFinite(b[0])) b.splice(0, 4, 0, 0, 1, 1);
+    const view2 = { scale: SCALE, rotate: 0, tx: PAD2 - b[0] * SCALE, ty: PAD2 + b[3] * SCALE };
+    const w = (b[2] - b[0]) * SCALE + 2 * PAD2;
+    const h = (b[3] - b[1]) * SCALE + 2 * PAD2;
+    return { view: view2, canvas: drawRooms(plan, model, view2, w, h, dpr, { labels: false }) };
+  }
+  var Minimap = class {
+    constructor() {
+      this.host = document.createElement("bo1-coop-minimap");
+      const root = this.host.attachShadow({ mode: "closed" });
+      root.innerHTML = `<style>:host { all: initial; position: fixed; top: 12px; left: 12px; width: ${SIZE}px; height: ${SIZE + BAR}px; z-index: 2147483645; pointer-events: none; display: none; } canvas { width: 100%; height: 100%; display: block; }</style><canvas></canvas>`;
+      this.canvas = root.querySelector("canvas");
+      this.cache = {};
+      this.shown = false;
+    }
+    mount() {
+      const attach = () => {
+        if (!this.host.isConnected) document.documentElement.append(this.host);
+      };
+      if (document.documentElement) attach();
+      else document.addEventListener("DOMContentLoaded", attach, { once: true });
+    }
+    /** Runs for the whole page: a cheap check per frame, and a draw while the minimap shows. */
+    start(session) {
+      const frame = () => {
+        try {
+          const now = Date.now();
+          const visible = minimapVisible(session, now);
+          if (visible !== this.shown) {
+            this.shown = visible;
+            this.host.style.display = visible ? "block" : "none";
+          }
+          if (visible) this.draw(session, now);
+        } catch (error) {
+          session.note?.(`minimap failed: ${error?.stack ?? error}`);
+          this.shown = false;
+          this.host.style.display = "none";
+        }
+        requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    }
+    draw(session, now) {
+      const dpr = window.devicePixelRatio || 1;
+      if (this.canvas.width !== SIZE * dpr || this.canvas.height !== (SIZE + BAR) * dpr) {
+        this.canvas.width = SIZE * dpr;
+        this.canvas.height = (SIZE + BAR) * dpr;
+      }
+      const model = mapModel(session, now);
+      this.model = model;
+      const me = model.players?.find((p) => p.me);
+      const plan = session.map.plan;
+      const ctx = this.canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, SIZE, SIZE + BAR);
+      roundRect(ctx, 0.5, 0.5, SIZE - 1, SIZE + BAR - 1, 10);
+      ctx.fillStyle = "rgba(18,17,16,.94)";
+      ctx.fill();
+      ctx.strokeStyle = C2.line;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      text2(ctx, model.room ?? "—", SIZE / 2, BAR / 2 + 1, { size: 13, weight: 800, align: "center" });
+      if (!me || model.status !== "ok") return;
+      const key = JSON.stringify([plan.slug, model.floor, dpr, model.rooms.map((r) => [r.open, r.current])]);
+      if (this.cache.key !== key) this.cache = { key, ...floorLayer(plan, model, dpr) };
+      const { view: view2, canvas } = this.cache;
+      const win = minimapWindow(view2, me.x, me.y, SIZE);
+      ctx.save();
+      roundRect(ctx, 1, BAR, SIZE - 2, SIZE - 1, 9);
+      ctx.clip();
+      ctx.drawImage(canvas, win.sx * dpr, win.sy * dpr, SIZE * dpr, SIZE * dpr, 0, BAR, SIZE, SIZE);
+      const mini = { scale: view2.scale, rotate: 0, tx: view2.tx - win.sx, ty: view2.ty - win.sy + BAR };
+      for (const poi of model.pois) {
+        if (poi.at[0] !== model.floor) continue;
+        const [x, y] = toScreen(mini, poi.at[1], poi.at[2]);
+        drawPoi(ctx, x, y, poi, session.map.icons, 18);
+      }
+      for (const door of model.doors) {
+        if (door.at[0] !== model.floor) continue;
+        const [x, y] = toScreen(mini, door.at[1], door.at[2]);
+        drawLock(ctx, x, y, door, true);
+      }
+      const here = model.players.filter((p) => p.floor === model.floor);
+      for (const p of [...here.filter((q) => !q.me), me]) drawPlayer(ctx, mini, p, p.me ? 8 : 7);
+      ctx.restore();
+    }
+  };
+
   // src/cheats/setup.js
   var WRITE_TIMEOUT_MS = 5e3;
   function createCheats() {
@@ -4130,7 +5394,8 @@ nazizombies_checking_for_cheats()\r
     return [
       { kind: "kv", items: [[C.setting, on ? C.on : C.off]] },
       { kind: "text", cls: "muted small", text: C.note },
-      { kind: "buttons", buttons: [{ act: "cheatsSetting", label: on ? C.turnOff : C.turnOn, style: "ghost" }] }
+      { kind: "buttons", buttons: [{ act: "cheatsSetting", label: on ? C.turnOff : C.turnOn, style: "ghost" }] },
+      ...minimapSettingBlocks(session)
     ];
   }
   function cheatsSettingActions(session) {
@@ -4139,7 +5404,8 @@ nazizombies_checking_for_cheats()\r
         session.cheats.enabled = !session.cheats.enabled;
         saveSetting("cheats", session.cheats.enabled ? "1" : "0");
         session.notice = C.reload;
-      }
+      },
+      ...minimapActions(session)
     };
   }
 
@@ -4782,406 +6048,6 @@ nazizombies_checking_for_cheats()\r
     for (const type of ["keydown", "keyup", "mousedown", "mouseup", "click", "pointerdown", "pointerup"]) window.addEventListener(type, block, true);
   }
 
-  // src/ui/styles.js
-  var STYLE = `
-:host { all: initial; position: fixed; top: 12px; right: 12px; z-index: 2147483647; font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--fg);
-  --bg: #121110; --bg2: #1b1917; --bg3: #24211e; --line: #34302b; --fg: #ece6dc; --muted: #9d958a; --dim: #6f685f;
-  --accent: #e2552f; --accent2: #f07a4f; --ok: #63d471; --wait: #f4c542; --bad: #ff6b5a; }
-* { box-sizing: border-box; }
-.card { width: 312px; max-height: calc(100vh - 24px); overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
-  box-shadow: 0 12px 40px rgba(0,0,0,.55); scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
-.head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: linear-gradient(180deg, #1d1a17, var(--bg)); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 1; }
-.mark { display: grid; grid-template-columns: 6px 6px; gap: 2px; flex: none; }
-.mark i { width: 6px; height: 6px; border-radius: 1.5px; opacity: .9; }
-.title { flex: 1; min-width: 0; }
-.title b { display: block; font-size: 13px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
-.title span { display: block; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.chip { flex: none; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 99px; background: var(--bg3); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
-.chip.ok { color: var(--ok); border-color: rgba(99,212,113,.35); background: rgba(99,212,113,.08); }
-.chip.wait { color: var(--wait); border-color: rgba(244,197,66,.35); background: rgba(244,197,66,.08); }
-.chip.bad { color: var(--bad); border-color: rgba(255,107,90,.4); background: rgba(255,107,90,.08); }
-.chip.live::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; margin-right: 5px; vertical-align: 1px; animation: pulse 1.6s ease-in-out infinite; }
-@keyframes pulse { 50% { opacity: .25; } }
-button.icon { all: unset; cursor: pointer; color: var(--muted); width: 22px; height: 22px; display: grid; place-items: center; border-radius: 5px; font-size: 15px; }
-button.icon:hover { background: var(--bg3); color: var(--fg); }
-.body { padding: 12px; display: grid; gap: 10px; }
-:host(.collapsed) .body { display: none; }
-:host(.collapsed) .head { border-bottom: 0; }
-.muted { color: var(--muted); } .small { font-size: 12px; } .error { color: var(--bad); }
-.label { font-size: 10.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; display: flex; justify-content: space-between; align-items: baseline; }
-.label em { font-style: normal; letter-spacing: 0; text-transform: none; font-weight: 600; color: var(--muted); font-size: 11px; }
-.panel { background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
-.panel .code { font: 700 17px/1.2 ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: .05em; color: #fff; user-select: all; white-space: nowrap; margin-bottom: 9px; }
-.map { display: flex; align-items: center; gap: 10px; }
-.map .glyph { width: 34px; height: 34px; border-radius: 6px; flex: none; display: grid; place-items: center; background: radial-gradient(circle at 30% 30%, #3a2a22, #1a1411); border: 1px solid #4a3328; color: var(--accent2); font-weight: 900; font-size: 15px; }
-.map .name { font-weight: 700; font-size: 14px; }
-.map .sub { font-size: 11.5px; color: var(--muted); }
-.tag { display: inline-block; font-size: 9.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; padding: 1px 5px; border-radius: 4px; vertical-align: 1px; margin-left: 5px; }
-.tag.host { background: rgba(226,85,47,.18); color: var(--accent2); }
-.tag.you { background: rgba(255,255,255,.1); color: var(--fg); }
-.tag.hell { background: rgba(255,107,90,.15); color: var(--bad); }
-.players { display: grid; gap: 6px; }
-.player { display: flex; align-items: center; gap: 10px; padding: 7px 9px; border-radius: 7px; background: var(--bg3); border: 1px solid transparent; }
-.player.me { border-color: var(--line); }
-.player.empty { background: transparent; border: 1px dashed var(--line); }
-.badge { width: 26px; height: 26px; border-radius: 50%; flex: none; display: grid; place-items: center; font-weight: 800; font-size: 12px; color: #111; position: relative; }
-.player.empty .badge { background: transparent !important; color: var(--dim); box-shadow: inset 0 0 0 1.5px var(--line); }
-.who { flex: 1; min-width: 0; }
-.who .name { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.player.empty .who .name { color: var(--dim); font-weight: 500; }
-.who .st { font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
-.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex: none; }
-.dot.ok { background: var(--ok); } .dot.wait { background: var(--wait); animation: pulse 1.6s ease-in-out infinite; } .dot.bad { background: var(--bad); }
-.ping { flex: none; text-align: right; font: 600 11px ui-monospace, Menlo, monospace; color: var(--muted); display: grid; justify-items: end; gap: 2px; }
-.ping .path { font: 500 10px system-ui, sans-serif; color: var(--dim); }
-.bars { display: flex; gap: 2px; align-items: flex-end; height: 10px; }
-.bars i { width: 3px; border-radius: 1px; background: var(--line); }
-.bars i:nth-child(1) { height: 4px; } .bars i:nth-child(2) { height: 7px; } .bars i:nth-child(3) { height: 10px; }
-.bars.q3 i { background: var(--ok); } .bars.q2 i:nth-child(-n+2) { background: var(--wait); } .bars.q1 i:nth-child(1) { background: var(--bad); }
-.steps { display: flex; align-items: flex-start; }
-.step { flex: 1; display: grid; justify-items: center; gap: 4px; position: relative; font-size: 10.5px; color: var(--dim); text-align: center; }
-.step::before { content: ""; position: absolute; top: 6px; left: -50%; width: 100%; height: 2px; background: var(--line); z-index: 0; }
-.step:first-child::before { display: none; }
-.step i { width: 14px; height: 14px; border-radius: 50%; background: var(--bg); border: 2px solid var(--line); z-index: 1; }
-.step.done { color: var(--muted); } .step.done::before { background: var(--accent); } .step.done i { background: var(--accent); border-color: var(--accent); }
-.step.now { color: var(--fg); font-weight: 700; } .step.now::before { background: var(--accent); } .step.now i { border-color: var(--accent2); box-shadow: 0 0 0 3px rgba(226,85,47,.25); }
-.step.now.fail i { border-color: var(--bad); box-shadow: 0 0 0 3px rgba(255,107,90,.2); }
-.call { border-radius: 8px; padding: 9px 10px; background: var(--bg2); border: 1px solid var(--line); border-left: 3px solid var(--muted); display: grid; gap: 8px; }
-.call.info { border-left-color: #5aa8ff; } .call.ok { border-left-color: var(--ok); } .call.wait { border-left-color: var(--wait); } .call.bad { border-left-color: var(--bad); background: rgba(255,107,90,.06); }
-.call b { font-weight: 700; }
-.row { display: flex; gap: 6px; } .row > * { flex: 1; }
-button.act { all: unset; box-sizing: border-box; text-align: center; cursor: pointer; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg3); color: var(--fg); font-weight: 650; font-size: 12.5px; transition: background .12s, border-color .12s; }
-button.act:hover, button.act:focus-visible { background: #2e2a26; border-color: #4a443d; }
-button.act.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-button.act.primary:hover { background: var(--accent2); border-color: var(--accent2); }
-button.act.ghost { background: transparent; color: var(--muted); }
-button.act.ghost:hover { color: var(--fg); }
-button.act.done { background: rgba(99,212,113,.15); border-color: rgba(99,212,113,.4); color: var(--ok); }
-button.act.slim { flex: 0 0 auto; padding: 6px 10px; }
-button.act[disabled] { opacity: .5; cursor: default; }
-input { all: unset; box-sizing: border-box; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: #0c0b0a; color: var(--fg); font: 12.5px ui-monospace, Menlo, monospace; min-width: 0; flex: 1; }
-input:focus { border-color: var(--accent); }
-input::placeholder { color: var(--dim); }
-.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12px; margin: 0; }
-.kv dt { color: var(--muted); } .kv dd { margin: 0; text-align: right; }
-.meter { height: 5px; border-radius: 3px; background: var(--bg3); overflow: hidden; margin-top: 5px; }
-.meter > span { display: block; height: 100%; background: var(--ok); }
-.meter.warn > span { background: var(--wait); } .meter.full > span { background: var(--bad); }
-.section { border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 10px; }
-.section > button.toggle { all: unset; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-size: 10.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
-.section > button.toggle:hover { color: var(--muted); }
-.section > button.toggle::after { content: "\\25BE"; font-size: 12px; transition: transform .15s; }
-.section.closed > button.toggle::after { transform: rotate(-90deg); }
-.credits { font-size: 11px; color: var(--dim); text-align: center; }
-.chips { display: flex; flex-wrap: wrap; gap: 5px; }
-button.tchip { all: unset; cursor: pointer; font-size: 11.5px; font-weight: 650; padding: 4px 9px; border-radius: 99px; border: 1px solid var(--line); background: var(--bg3); color: var(--muted); }
-button.tchip:hover { color: var(--fg); border-color: #4a443d; }
-button.tchip.on { background: rgba(226,85,47,.2); border-color: var(--accent); color: #fff; }
-button.tchip.plain { border-style: dashed; }
-.stepper { display: flex; align-items: center; gap: 6px; font-size: 12px; }
-.stepper .flabel { flex: 1; }
-.sval { min-width: 46px; text-align: center; font: 600 12px ui-monospace, Menlo, monospace; color: var(--fg); }
-button.sbtn { all: unset; cursor: pointer; width: 24px; height: 22px; display: grid; place-items: center; border-radius: 6px; background: var(--bg3); border: 1px solid var(--line); color: var(--fg); font-weight: 700; }
-button.sbtn:hover { border-color: var(--accent); }
-.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
-button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
-.fplayer { display: grid; gap: 7px; padding: 9px; border-radius: 8px; background: var(--bg2); border: 1px solid var(--line); }
-.fhead { display: flex; align-items: center; gap: 8px; }
-.fhead b { flex: 1; font-weight: 700; }
-.fbadge { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 800; color: #111; flex: none; }
-.fmoney { font: 600 12px ui-monospace, Menlo, monospace; color: var(--ok); }
-.frow { display: flex; align-items: center; gap: 5px; }
-.frow .flabel { flex: 1; font-size: 12px; }
-.flabel { color: var(--muted); }
-.pill { display: none; }
-:host(.compact) .card { display: none; }
-:host(.compact) .pill { display: flex; align-items: center; gap: 8px; pointer-events: none; background: rgba(12,11,10,.72); border: 1px solid rgba(255,255,255,.08); border-radius: 99px; padding: 4px 10px; font: 600 11.5px system-ui, sans-serif; color: #ddd; backdrop-filter: blur(4px); }
-:host(.compact) .pill:empty { display: none; }
-.pill .pd { width: 9px; height: 9px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px currentColor; color: var(--dim); }
-.pill .pd.on { background: currentColor; }
-.pill .sep { width: 1px; height: 12px; background: rgba(255,255,255,.15); }
-`;
-
-  // src/ui/card.js
-  var PLAYER_COLORS = ["#f2efe9", "#5aa8ff", "#f4c542", "#63d471"];
-  var Card = class {
-    constructor(handlers) {
-      this.handlers = handlers;
-      this.host = document.createElement("bo1-coop-card");
-      this.root = this.host.attachShadow({ mode: "closed" });
-      const mark = PLAYER_COLORS.map((c) => `<i style="background:${c}"></i>`).join("");
-      this.root.innerHTML = `<style>${STYLE}</style><div class="card"><div class="head"><span class="mark">${mark}</span><span class="title"><b>Co-op</b><span class="tagline"></span></span><span class="chip"></span><button class="icon" data-act="collapse" title="Minimise">–</button></div><div class="body"></div></div><div class="pill"></div>`;
-      this.body = this.root.querySelector(".body");
-      this.chip = this.root.querySelector(".chip");
-      this.tagline = this.root.querySelector(".tagline");
-      this.pill = this.root.querySelector(".pill");
-      this.collapseButton = this.root.querySelector('[data-act="collapse"]');
-      this.view = null;
-      for (const type of ["keydown", "keyup", "keypress", "click", "mousedown", "mouseup", "pointerdown", "pointerup", "wheel"]) {
-        this.host.addEventListener(type, (event) => event.stopPropagation());
-      }
-      this.root.addEventListener("click", (event) => {
-        const button = event.target.closest?.("[data-act]");
-        if (!button || button.disabled) return;
-        const act = button.dataset.act;
-        if (act === "collapse") {
-          const collapsed = this.host.classList.toggle("collapsed");
-          this.collapseButton.textContent = collapsed ? "+" : "–";
-          return;
-        }
-        const field = button.dataset.field ? this.root.querySelector(`input[data-field="${button.dataset.field}"]`) : null;
-        this.handlers[act]?.(field ? field.value : button.dataset.arg);
-      });
-      this.root.addEventListener("keydown", (event) => {
-        const input = event.target.matches?.("input[data-act]") ? event.target : null;
-        if (event.key === "Enter" && input) this.handlers[input.dataset.act]?.(input.value);
-      });
-    }
-    mount() {
-      const attach = () => {
-        if (!this.host.isConnected) document.documentElement.append(this.host);
-      };
-      if (document.documentElement) attach();
-      else document.addEventListener("readystatechange", attach, { once: true });
-    }
-    /** Re-renders only when the view changes, so typing in an input is never interrupted. */
-    render(view2) {
-      const key = JSON.stringify(view2);
-      if (key === this.view) return;
-      const focused = this.root.activeElement?.dataset?.field;
-      const previous = new Map([...this.root.querySelectorAll("input[data-field]")].map((i) => [i.dataset.field, i.value]));
-      this.view = key;
-      this.chip.className = `chip ${view2.chip?.tone ?? ""}`;
-      this.chip.textContent = view2.chip?.text ?? "";
-      this.tagline.textContent = view2.tagline ?? "";
-      this.host.classList.toggle("compact", Boolean(view2.compact));
-      this.pill.replaceChildren(...this.pillParts(view2.pill));
-      this.body.replaceChildren(...view2.blocks.map((block) => this.block(block)));
-      for (const input of this.root.querySelectorAll("input[data-field]")) {
-        if (previous.has(input.dataset.field)) input.value = previous.get(input.dataset.field);
-        if (input.dataset.field === focused) input.focus();
-      }
-    }
-    toggleChip(c) {
-      const e = document.createElement("button");
-      e.className = `tchip ${c.on ? "on" : ""} ${c.plain ? "plain" : ""}`;
-      e.textContent = c.label;
-      e.dataset.act = c.act;
-      if (c.arg != null) e.dataset.arg = c.arg;
-      return e;
-    }
-    stepper(s) {
-      const box = document.createElement("div");
-      box.className = "stepper";
-      const label = document.createElement("span");
-      label.className = "flabel";
-      label.textContent = s.label;
-      const value = document.createElement("span");
-      value.className = "sval";
-      value.textContent = s.value;
-      const make = (b, text3) => {
-        const e = document.createElement("button");
-        e.className = "sbtn";
-        e.textContent = text3;
-        e.dataset.act = b.act;
-        e.dataset.arg = b.arg;
-        return e;
-      };
-      box.append(label, make(s.dec, "−"), value, make(s.inc, "+"));
-      return box;
-    }
-    pillParts(pill) {
-      if (!pill) return [];
-      const parts2 = [];
-      for (const p of pill.players ?? []) {
-        const d = document.createElement("span");
-        d.className = `pd ${p.on ? "on" : ""}`;
-        d.style.color = PLAYER_COLORS[p.n - 1];
-        parts2.push(d);
-      }
-      for (const text3 of pill.texts ?? []) {
-        if (parts2.length) parts2.push(Object.assign(document.createElement("span"), { className: "sep" }));
-        parts2.push(document.createTextNode(text3));
-      }
-      return parts2;
-    }
-    block(block) {
-      const el = (tag, cls, text3) => {
-        const e = document.createElement(tag);
-        if (cls) e.className = cls;
-        if (text3 != null) e.textContent = text3;
-        return e;
-      };
-      const button = (b) => {
-        const e = el("button", `act ${b.style ?? ""}`, b.label);
-        e.dataset.act = b.act;
-        if (b.arg != null) e.dataset.arg = b.arg;
-        if (b.field) e.dataset.field = b.field;
-        if (b.disabled) e.disabled = true;
-        return e;
-      };
-      switch (block.kind) {
-        case "text":
-          return el("div", block.cls ?? "", block.text);
-        case "label": {
-          const box = el("div", "label", block.text);
-          if (block.aside) box.append(el("em", "", block.aside));
-          return box;
-        }
-        case "room": {
-          const box = el("div", "panel");
-          const label = el("div", "label", block.label);
-          if (block.aside) label.append(el("em", "", block.aside));
-          box.append(label, el("div", "code", block.code));
-          if (block.buttons?.length) {
-            const row = el("div", "row");
-            for (const b of block.buttons) row.append(button(b));
-            box.append(row);
-          }
-          return box;
-        }
-        case "map": {
-          const box = el("div", "map");
-          box.append(el("div", "glyph", block.glyph ?? "?"));
-          const info = el("div");
-          const name = el("div", "name", block.name);
-          if (block.tag) name.append(el("span", "tag hell", block.tag));
-          info.append(name, el("div", "sub", block.sub ?? ""));
-          box.append(info);
-          return box;
-        }
-        case "players": {
-          const box = el("div");
-          const label = el("div", "label", block.label);
-          if (block.aside) label.append(el("em", "", block.aside));
-          const list = el("div", "players");
-          for (const p of block.players) {
-            const row = el("div", `player ${p.empty ? "empty" : ""} ${p.me ? "me" : ""}`);
-            const badge = el("div", "badge", String(p.n));
-            badge.style.background = PLAYER_COLORS[p.n - 1];
-            const who2 = el("div", "who");
-            const name = el("div", "name", p.name);
-            for (const t of p.tags ?? []) name.append(el("span", `tag ${t.cls}`, t.text));
-            const st = el("div", "st");
-            if (p.status) st.append(el("span", `dot ${p.tone ?? ""}`), document.createTextNode(p.status));
-            who2.append(name, st);
-            row.append(badge, who2);
-            if (p.ping != null) {
-              const ping = el("div", "ping");
-              const bars = el("span", `bars q${p.ping < 80 ? 3 : p.ping < 180 ? 2 : 1}`);
-              bars.append(el("i"), el("i"), el("i"));
-              ping.append(bars, el("span", "", `${p.ping} ms`));
-              if (p.path) ping.append(el("span", "path", p.path));
-              row.append(ping);
-            }
-            list.append(row);
-          }
-          box.append(label, list);
-          return box;
-        }
-        case "steps": {
-          const box = el("div", "steps");
-          block.steps.forEach((text3, i) => {
-            const state = i < block.current ? "done" : i === block.current ? `now ${block.fail ? "fail" : ""}` : "";
-            const step2 = el("div", `step ${state}`);
-            step2.append(el("i"), el("span", "", text3));
-            box.append(step2);
-          });
-          return box;
-        }
-        case "callout": {
-          const box = el("div", `call ${block.tone ?? ""}`);
-          const text3 = el("div");
-          if (block.title) text3.append(el("b", "", `${block.title} `));
-          text3.append(document.createTextNode(block.text ?? ""));
-          box.append(text3);
-          if (block.buttons?.length) {
-            const row = el("div", "row");
-            for (const b of block.buttons) row.append(button(b));
-            box.append(row);
-          }
-          return box;
-        }
-        case "buttons": {
-          const row = el("div", "row");
-          for (const b of block.buttons) row.append(button(b));
-          return row;
-        }
-        case "input": {
-          const box = el("div");
-          if (block.label) box.append(el("div", "label", block.label));
-          const row = el("div", "row");
-          const input = el("input");
-          input.placeholder = block.placeholder ?? "";
-          input.spellcheck = false;
-          if (block.maxLength) input.maxLength = block.maxLength;
-          input.dataset.field = block.field;
-          input.dataset.act = block.act;
-          if (block.value) input.value = block.value;
-          row.append(input, button({ act: block.act, label: block.button, field: block.field, style: `${block.style ?? ""} slim` }));
-          box.append(row);
-          return box;
-        }
-        case "kv": {
-          const box = el("dl", "kv");
-          for (const [k, v, cls] of block.items) box.append(el("dt", "", k), el("dd", cls ?? "", v));
-          return box;
-        }
-        case "meter": {
-          const box = el("div", "small muted");
-          box.append(document.createTextNode(block.label));
-          const bar = el("div", `meter ${block.fraction >= 1 ? "full" : block.fraction >= 0.75 ? "warn" : ""}`);
-          const fill = el("span");
-          fill.style.width = `${Math.round(Math.min(1, Math.max(0, block.fraction)) * 100)}%`;
-          bar.append(fill);
-          box.append(bar);
-          return box;
-        }
-        case "section": {
-          const box = el("div", `section ${block.open ? "" : "closed"}`);
-          const toggle = el("button", "toggle", block.title);
-          toggle.dataset.act = block.act;
-          box.append(toggle);
-          if (block.open) for (const child of block.blocks) box.append(this.block(child));
-          return box;
-        }
-        case "credits":
-          return el("div", "credits", block.text);
-        case "chips": {
-          const box = el("div", "chips");
-          for (const c of block.chips) box.append(this.toggleChip(c));
-          return box;
-        }
-        case "stepper":
-          return this.stepper(block);
-        case "grid": {
-          const box = el("div", "grid");
-          for (const b of block.buttons) box.append(button({ ...b, style: `${b.style ?? ""} tiny` }));
-          return box;
-        }
-        case "funPlayer": {
-          const box = el("div", "fplayer");
-          const head = el("div", "fhead");
-          const badge = el("span", "fbadge", block.n ? String(block.n) : "★");
-          badge.style.background = block.n ? PLAYER_COLORS[block.n - 1] : "var(--accent)";
-          head.append(badge, el("b", "", block.name));
-          if (block.money?.value) head.append(el("span", "fmoney", `$${block.money.value}`));
-          box.append(head);
-          const chips = el("div", "chips");
-          for (const c of block.chips) chips.append(this.toggleChip(c));
-          box.append(chips, this.stepper(block.speed));
-          const money = el("div", "frow");
-          money.append(el("span", "flabel", block.money.label));
-          for (const b of block.money.buttons) money.append(button({ ...b, style: "tiny" }));
-          box.append(money);
-          return box;
-        }
-        default:
-          return el("div");
-      }
-    }
-  };
-
   // src/ui/view.js
   var COPIED_MS = 2e3;
   var CONNECTED = ["ingame", "ready", "lobby"];
@@ -5461,6 +6327,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       // when the panel was last opened (the "no data" note waits a few seconds)
       slug: null,
       plan: null,
+      icons: /* @__PURE__ */ new Map(),
+      // the game's perk and box icons for this map (src/map/icons.js), once read
       tracks: /* @__PURE__ */ new Map(),
       // n -> track of recent positions, for gliding (src/map/track.js)
       live: /* @__PURE__ */ new Map(),
@@ -5511,437 +6379,6 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     );
   }
 
-  // src/map/names.js
-  var ROOMS = {
-    nacht: { start_zone: "Main room", box_zone: "Back room", upstairs_zone: "Help room" },
-    verruckt: { kitchen_upstairs_zone: "Kitchen", power_upstairs_zone: "Power room" },
-    shinonuma: { center_building_combined: "Main hut", center_building_upstairs: "Main hut upstairs", center_building_upstairs_buy: "Main hut stairs" },
-    riese: {
-      receiver_zone: "Mainframe",
-      tp_west_zone: "West teleporter",
-      tp_south_zone: "South teleporter",
-      tp_east_zone: "East teleporter",
-      bridge_zone: "Bridge",
-      warehouse_top_zone: "Warehouse upstairs",
-      warehouse_bottom_zone: "Warehouse"
-    },
-    kino: {
-      foyer_zone: "Lobby",
-      foyer2_zone: "Upstairs lobby",
-      theater_zone: "Theater",
-      stage_zone: "Stage",
-      west_balcony_zone: "West balcony",
-      dressing_zone: "Dressing room",
-      alleyway_zone: "Alley",
-      dining_zone: "Dining room",
-      crematorium_zone: "Crematorium",
-      vip_zone: "VIP room"
-    },
-    five: {
-      labs_zone1: "Lab 1",
-      labs_zone2: "Lab 2",
-      labs_zone3: "Lab 3",
-      labs_hallway1: "Lab hallway",
-      labs_hallway2: "Lab hallway 2",
-      labs_elevator: "Lab elevator",
-      war_room_zone_elevator: "War room elevator",
-      war_room_zone_top: "War room, upper level",
-      war_room_zone_north: "War room north",
-      war_room_zone_south: "War room south",
-      conference_level1: "Conference room"
-    },
-    ascension: { centrifuge_zone: "Centrifuge", control_room_zone: "Control room", under_rocket_zone: "Under the rocket" },
-    cotd: { lighthouse1_zone: "Lighthouse", lighthouse2_zone: "Lighthouse, upper floor", catwalk_zone: "Lighthouse top", start_zone: "Start" },
-    shangrila: { temple_start_zone: "Temple" },
-    moon: { nml_zone: "No Man's Land" }
-  };
-  function roomName(slug, id) {
-    const known = ROOMS[slug]?.[id];
-    if (known) return known;
-    const words = String(id).replace(/zone/g, " ").replace(/_/g, " ").replace(/([a-z])(\d)/g, "$1 $2").trim().replace(/\s+/g, " ");
-    return words ? words[0].toUpperCase() + words.slice(1) : String(id);
-  }
-
-  // src/map/model.js
-  var GONE_MS = 2e3;
-  var NO_DATA_MS = 5e3;
-  var text = (value) => typeof value === "string" ? value : value == null ? "" : String(value);
-  function names(session) {
-    if (session.mode !== "guest") return new Map(mapPlayers(session).map((p) => [p.n, text(p.name)]));
-    const known = new Map((session.lobby?.players ?? []).map((p) => [p.n, text(p?.name)]));
-    if (Number.isInteger(session.seat)) known.set(session.seat + 1, text(session.name));
-    return known;
-  }
-  var myNumber = (session) => session.mode === "guest" ? session.seat + 1 : 1;
-  function mapModel(session, now, { view: view2 = latestView() } = {}) {
-    const map = session.map;
-    const plan = map.plan;
-    if (!plan) return { status: "noPlan" };
-    const me = myNumber(session);
-    const known = names(session);
-    const players = [];
-    for (const [n, entry] of map.live) {
-      if (now - entry.at > GONE_MS) {
-        map.live.delete(n);
-        map.tracks.delete(n);
-        continue;
-      }
-      if (entry.s === 2) continue;
-      const name = known.get(n) || "";
-      let at2 = { x: entry.x, y: entry.y, yaw: entry.yaw };
-      if (n === me && view2) at2 = { x: view2.origin[0], y: view2.origin[1], yaw: view2.angles[1] };
-      else if (n !== me) at2 = sampleTrack(map.tracks.get(n) ?? [], now - RENDER_DELAY_MS) ?? at2;
-      players.push({ n, name, letter: (name.trim()[0] ?? String(n)).toUpperCase(), color: PLAYER_COLORS[n - 1] ?? PLAYER_COLORS[0], ...at2, floor: entry.floor, room: entry.room, downed: entry.s === 1, me: n === me });
-    }
-    players.sort((a, b) => a.n - b.n);
-    const mine = players.find((p) => p.me);
-    if (!players.length && !map.state) {
-      const waited = map.openedAt != null && now - map.openedAt > NO_DATA_MS;
-      return { status: waited ? "noData" : "waiting" };
-    }
-    const floor = mine?.floor ?? 0;
-    const room = map.planOk && mine && mine.room >= 0 && plan.rooms[mine.room] ? mine.room : -1;
-    const state = map.planOk ? map.state : null;
-    let boxIndex = -1;
-    return {
-      status: "ok",
-      room: room >= 0 ? roomName(plan.slug, plan.rooms[room].id) : null,
-      floor,
-      floors: plan.floors.map((f, i) => ({ name: f.name, current: i === floor, others: i === floor ? [] : players.filter((p) => !p.me && p.floor === i).map((p) => p.letter) })),
-      rooms: plan.rooms.map((r, i) => ({ index: i, name: roomName(plan.slug, r.id), open: state ? Boolean(state.rooms[i]) : null, current: i === room })),
-      doors: state ? plan.doors.flatMap((d, i) => state.doors[i] ? [] : [{ index: i, cost: d.cost, kind: d.kind, at: d.at }]) : [],
-      pois: plan.pois.map((p) => {
-        if (p.kind === "box") boxIndex += 1;
-        const active = p.kind === "box" ? Boolean(state?.box.includes(boxIndex)) : p.kind === "power" ? Boolean(state?.power) : false;
-        return { kind: p.kind, id: p.id, at: p.at, active };
-      }),
-      players: players.map(({ n, letter, color, x, y, yaw, floor: f, downed, me: isMe }) => ({ n, letter, color, x, y, yaw, floor: f, downed, me: isMe })),
-      legend: players.map((p) => ({ letter: p.letter, name: p.name, color: p.color })),
-      stale: Boolean(map.state && !map.planOk)
-    };
-  }
-
-  // src/map/strings.js
-  var M = {
-    noPlan: "There's no map for this level yet.",
-    waiting: "Waiting for the map…",
-    noData: "No map in this game. The host needs this version of the extension, with the cheat menu on.",
-    stale: "This level changed since its map was made, so doors aren't shown.",
-    close: "N to close",
-    youAreIn: "You are in"
-  };
-
-  // src/map/overlay.js
-  var C2 = {
-    panel: "rgba(18,17,16,.9)",
-    line: "#34302b",
-    fg: "#ece6dc",
-    muted: "#9d958a",
-    dim: "#6f685f",
-    accent: "#e2552f",
-    accent2: "#f07a4f",
-    gold: "#f4c542",
-    bad: "#ff6b5a",
-    roomOpen: "#2a2622",
-    roomOpenEdge: "#6f685f",
-    roomShut: "#1d1a17",
-    roomShutEdge: "#4a443d",
-    roomUnknown: "#24211e",
-    current: "#3a2a22"
-  };
-  var FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
-  var PERK_LABELS = {
-    specialty_armorvest: "Jug",
-    specialty_quickrevive: "QR",
-    specialty_fastreload: "Spd",
-    specialty_rof: "DT",
-    specialty_longersprint: "Stm",
-    specialty_deadshot: "DS",
-    specialty_additionalprimaryweapon: "MK",
-    specialty_flakjacket: "PhD"
-  };
-  var HEAD = 52;
-  var FOOT = 34;
-  var PAD = 18;
-  var panelBox = (width, height) => ({ x: Math.round(width * 0.12), y: Math.round(height * 0.08), w: Math.round(width * 0.76), h: Math.round(height * 0.84) });
-  function roundRect(ctx, x, y, w, h, r) {
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, h, r);
-  }
-  function text2(ctx, value, x, y, { size = 13, weight = 600, color = C2.fg, align = "left", base = "middle" } = {}) {
-    ctx.font = `${weight} ${size}px ${FONT}`;
-    ctx.fillStyle = color;
-    ctx.textAlign = align;
-    ctx.textBaseline = base;
-    ctx.fillText(value, x, y);
-    return ctx.measureText(value).width;
-  }
-  function drawRooms(plan, model, view2, w, h, dpr) {
-    const canvas = new OffscreenCanvas(Math.max(1, Math.round(w * dpr)), Math.max(1, Math.round(h * dpr)));
-    const ctx = canvas.getContext("2d");
-    ctx.scale(dpr, dpr);
-    const s = view2.scale;
-    const rectOf = ([, x0, y0, x1, y1]) => {
-      const [ax, ay] = toScreen(view2, x0, y0);
-      const [bx, by] = toScreen(view2, x1, y1);
-      const left = Math.round(Math.min(ax, bx));
-      const top = Math.round(Math.min(ay, by));
-      return [left, top, Math.round(Math.max(ax, bx)) - left, Math.round(Math.max(ay, by)) - top];
-    };
-    const fill = (room, grow, color) => {
-      ctx.fillStyle = color;
-      for (const rect of room.rects) {
-        if (rect[0] !== model.floor) continue;
-        const [x, y, rw, rh] = rectOf(rect);
-        ctx.fillRect(x - grow, y - grow, rw + 2 * grow, rh + 2 * grow);
-      }
-    };
-    const look = (i) => {
-      const r = model.rooms[i];
-      if (r.current) return { edge: C2.accent, fill: C2.current, grow: 3, label: C2.accent2 };
-      if (r.open === true) return { edge: C2.roomOpenEdge, fill: C2.roomOpen, grow: 1.5, label: C2.muted };
-      if (r.open === false) return { edge: C2.roomShutEdge, fill: C2.roomShut, grow: 1.5, label: C2.dim };
-      return { edge: C2.roomShutEdge, fill: C2.roomUnknown, grow: 1.5, label: C2.muted };
-    };
-    const order = plan.rooms.map((_, i) => i).sort((a, b) => Number(model.rooms[a].current) - Number(model.rooms[b].current));
-    for (const i of order) {
-      fill(plan.rooms[i], look(i).grow, look(i).edge);
-      fill(plan.rooms[i], 0, look(i).fill);
-    }
-    const size = Math.max(10, Math.min(14, s * 160));
-    for (const i of order) {
-      const room = plan.rooms[i];
-      if (room.label[0] !== model.floor) continue;
-      const [lx, ly] = toScreen(view2, room.label[1], room.label[2]);
-      text2(ctx, model.rooms[i].name, lx, ly, { size, weight: 700, color: look(i).label, align: "center" });
-    }
-    return canvas;
-  }
-  function drawLock(ctx, x, y, door) {
-    const label = door.kind === "power" ? "" : String(door.cost);
-    ctx.font = `800 11px ${FONT}`;
-    const w = 26 + (label ? ctx.measureText(label).width : 0);
-    roundRect(ctx, x - w / 2, y - 10, w, 20, 10);
-    ctx.fillStyle = "#121110";
-    ctx.fill();
-    ctx.strokeStyle = C2.gold;
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    const ix = x - w / 2 + 8;
-    if (door.kind === "power") {
-      bolt(ctx, x, y, C2.gold);
-      return;
-    }
-    ctx.strokeStyle = C2.gold;
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(ix, y - 1, 8, 6);
-    ctx.beginPath();
-    ctx.arc(ix + 4, y - 2, 2.6, Math.PI, 0);
-    ctx.stroke();
-    text2(ctx, label, ix + 12, y + 0.5, { size: 11, weight: 800, color: C2.gold });
-  }
-  function bolt(ctx, x, y, color) {
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.moveTo(x + 1, y - 7);
-    ctx.lineTo(x - 4, y + 1);
-    ctx.lineTo(x, y + 1);
-    ctx.lineTo(x - 1, y + 7);
-    ctx.lineTo(x + 4, y - 1);
-    ctx.lineTo(x, y - 1);
-    ctx.closePath();
-    ctx.fill();
-  }
-  function drawPoi(ctx, x, y, poi) {
-    if (poi.kind === "power") {
-      ctx.beginPath();
-      ctx.arc(x, y, 11, 0, Math.PI * 2);
-      ctx.fillStyle = poi.active ? "#1a2a3a" : "#1b1917";
-      ctx.fill();
-      ctx.strokeStyle = poi.active ? "#5aa8ff" : C2.dim;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      bolt(ctx, x, y, poi.active ? "#5aa8ff" : C2.muted);
-      return;
-    }
-    if (poi.kind === "box") {
-      roundRect(ctx, x - 13, y - 9, 26, 18, 3);
-      ctx.fillStyle = poi.active ? "#3b2a12" : "rgba(0,0,0,0)";
-      ctx.fill();
-      ctx.strokeStyle = poi.active ? C2.gold : C2.dim;
-      ctx.lineWidth = poi.active ? 1.5 : 1;
-      ctx.setLineDash(poi.active ? [] : [3, 3]);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      text2(ctx, "?", x, y + 0.5, { size: 12, weight: 900, color: poi.active ? C2.gold : C2.dim, align: "center" });
-      return;
-    }
-    const pap = poi.kind === "pap";
-    const label = pap ? "PaP" : PERK_LABELS[poi.id] ?? "Perk";
-    roundRect(ctx, x - 14, y - 11, 28, 22, 5);
-    ctx.fillStyle = pap ? "#2b1f3a" : "#3a1a17";
-    ctx.fill();
-    ctx.strokeStyle = pap ? "#b48cff" : C2.bad;
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
-    text2(ctx, label, x, y + 0.5, { size: 10, weight: 800, color: pap ? "#d7c2ff" : "#fff", align: "center" });
-  }
-  function drawPlayer(ctx, view2, p) {
-    const [x, y] = toScreen(view2, p.x, p.y);
-    const rad = p.yaw * Math.PI / 180;
-    const [fx, fy] = toScreen(view2, p.x + Math.cos(rad) * 100, p.y + Math.sin(rad) * 100);
-    const len = Math.hypot(fx - x, fy - y) || 1;
-    ctx.strokeStyle = p.color;
-    ctx.lineWidth = 3;
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(x + (fx - x) / len * 22, y + (fy - y) / len * 22);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(x, y, 11, 0, Math.PI * 2);
-    ctx.fillStyle = p.color;
-    ctx.fill();
-    ctx.lineWidth = p.downed ? 3 : 2;
-    ctx.strokeStyle = p.downed ? C2.bad : "#000";
-    ctx.stroke();
-    text2(ctx, p.letter, x, y + 0.5, { size: 12, weight: 900, color: "#121110", align: "center" });
-  }
-  function drawMap(ctx, width, height, model, plan, cache) {
-    ctx.clearRect(0, 0, width, height);
-    const box = panelBox(width, height);
-    roundRect(ctx, box.x, box.y, box.w, box.h, 10);
-    ctx.fillStyle = C2.panel;
-    ctx.fill();
-    ctx.strokeStyle = C2.line;
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    const left = box.x + PAD;
-    const right = box.x + box.w - PAD;
-    if (model.status !== "ok") {
-      const message = { noPlan: M.noPlan, waiting: M.waiting, noData: M.noData }[model.status];
-      text2(ctx, message, box.x + box.w / 2, box.y + box.h / 2, { size: 15, color: C2.muted, align: "center" });
-      text2(ctx, M.close, right, box.y + box.h - FOOT / 2, { size: 12, color: C2.dim, align: "right" });
-      return;
-    }
-    text2(ctx, M.youAreIn.toUpperCase(), left, box.y + 18, { size: 10, weight: 700, color: C2.muted });
-    text2(ctx, model.room ?? "—", left, box.y + 36, { size: 17, weight: 800 });
-    if (model.floors.length > 1) {
-      let x2 = right;
-      for (const floor of [...model.floors].reverse()) {
-        ctx.font = `700 12px ${FONT}`;
-        const others = floor.others.join(" ");
-        const w = ctx.measureText(floor.name).width + (others ? ctx.measureText(others).width + 8 : 0) + 22;
-        x2 -= w;
-        roundRect(ctx, x2, box.y + 16, w, 24, 12);
-        ctx.fillStyle = floor.current ? C2.accent : "rgba(0,0,0,0)";
-        ctx.fill();
-        ctx.strokeStyle = floor.current ? C2.accent : C2.line;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        const tw = text2(ctx, floor.name, x2 + 11, box.y + 28.5, { size: 12, weight: 700, color: floor.current ? "#fff" : C2.muted });
-        if (others) text2(ctx, others, x2 + 19 + tw, box.y + 28.5, { size: 12, weight: 900, color: C2.gold });
-        x2 -= 6;
-      }
-    }
-    if (model.stale) text2(ctx, M.stale, box.x + box.w / 2, box.y + HEAD + 4, { size: 12, color: C2.gold, align: "center" });
-    const area = { x: box.x + PAD, y: box.y + HEAD + (model.stale ? 14 : 0), w: box.w - 2 * PAD, h: box.h - HEAD - FOOT - (model.stale ? 14 : 0) };
-    const view2 = fitView(plan, model.floor, area.w, area.h, 12);
-    const dpr = globalThis.devicePixelRatio || 1;
-    const key = JSON.stringify([plan.slug, model.floor, area.w, area.h, dpr, model.rooms.map((r) => [r.open, r.current])]);
-    if (cache.key !== key) {
-      cache.key = key;
-      cache.rooms = drawRooms(plan, model, view2, area.w, area.h, dpr);
-    }
-    ctx.drawImage(cache.rooms, area.x, area.y, area.w, area.h);
-    ctx.save();
-    ctx.translate(area.x, area.y);
-    ctx.beginPath();
-    ctx.rect(0, 0, area.w, area.h);
-    ctx.clip();
-    const placed = [];
-    const free = (x2, y, half) => !placed.some(([px, py, ph]) => Math.abs(px - x2) < ph + half && Math.abs(py - y) < 21);
-    for (const poi of model.pois) {
-      if (poi.at[0] !== model.floor) continue;
-      let [x2, y] = toScreen(view2, poi.at[1], poi.at[2]);
-      while (!free(x2, y, 14)) x2 += 30;
-      placed.push([x2, y, 14]);
-      drawPoi(ctx, x2, y, poi);
-    }
-    for (const door of model.doors) {
-      if (door.at[0] !== model.floor) continue;
-      let [x2, y] = toScreen(view2, door.at[1], door.at[2]);
-      for (let tries = 0; tries < 6 && !free(x2, y, 28); tries += 1) y += 22;
-      placed.push([x2, y, 28]);
-      drawLock(ctx, x2, y, door);
-    }
-    const here = model.players.filter((p) => p.floor === model.floor);
-    for (const p of [...here.filter((q) => !q.me), ...here.filter((q) => q.me)]) drawPlayer(ctx, view2, p);
-    ctx.restore();
-    let x = left;
-    for (const entry of model.legend) {
-      x += text2(ctx, entry.letter, x, box.y + box.h - FOOT / 2, { size: 12, weight: 900, color: entry.color }) + 5;
-      x += text2(ctx, entry.name, x, box.y + box.h - FOOT / 2, { size: 12, color: C2.muted }) + 16;
-    }
-    text2(ctx, M.close, right, box.y + box.h - FOOT / 2, { size: 12, color: C2.dim, align: "right" });
-  }
-  var MapOverlay = class {
-    constructor() {
-      this.host = document.createElement("bo1-coop-map");
-      const root = this.host.attachShadow({ mode: "closed" });
-      root.innerHTML = `<style>:host { all: initial; position: fixed; left: 0; top: 0; z-index: 2147483646; pointer-events: none; display: none; } canvas { width: 100%; height: 100%; display: block; }</style><canvas></canvas>`;
-      this.canvas = root.querySelector("canvas");
-      this.cache = {};
-      this.running = false;
-    }
-    mount() {
-      const attach = () => {
-        if (!this.host.isConnected) document.documentElement.append(this.host);
-      };
-      if (document.documentElement) attach();
-      else document.addEventListener("DOMContentLoaded", attach, { once: true });
-    }
-    show(session) {
-      if (this.running) return;
-      this.running = true;
-      this.host.style.display = "block";
-      const frame = () => {
-        if (!session.map.open || screen() !== "playing") {
-          session.map.open = false;
-          this.running = false;
-          this.host.style.display = "none";
-          return;
-        }
-        try {
-          this.draw(session);
-        } catch (error) {
-          session.note?.(`map drawing failed: ${error?.stack ?? error}`);
-          session.map.open = false;
-        }
-        requestAnimationFrame(frame);
-      };
-      requestAnimationFrame(frame);
-    }
-    draw(session) {
-      const dpr = window.devicePixelRatio || 1;
-      const width = window.innerWidth;
-      const height = window.innerHeight;
-      const box = panelBox(width, height);
-      const style = this.host.style;
-      if (style.left !== `${box.x}px` || style.width !== `${box.w}px` || style.top !== `${box.y}px` || style.height !== `${box.h}px`) {
-        Object.assign(style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px` });
-      }
-      if (this.canvas.width !== Math.round(box.w * dpr) || this.canvas.height !== Math.round(box.h * dpr)) {
-        this.canvas.width = Math.round(box.w * dpr);
-        this.canvas.height = Math.round(box.h * dpr);
-      }
-      const ctx = this.canvas.getContext("2d");
-      ctx.setTransform(dpr, 0, 0, dpr, -box.x * dpr, -box.y * dpr);
-      this.model = mapModel(session, Date.now());
-      drawMap(ctx, width, height, this.model, session.map.plan, this.cache);
-    }
-  };
-
   // src/cheats/version.js
   var FORK_VERSION = "2.2.2.3";
 
@@ -5991,10 +6428,14 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     session.fun = createFun();
     session.cheats = createCheats();
     session.map = createMap();
+    session.map.minimap = minimapEnabled();
     installCheatsKey(session);
     session.mapOverlay = new MapOverlay();
     session.mapOverlay.mount();
     installMapKey(session, session.mapOverlay);
+    session.minimap = new Minimap();
+    session.minimap.mount();
+    session.minimap.start(session);
     watchConsole(session);
     if (session.mode) keepSinglePlayer(session.room);
     hookWasm(session);

@@ -367,6 +367,13 @@ if (allIn) {
       await host.page.keyboard.up("w");
       log(`map on ${g.name}: fed ${fed}, shown ${shown}, host dot at ${glide} different places in 2 s`);
       if (!fed || !shown || glide < 20) ok = false;
+      // with the big map closed, the guest's corner minimap shows its room
+      await g.page.keyboard.press("n");
+      const mini = await g.page
+        .waitForFunction(() => window.__bo1Coop.minimap?.shown && window.__bo1Coop.minimap.model?.room, null, { timeout: 5000 })
+        .then((h) => h.jsonValue(), () => null);
+      log(`minimap on ${g.name}: ${mini ?? "FAILED"}`);
+      if (!mini) ok = false;
     }
   }
   for (const p of players) await p.page.screenshot({ path: `${OUT}/${p.name}.png` }).catch(() => {});

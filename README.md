@@ -81,13 +81,24 @@ paused, and you keep walking, aiming and shooting while it's open. Press **N** a
 | 🟠 **You and friends** | A dot in each player's co-op colour with the first letter of their name, a line for where they look. Dots glide smoothly; a downed friend gets a red ring. |
 | 📍 **Your room**       | Outlined in orange, with its name at the top ("Lobby", "Theater"…).                                  |
 | 🔒 **Closed doors**    | A lock with the price at every door and debris pile still closed; a lightning bolt for doors the power opens. Bought doors disappear. |
-| 🥤 **Perks**           | Every perk machine, labelled (Jug, Spd, DT, QR…).                                                    |
-| ❓ **Mystery Box**     | Every spot the box can be, with the one it's in now lit up.                                           |
+| 🥤 **Perks**           | Every perk machine, with the game's own perk icon.                                                   |
+| 📦 **Mystery Box**     | Every spot the box can be, with the one it's in now ringed in gold.                                   |
 | 🟣 **Pack-a-Punch**    | Where it is.                                                                                          |
 | ⚡ **Power switch**    | Lit up once the power is on.                                                                          |
 | 🏢 **Floors**          | On maps with several floors, the floor you're on, with buttons that show which friends are on another. |
 
-Everyone running this version sees the map, whoever hosts. The floor plans are made from each map's own data, so no
+### The minimap
+
+A small map sits in the top left corner during every game. You stay in the middle, and it scrolls under you as you run,
+with the room you're in written along the top. It shows the same rooms, doors, icons and friends as the big map, and it
+hides while the big map is open. Turn it off under **Settings → Minimap** on the Co-op card.
+
+<p align="center">
+  <img src="docs/images/minimap.png" alt="The minimap in the top left corner: the room name on top, the player in the middle" width="240">
+</p>
+
+Everyone running this version sees the maps, whoever hosts. The perk and box icons are read from the game's own files
+in your browser while you play. The floor plans are made from each map's own data, so no
 picture of the level is needed.
 
 ---
@@ -155,14 +166,16 @@ in `chrome://extensions`. The Co-op card tells you when a new version is out.
 | Key           | In a game                                                                                       |
 | :------------ | :---------------------------------------------------------------------------------------------- |
 | **M**         | Opens the Co-op card at Fun mode and the cheat menu. Click the game (or press M again) to go back. |
-| **N**         | Opens and closes the map.                                                                       |
+| **N**         | Opens and closes the big map.                                                                   |
 | **Esc**       | The game's own menu. It pauses the game for everyone.                                           |
 
 **Using the cheat menu:** pick who gets it under **Give to**, then click a weapon, perk or power-up. A message under
 the button tells you whether it worked.
 
-<img src="docs/images/fork-cheats.png" alt="The cheat menu: give to Lucas, Jonas, Mads or everyone; the map's weapons; free perks; power-ups; rounds" width="328"> **Settings → Cheat menu → Turn off** brings back the original Fun mode and turns
-off the map (reload the page afterwards).
+<img src="docs/images/fork-cheats.png" alt="The cheat menu: give to Lucas, Jonas, Mads or everyone; the map's weapons; free perks; power-ups; rounds" width="328">
+
+**Settings → Minimap → Turn off** hides the corner minimap. **Settings → Cheat menu → Turn off** brings back the
+original Fun mode and turns off both maps (reload the page afterwards).
 
 **Playing with friends often?** Make your own relay (free, 5 minutes). It's only used to introduce players and as a
 fallback, but your own is only for your group. The Co-op card has a **Create my relay** button with the guide.

@@ -8,11 +8,13 @@ import { createBridge, onCheatsLine } from "../src/cheats/bridge.js";
 import { SLOT } from "../src/engine/builds.js";
 import { pushSample, sampleTrack } from "../src/map/track.js";
 import { mapModel } from "../src/map/model.js";
-import { roomName } from "../src/map/names.js";
+import { ROOMS, roomName } from "../src/map/names.js";
 import { PLAYER_COLORS } from "../src/ui/card.js";
 import { onMapMessage } from "../src/map/net.js";
 import { onMapKey } from "../src/map/hotkey.js";
 import { buildPlan } from "../scripts/plan-build.mjs";
+import { decodeDxt, ICON_FILES, parseIwi, zipEntries } from "../src/map/icons.js";
+import { minimapActions, minimapSettingBlocks, minimapVisible, minimapWindow } from "../src/map/minimap.js";
 import { planFor } from "../src/map/plans/index.js";
 import { FLOORS as FLOOR_TABLE } from "../src/map/names.js";
 import { MAP_SLUGS } from "../src/game/page.js";
@@ -477,6 +479,13 @@ test("a guest sees itself as me, with names from the host's lobby", () => {
   );
 });
 
+test("every room on every map has a name in the table", () => {
+  for (const slug of Object.values(MAP_SLUGS)) {
+    const unnamed = planFor(slug).rooms.filter((r) => !ROOMS[slug]?.[r.id]).map((r) => r.id);
+    assert.deepEqual(unnamed, [], slug);
+  }
+});
+
 test("roomName reads a technical name when the table has none", () => {
   assert.equal(roomName("nacht", "foyer_zone"), "Foyer");
   assert.equal(roomName("nacht", "west_balcony_zone"), "West balcony");
@@ -654,6 +663,131 @@ test("the floors of a plan match the floor table", () => {
   assert.equal(planFor("riese").floors.length, 1);
   // Moon's No Man's Land, where the game starts, is its own floor
   assert.equal(floorOf(planFor("moon"), -679, 13929, -14020), 0);
+});
+
+// ---- the game's own icons (src/map/icons.js) ----
+
+/** A zip central directory with stored entries: [[name, size, localHeaderOffset], ...]. */
+function centralDirectory(entries) {
+  const parts = entries.map(([name, size, offset]) => {
+    const n = Buffer.from(name);
+    const b = Buffer.alloc(46 + n.length);
+    b.writeUInt32LE(0x02014b50, 0);
+    b.writeUInt16LE(0, 10); // stored
+    b.writeUInt32LE(size, 20);
+    b.writeUInt32LE(size, 24);
+    b.writeUInt16LE(n.length, 28);
+    b.writeUInt32LE(offset, 42);
+    n.copy(b, 46);
+    return b;
+  });
+  return new Uint8Array(Buffer.concat(parts));
+}
+
+/** An .iwi as the game stores it: 48-byte header, the mips smallest first, the full size last. */
+function iwi(format, width, height, mip0) {
+  const head = Buffer.alloc(48);
+  head.write("IWi", 0, "latin1");
+  head[3] = 13;
+  head[4] = format;
+  head.writeUInt16LE(width, 6);
+  head.writeUInt16LE(height, 8);
+  head.writeUInt16LE(1, 10);
+  const small = Buffer.alloc(16); // a stand-in for the smaller mips
+  head.writeUInt32LE(48 + small.length + mip0.length, 16);
+  head.writeUInt32LE(48 + small.length, 20);
+  return new Uint8Array(Buffer.concat([head, small, Buffer.from(mip0)]));
+}
+
+test("zipEntries lists the files of an archive's central directory", () => {
+  const cd = centralDirectory([
+    ["images/specialty_juggernaut_zombies.iwi", 1440, 100],
+    ["sound/x.wav", 5, 2000],
+  ]);
+  assert.deepEqual(zipEntries(cd), [
+    { name: "images/specialty_juggernaut_zombies.iwi", method: 0, size: 1440, offset: 100 },
+    { name: "sound/x.wav", method: 0, size: 5, offset: 2000 },
+  ]);
+});
+
+test("parseIwi finds the full-size image at the end of the file", () => {
+  const mip0 = new Uint8Array(8).fill(7);
+  const image = parseIwi(iwi(0x0b, 4, 4, mip0));
+  assert.deepEqual([image.width, image.height, image.format], [4, 4, "dxt1"]);
+  assert.deepEqual([...image.data], [...mip0]);
+  assert.equal(parseIwi(new Uint8Array([1, 2, 3])), null);
+  assert.equal(parseIwi(iwi(0x07, 4, 4, mip0)), null, "a format the map can't decode");
+});
+
+test("decodeDxt turns a DXT1 block into pixels", () => {
+  // color0 red (0xF800), color1 blue (0x001F); first row index 0 (red), second row index 1 (blue)
+  const block = [0x00, 0xf8, 0x1f, 0x00, 0b00000000, 0b01010101, 0, 0];
+  const rgba = decodeDxt(new Uint8Array(block), 4, 4, "dxt1");
+  assert.deepEqual([...rgba.slice(0, 4)], [255, 0, 0, 255]);
+  assert.deepEqual([...rgba.slice(16, 20)], [0, 0, 255, 255]);
+});
+
+test("decodeDxt reads DXT5 alpha and DXT3 alpha", () => {
+  const color = [0x00, 0xf8, 0x1f, 0x00, 0, 0, 0, 0]; // all red
+  // DXT5: alpha0 255, alpha1 0; the first pixel takes alpha0 (255), the second alpha1 (0)
+  const dxt5 = [255, 0, 0b00001000, 0, 0, 0, 0, 0, ...color]; // pixel 0 index 0, pixel 1 index 1
+  const a5 = decodeDxt(new Uint8Array(dxt5), 4, 4, "dxt5");
+  assert.equal(a5[3], 255);
+  assert.equal(a5[7], 0);
+  // DXT3: 4 bits per pixel; the first pixel 0xF (255), the second 0x0
+  const dxt3 = [0x0f, 0, 0, 0, 0, 0, 0, 0, ...color];
+  const a3 = decodeDxt(new Uint8Array(dxt3), 4, 4, "dxt3");
+  assert.deepEqual([a3[3], a3[7]], [255, 0]);
+});
+
+test("each perk has its game icon file, the box too", () => {
+  assert.equal(ICON_FILES.specialty_armorvest, "images/specialty_juggernaut_zombies.iwi");
+  assert.equal(ICON_FILES.specialty_additionalprimaryweapon, "images/specialty_three_guns_zombies.iwi");
+  assert.equal(ICON_FILES.box, "images/minimap_icon_mystery_box.iwi");
+  assert.equal(Object.keys(ICON_FILES).length, 9);
+});
+
+// ---- the corner minimap (src/map/minimap.js) ----
+
+test("the minimap shows in a game with map data, and hides for the big map, the setting, or no data", () => {
+  const now = 100000;
+  const session = modelSession(now);
+  session.map.minimap = true;
+  assert.equal(minimapVisible(session, now, { playing: true }), true);
+  assert.equal(minimapVisible(session, now, { playing: false }), false, "not in a game");
+  session.map.open = true;
+  assert.equal(minimapVisible(session, now, { playing: true }), false, "the big map is open");
+  session.map.open = false;
+  session.map.minimap = false;
+  assert.equal(minimapVisible(session, now, { playing: true }), false, "turned off in settings");
+  const empty = hostSession();
+  empty.map.minimap = true;
+  assert.equal(minimapVisible(empty, now, { playing: true }), false, "no data yet");
+  const noPlan = modelSession(now);
+  noPlan.map.minimap = true;
+  noPlan.map.plan = null;
+  assert.equal(minimapVisible(noPlan, now, { playing: true }), false, "no plan for this level");
+});
+
+test("the minimap setting turns it off and on, and is saved", () => {
+  const saved = {};
+  const session = hostSession();
+  session.map.minimap = true;
+  const actions = minimapActions(session, (key, value) => (saved[key] = value));
+  actions.minimapSetting();
+  assert.equal(session.map.minimap, false);
+  assert.equal(saved.minimap, "0");
+  actions.minimapSetting();
+  assert.equal(session.map.minimap, true);
+  assert.equal(saved.minimap, "1");
+  const blocks = minimapSettingBlocks(session);
+  assert.ok(blocks.some((b) => b.kind === "buttons" && b.buttons[0].act === "minimapSetting"));
+});
+
+test("the minimap cuts a square around the player out of the floor drawing", () => {
+  // a floor layer drawn with the origin at (500, 400) px and 0.1 px per unit; the player at world (1000, 2000)
+  const layer = { scale: 0.1, rotate: 0, tx: 500, ty: 400 };
+  assert.deepEqual(minimapWindow(layer, 1000, 2000, 200), { sx: 500, sy: 100, size: 200 });
 });
 
 // ---- the N key (src/map/hotkey.js) ----
