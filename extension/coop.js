@@ -1,4 +1,4 @@
-// BO1 Zombies Co-op 2.2.2.2 for vel.gg. Built from src/ with scripts/build.mjs; edit the sources, not this file.
+// BO1 Zombies Co-op 2.2.2.3 for vel.gg. Built from src/ with scripts/build.mjs; edit the sources, not this file.
 (() => {
   // relay/src/protocol.js
   var ROLES = Object.freeze(["host", "guest"]);
@@ -5943,7 +5943,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
   };
 
   // src/cheats/version.js
-  var FORK_VERSION = "2.2.2.2";
+  var FORK_VERSION = "2.2.2.3";
 
   // src/util/updates.js
   var LATEST = "https://api.github.com/repos/lucas-gundehug/bo1-zombies-coop/releases/latest";

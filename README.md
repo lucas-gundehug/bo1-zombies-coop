@@ -18,7 +18,15 @@
 It adds a cheat menu that knows what each map has, an in-game map that shows where your friends are, and direct
 connections between players for smoother co-op.
 
-### [⬇ Download the latest version](https://github.com/lucas-gundehug/bo1-zombies-coop/releases/latest/download/bo1-zombies-coop.zip)
+### [⬇ Download the latest version](https://github.com/lucas-gundehug/bo1-zombies-coop/releases/latest/download/bo1-zombies-coop.zip) · [Setup guide](#-setup-guide)
+
+<table>
+  <tr>
+    <td align="center" width="50%"><img src="docs/images/map-kino.png" alt="The in-game map on Kino der Toten" width="100%"><br><b>🗺️ The map (N)</b></td>
+    <td align="center" width="25%"><img src="docs/images/fork-cheats.png" alt="The cheat menu: give to, weapons on this map, perks, power-ups and rounds" width="100%"><br><b>🔫 The cheat menu (M)</b></td>
+    <td align="center" width="25%"><img src="docs/images/fork-lobby.png" alt="The lobby: four players, two on a direct link and one on the relay" width="100%"><br><b>🔗 Direct connections</b></td>
+  </tr>
+</table>
 
 ### From BO1 Zombies Co-op to this fork
 
@@ -84,15 +92,61 @@ picture of the level is needed.
 
 ---
 
-## 📦 Install
+## 📦 Setup Guide
 
-1. Download [bo1-zombies-coop.zip](https://github.com/lucas-gundehug/bo1-zombies-coop/releases/latest/download/bo1-zombies-coop.zip) and unzip it.
-2. In Chrome, open `chrome://extensions`. If the original BO1 Zombies Co-op is installed, click **Remove** on it.
-3. Turn on **Developer mode** (top right), click **Load unpacked**, and pick the unzipped folder.
-4. Open [vel.gg/bsz](https://vel.gg/bsz). The Co-op card shows up in the top right corner.
+Everyone who plays installs the extension once: you and each friend. It takes about two minutes.
 
-**To update:** download the new zip, unzip it over the old folder, and click the reload arrow on the extension in
-`chrome://extensions`. The Co-op card tells you when a new version is out.
+### 1. Download and unzip
+
+Download [bo1-zombies-coop.zip](https://github.com/lucas-gundehug/bo1-zombies-coop/releases/latest/download/bo1-zombies-coop.zip)
+and unzip it somewhere you'll keep it, for example `Documents\bo1-zombies-coop`. Chrome loads the extension from that
+folder, so don't delete it afterwards.
+
+### 2. Turn on Developer mode
+
+In Chrome, open `chrome://extensions` (paste it in the address bar). If the original BO1 Zombies Co-op is installed,
+click **Remove** on it first. Then turn on **Developer mode** in the top right corner.
+
+<img src="docs/images/setup/1-developer-mode.png" alt="chrome://extensions with the Developer mode switch circled in the top right" width="860">
+
+### 3. Load the folder
+
+Click **Load unpacked** and pick the folder you unzipped (the one with `manifest.json` in it).
+
+<img src="docs/images/setup/2-load-unpacked.png" alt="The Load unpacked button circled on chrome://extensions" width="860">
+
+The extension now shows up in the list. Keep its switch on.
+
+<img src="docs/images/setup/3-installed.png" alt="BO1 Zombies Co-op + Cheats for vel.gg in the extension list, switched on" width="860">
+
+### 4. Open the game
+
+Go to [vel.gg/bsz](https://vel.gg/bsz). The **Co-op** card shows up in the top right corner. To play alone, just start
+a map; the cheat menu and the map work solo too.
+
+<img src="docs/images/fork-start.png" alt="The Co-op card: Host a game, and a field to join a friend" width="328">
+
+### 5. Host a game and invite your friends
+
+Click **Host a game**, then **Copy link** and send the link to your friends. Pick a map in the game menu: everyone
+follows you to it.
+
+<img src="docs/images/fork-host.png" alt="The Co-op card while hosting: the room code, Copy link, and three free seats" width="328">
+
+### 6. Your friends join
+
+Each friend opens your link (or pastes it under **Join a friend**). They show up in the lobby with their ping and their
+connection: **Direct** when they're connected straight to you, **Relay** when the relay carries their game. When
+everyone is in, click the game to start.
+
+<img src="docs/images/fork-lobby.png" alt="The lobby with four players: Jonas and Mads on Direct, Emil on Relay" width="328">
+
+### 7. Play
+
+In the game, press **M** for the cheat menu and **N** for the map (see Controls below).
+
+**To update later:** download the new zip, unzip it over the old folder, and click the reload arrow on the extension
+in `chrome://extensions`. The Co-op card tells you when a new version is out.
 
 ---
 
@@ -105,7 +159,9 @@ picture of the level is needed.
 | **Esc**       | The game's own menu. It pauses the game for everyone.                                           |
 
 **Using the cheat menu:** pick who gets it under **Give to**, then click a weapon, perk or power-up. A message under
-the button tells you whether it worked. **Settings → Cheat menu → Turn off** brings back the original Fun mode and turns
+the button tells you whether it worked.
+
+<img src="docs/images/fork-cheats.png" alt="The cheat menu: give to Lucas, Jonas, Mads or everyone; the map's weapons; free perks; power-ups; rounds" width="328"> **Settings → Cheat menu → Turn off** brings back the original Fun mode and turns
 off the map (reload the page afterwards).
 
 **Playing with friends often?** Make your own relay (free, 5 minutes). It's only used to introduce players and as a

@@ -126,6 +126,53 @@ for (const scene of mapScenes.filter((s) => (!process.env.ONLY || s.name.include
   await page.close();
 }
 
+// Fork: the README's pictures of the card (docs/images/fork-*.png): the lobby with direct and relay links, and the cheat
+// menu, from "Give to" down. ONLY=readme shoots just these.
+const cheatLists = {
+  weapons: ["knife_ballistic_bowie_zm", "crossbow_explosive_zm", "thundergun_zm", "ray_gun_zm", "zombie_cymbal_monkey", "china_lake_zm", "m72_law_zm", "claymore_zm", "hk21_zm", "rpk_zm", "l96a1_zm", "galil_zm", "famas_zm", "spas_zm", "cz75dw_zm", "python_zm", "m1911_zm"],
+  perks: ["specialty_quickrevive", "specialty_fastreload", "specialty_rof", "specialty_armorvest", "specialty_additionalprimaryweapon"],
+  powerups: ["fire_sale", "carpenter", "full_ammo", "double_points", "insta_kill", "nuke"],
+};
+const friends = [
+  { seat: 1, state: { phase: "connected", name: "Jonas" }, slot: { slot: 1, state: 5 } },
+  { seat: 2, state: { phase: "connected", name: "Mads" }, slot: { slot: 2, state: 5 } },
+  { seat: 3, state: { phase: "connected", name: "Emil" }, slot: { slot: 3, state: 5 } },
+];
+const readmeScenes = [
+  { name: "readme-host", run: { screen: "landing", mem: false, coop: { set: { name: "Lucas" }, stats: { rtt: null, rtts: {} } } } },
+  { name: "readme-lobby", links: [[1, "direct"], [2, "direct"], [3, "relay"]], run: { screen: "ready", coop: {
+    set: { zone: "zombie_theater", name: "Lucas", peer: true, gate: false },
+    clients: [1, 2, 3].map((slot) => ({ slot, state: 5, loopback: true, port: 2405 + slot })), guests: friends,
+    stats: { rtt: 12, rtts: { 1: 12, 2: 18, 3: 64 }, lost: 0 } } } },
+  { name: "readme-cheats", from: "Give to", run: { screen: "ready", coop: {
+    set: { zone: "zombie_theater", name: "Lucas", peer: true, cheats: { enabled: true, ok: true, ready: true, round: 12, frozen: false, power: true, horde: false, target: 1, noticeArea: "perks", ...cheatLists } },
+    clients: [1, 2].map((slot) => ({ slot, state: 5, loopback: true, port: 2405 + slot })), guests: friends.slice(0, 2),
+    fun: { open: true, notice: "Juggernog given to Jonas.", noticeAt: Date.now() + 3600e3, timescale: 1, jump: 39, gravity: 800, players: {} },
+    stats: { rtt: 12, rtts: { 1: 12, 2: 18 } } } } },
+];
+for (const scene of readmeScenes.filter((s) => !process.env.ONLY || s.name.includes(process.env.ONLY))) {
+  const page = await ctx.newPage();
+  await page.setViewportSize({ width: 1100, height: 3400 });
+  await page.goto(`https://vel.gg/bsz/#coop=host&coopRoom=${ROOM}&coopRelay=http%3A%2F%2F127.0.0.1%3A9`);
+  await page.waitForFunction(() => window.__bo1Coop?.card);
+  await page.evaluate(fake, scene.run);
+  if (scene.links) await page.evaluate((links) => links.forEach(([seat, path]) => window.__bo1Coop.links.set(seat, path)), scene.links);
+  await page.waitForTimeout(800);
+  const box = await page.locator("bo1-coop-card").boundingBox();
+  const top = scene.from
+    ? await page.evaluate((label) => {
+        const root = window.__bo1Coop.card.root;
+        const el = [...root.querySelectorAll("*")].find((e) => e.children.length === 0 && e.textContent.trim().toLowerCase() === label.toLowerCase());
+        return el ? el.getBoundingClientRect().top - 10 : null;
+      }, scene.from)
+    : null;
+  const y = top ?? box.y - 8;
+  const height = Math.min(box.y + box.height + 8, 3390) - y;
+  await page.screenshot({ path: `${OUT}/${scene.name}.png`, clip: { x: Math.max(0, box.x - 8), y, width: box.width + 16, height } });
+  console.log("shot", scene.name);
+  await page.close();
+}
+
 for (const scene of scenes.filter((s) => !process.env.ONLY || s.name.includes(process.env.ONLY))) {
   const page = await ctx.newPage();
   if (scene.tall) await page.setViewportSize({ width: 1100, height: 2600 });
