@@ -8,9 +8,10 @@ code; the agent writes, tests and maintains everything. Talk to him in plain Eng
 vel.gg changes its engine often and upstream follows within a day or so. When the card says "vel.gg updated its game
 engine" or upstream has a new release: `git fetch upstream && git merge upstream/main`, rebuild, run the checks below,
 then publish a fork release (see Release). `README.md` is the fork's own: on a merge conflict there keep ours and
-carry over only what changed for users (install steps, new features). Keep fork changes small and inside `src/cheats/`, so merges stay easy. The
-upstream files the fork touches: `src/main.js`, `src/session/hooks.js`, `src/fun/fun.js`, `src/ui/view.js`,
-`scripts/build.mjs`, `src/util/updates.js`, `extension/manifest.json`, `package.json`, `test/ui-preview.mjs`, `README.md`.
+carry over only what changed for users (install steps, new features). Keep fork changes small and inside `src/cheats/`
+and `src/map/`, so merges stay easy. The upstream files the fork touches: `src/main.js`, `src/session/hooks.js`,
+`src/session/messages.js`, `src/fun/fun.js`, `src/ui/view.js`, `scripts/build.mjs`, `src/util/updates.js`,
+`extension/manifest.json`, `package.json`, `test/ui-preview.mjs`, `test/e2e.mjs`, `README.md`.
 
 ## The cheat menu in one paragraph
 
@@ -23,14 +24,33 @@ and catching the engine's `"name" is: "value^7"` print in `console.log`. M opens
 (`src/cheats/hotkey.js`): vel.gg presses Escape for the game whenever it sees the pointer lock lost, so the one unlock M
 causes is hidden from it.
 
+## The map in one paragraph
+
+N in a game opens the map panel (`src/map/`) without pausing and without taking the mouse (`src/map/hotkey.js`; a canvas
+in its own shadow root, `src/map/overlay.js`). The same mod's `src/cheats/gsc/_map.gsc` captures the rooms
+(`level.zones`), the door and debris triggers and the box spots once, in one order, when the lists are published, and
+publishes `cheats_map_live` (every player, every 0.25 s) and `cheats_map_state` (doors, rooms, box, power; its counter
+goes up on a change). The bridge hands `cheats_map_*` prints to `src/map/live.js`; the host forwards them to guests as
+`mapp` / `maps` control messages (`src/map/net.js`), so every player running the fork sees the map. Floor plans are
+bundled per map (`src/map/plans/<slug>.json`): `node scripts/map-plan.mjs <slug|all>` loads the map, asks the script
+for a one-off dump (each room's path nodes) and builds the plan; the raw dumps stay in `scripts/map-dumps/`, and
+`node scripts/map-plan.mjs rebuild` remakes the plans from them (after changing the floors or names in
+`src/map/names.js`). A plan whose `sig` doesn't match the game hides the doors, so regenerate the plans when vel.gg
+changes a map. Findings behind it: `docs/superpowers/specs/2026-10-20-in-game-map-spike.md`.
+
 ## Checks
 
-- `npm run check`: lint, build, `test/cheats.test.mjs` (unit), `test/patch.test.mjs` (engine patches).
+- `npm run check`: lint, build, `test/cheats.test.mjs` and `test/map.test.mjs` (unit), `test/patch.test.mjs` (engine
+  patches).
 - In the real game (Playwright, downloads the map once per profile): `node test/cheats-e2e.mjs kino actions` (every
   command), `kino ui` (M and the card's buttons), `kino load` / `kino off`, `<map> sweep` (everything once on a map),
-  `HORDE=1` for Hell mode. `PROFILE=<dir>` reuses a browser profile with the packs already downloaded.
+  `HORDE=1` for Hell mode. `PROFILE=<dir>` reuses a browser profile with the packs already downloaded. The map:
+  `<map> map-script` (the script's data; `MAPDOOR=8` on Five opens a debris pile), `<map> map` (N, a door opening,
+  smoothness), and in co-op `MAP=1 node test/e2e.mjs 2 kino` (the guest's map, the host's dot gliding).
 - Things learned in game: the script's lists are published 2 s after everyone spawned (wait for `lists>=1`); unfreezing
-  keeps zombie spawning paused until the round ends, or one extra zombie spawns.
+  keeps zombie spawning paused until the round ends, or one extra zombie spawns. A bought door keeps its trigger with
+  `_door_open` set (debris may delete it); hidden box spots and Moon's Juggernog and Speed Cola triggers sit 10,000
+  units down (`chest.orig_origin` is a box's real place).
 
 ## Release
 

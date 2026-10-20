@@ -381,6 +381,61 @@ const scenarios = {
     }
     log("dump chunks:", count);
   },
+  // The whole map in one browser: N opens it without pausing or taking the mouse, a bought door disappears from it, N
+  // closes it, and the game runs as smoothly with it open.
+  async map() {
+    await setCheats(true);
+    await startMap();
+    assert.ok(await waitReady(), "ready");
+    await until((s) => s.lists >= 1, 30000, "lists published");
+    await page.waitForFunction(() => window.__bo1Coop.map.planOk === true, null, { timeout: 20000 });
+    const frames = (ms) =>
+      page.evaluate(
+        (duration) =>
+          new Promise((resolve) => {
+            const gaps = [];
+            let last = performance.now();
+            const end = last + duration;
+            const step = (t) => {
+              gaps.push(t - last);
+              last = t;
+              if (t < end) requestAnimationFrame(step);
+              else {
+                gaps.sort((a, b) => a - b);
+                resolve({ median: gaps[Math.floor(gaps.length / 2)], p95: gaps[Math.floor(gaps.length * 0.95)], frames: gaps.length });
+              }
+            };
+            requestAnimationFrame(step);
+          }),
+        ms,
+      );
+    const closed = await frames(10000);
+    await page.keyboard.press("n");
+    const opened = await page.evaluate(() => {
+      const c = window.__bo1Coop;
+      return { open: c.map.open, screen: window.five?.screen, menuOpen: c.engine.menuOpen(), locked: Boolean(document.pointerLockElement) };
+    });
+    log("after N:", JSON.stringify(opened));
+    assert.deepEqual(opened, { open: true, screen: "playing", menuOpen: false, locked: true });
+    await page.waitForFunction(() => window.__bo1Coop.mapOverlay.model?.status === "ok" && window.__bo1Coop.mapOverlay.model.room, null, { timeout: 5000 });
+    const model = await page.evaluate(() => {
+      const m = window.__bo1Coop.mapOverlay.model;
+      return { room: m.room, floor: m.floor, doors: m.doors.map((d) => d.index), players: m.players.length, stale: m.stale };
+    });
+    log("model:", JSON.stringify(model));
+    assert.equal(model.stale, false);
+    assert.ok(model.doors.includes(0), "door 0 shown closed");
+    await snap("map-open");
+    const open = await frames(10000);
+    log("frames closed:", JSON.stringify(closed), "open:", JSON.stringify(open));
+    assert.ok(open.p95 <= closed.p95 * 1.2 + 2, `frame time with the map open: p95 ${open.p95.toFixed(1)} ms vs ${closed.p95.toFixed(1)} ms closed`);
+    assert.equal((await run("mapdoor 0")).ok, true, "mapdoor 0");
+    await page.waitForFunction(() => !window.__bo1Coop.mapOverlay.model.doors.some((d) => d.index === 0), null, { timeout: 2000 });
+    await snap("map-door-open");
+    await page.keyboard.press("n");
+    await page.waitForFunction(() => window.__bo1Coop.mapOverlay.host.style.display === "none", null, { timeout: 2000 });
+    assert.equal(await page.evaluate(() => window.five?.screen), "playing");
+  },
   async load() {
     await setCheats(true);
     await startMap();

@@ -7,7 +7,7 @@ export const C = {
   turnOn: "Turn on",
   turnOff: "Turn off",
   reload: "Reload the page to apply.",
-  note: "Weapons, perks, power-ups and rounds in Fun mode. Only the host needs it. In a game, press M to open it without pausing; click the game to go back.",
+  note: "Weapons, perks, power-ups and rounds in Fun mode, and the map (press N in a game). The cheat menu needs only the host; to see the map, friends need this version too. Turning it off also turns off the map. In a game, press M to open the cheat menu without pausing; click the game to go back.",
   keyTip: "Tip: press M in game to open this card without pausing; click the game to go back.",
   failed: "The cheat menu could not load in this game, so Fun mode works as before. Reload the page to try again.",
   everyone: "Everyone",

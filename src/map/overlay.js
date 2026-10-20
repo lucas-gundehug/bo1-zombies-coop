@@ -248,17 +248,25 @@ export function drawMap(ctx, width, height, model, plan, cache) {
   ctx.drawImage(cache.rooms, area.x, area.y, area.w, area.h);
   ctx.save();
   ctx.translate(area.x, area.y);
-  const placed = []; // icons on the same spot (Moon's Juggernog and Speed Cola) are set side by side
+  ctx.beginPath();
+  ctx.rect(0, 0, area.w, area.h); // icons and tags pushed apart never spill out of the panel
+  ctx.clip();
+  // icons and lock tags that would cover each other (Moon's Juggernog and Speed Cola on one spot, Call of the Dead's
+  // doors around the lighthouse) are moved apart: icons sideways, tags downwards
+  const placed = []; // [x, y, half width]
+  const free = (x, y, half) => !placed.some(([px, py, ph]) => Math.abs(px - x) < ph + half && Math.abs(py - y) < 21);
   for (const poi of model.pois) {
     if (poi.at[0] !== model.floor) continue;
     let [x, y] = toScreen(view, poi.at[1], poi.at[2]);
-    while (placed.some(([px, py]) => Math.abs(px - x) < 26 && Math.abs(py - y) < 20)) x += 30;
-    placed.push([x, y]);
+    while (!free(x, y, 14)) x += 30;
+    placed.push([x, y, 14]);
     drawPoi(ctx, x, y, poi);
   }
   for (const door of model.doors) {
     if (door.at[0] !== model.floor) continue;
-    const [x, y] = toScreen(view, door.at[1], door.at[2]);
+    let [x, y] = toScreen(view, door.at[1], door.at[2]);
+    for (let tries = 0; tries < 6 && !free(x, y, 28); tries += 1) y += 22;
+    placed.push([x, y, 28]);
     drawLock(ctx, x, y, door);
   }
   const here = model.players.filter((p) => p.floor === model.floor);

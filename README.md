@@ -28,6 +28,7 @@ On top of that, Fun mode gets a **cheat menu** that knows what each map has:
 | **Power-ups** | Max Ammo, Insta-Kill, Nuke, Fire Sale and the rest, dropped in front of the player. |
 | **Rounds** | Jump to any round from 1 to 255, forwards or backwards, or skip to the next one. |
 | **Freeze round** | The round does not end, even with every zombie dead, until you unfreeze it. |
+| **Map (N)** | A map of the level while you play: your friends, the room you're in, closed doors with their price, perks, the box, Pack-a-Punch and the power switch. |
 
 ## Install
 
@@ -41,13 +42,17 @@ To update: download the new zip, unzip it over the old folder, and click the rel
 
 ## Use it
 
-- **Start a map** alone, or host a game from the Co-op card and send the link. Your friends only need the
-  [original extension](https://github.com/AllanLotta/bo1-zombies-coop#readme); only the host needs this one.
+- **Start a map** alone, or host a game from the Co-op card and send the link. For the cheat menu your friends only need
+  the [original extension](https://github.com/AllanLotta/bo1-zombies-coop#readme); to see the map too, they need this one.
 - **In the game, press M** to open the card at Fun mode. The game keeps running, so nobody gets paused. Click the game
   (or press M again) to go back. Esc works too, but it pauses the game for everyone.
 - Pick who gets it under **Give to**, then click a weapon, perk or power-up. A message under the button tells you
   whether it worked.
-- **Settings → Cheat menu → Turn off** brings back the original Fun mode (reload the page afterwards).
+- **In the game, press N** for the map: where your friends are (a dot in their colour with the first letter of their
+  name), which room you're in, which doors and debris are still closed and what they cost, and the perk machines,
+  Mystery Box, Pack-a-Punch and power switch. You keep playing while it's open. Press N again to close it.
+- **Settings → Cheat menu → Turn off** brings back the original Fun mode and turns off the map (reload the page
+  afterwards).
 
 Playing with friends often? Make your own relay (free, 5 minutes); the Co-op card has a **Create my relay** button with
 the guide.

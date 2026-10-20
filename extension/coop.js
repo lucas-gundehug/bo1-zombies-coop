@@ -17,12 +17,12 @@
   }
   function normalizeRoomCode(input) {
     if (typeof input !== "string") return null;
-    let text = input.trim();
+    let text2 = input.trim();
     try {
-      text = new URL(text).searchParams.get("room") ?? "";
+      text2 = new URL(text2).searchParams.get("room") ?? "";
     } catch {
     }
-    const compact = text.toLowerCase().replace(/[^0-9a-z]/g, "");
+    const compact = text2.toLowerCase().replace(/[^0-9a-z]/g, "");
     if (compact.length !== ROOM_CODE_LENGTH || [...compact].some((c) => !CODE_ALPHABET.includes(c))) return null;
     return compact.match(/.{4}/g).join("-");
   }
@@ -632,10 +632,10 @@
       return this.int(command) === 0 && this.int(freeze) === 0 && this.int(inboundRing) === 0;
     }
     /** Hands a console command to the server thread. False while the previous command has not been picked up yet. */
-    command(text) {
+    command(text2) {
       const { command } = this.build.mailbox;
       if (this.int(command) !== 0) return false;
-      const bytes = new TextEncoder().encode(`${text}
+      const bytes = new TextEncoder().encode(`${text2}
 `);
       if (bytes.length >= 1024) throw new RangeError("command too long");
       if (!this.commandBuffer) this.commandBuffer = this.Module._malloc(1024);
@@ -739,6 +739,135 @@
       this.setInt(this.build.mailbox.inboundRing, port);
     }
   };
+
+  // src/map/plan.js
+  var DOOR_KINDS = ["door", "debris", "power"];
+  var POI_KINDS = ["perk", "pap", "power", "box"];
+  var finite = (value) => typeof value === "number" && Number.isFinite(value);
+  var numbers = (value, length) => Array.isArray(value) && value.length === length && value.every(finite);
+  var floorIndex = (value, floors) => Number.isInteger(value) && value >= 0 && value < floors;
+  var at = (value, floors) => numbers(value, 3) && floorIndex(value[0], floors);
+  function validPlan(plan) {
+    if (!plan || plan.v !== 1 || typeof plan.slug !== "string" || typeof plan.sig !== "string") return false;
+    const { floors, rooms, doors, pois } = plan;
+    if (!Array.isArray(floors) || !floors.length || !Array.isArray(rooms) || !Array.isArray(doors) || !Array.isArray(pois)) return false;
+    const n = floors.length;
+    const floorsOk = floors.every(
+      (f, i) => typeof f?.name === "string" && (f.area === void 0 || numbers(f.area, 4)) && (i === n - 1 ? f.below === null : finite(f.below) || f.below === null && f.area !== void 0)
+    );
+    const roomsOk = rooms.every(
+      (r) => typeof r?.id === "string" && at(r.label, n) && Array.isArray(r.rects) && r.rects.length > 0 && r.rects.every((rect) => numbers(rect, 5) && floorIndex(rect[0], n))
+    );
+    const doorsOk = doors.every(
+      (d) => DOOR_KINDS.includes(d?.kind) && finite(d.cost) && at(d.at, n) && Array.isArray(d.rooms) && d.rooms.length === 2 && d.rooms.every((r) => Number.isInteger(r) && r >= 0 && r < rooms.length)
+    );
+    const poisOk = pois.every((p) => POI_KINDS.includes(p?.kind) && (p.id === null || typeof p.id === "string") && at(p.at, n));
+    return floorsOk && roomsOk && doorsOk && poisOk;
+  }
+  var inside = (area, x, y) => !area || x >= area[0] && x <= area[2] && y >= area[1] && y <= area[3];
+  function floorOf(plan, z, x, y) {
+    const i = plan.floors.findIndex((f) => inside(f.area, x, y) && (f.below === null || z < f.below));
+    return i < 0 ? plan.floors.length - 1 : i;
+  }
+  function bounds(plan, floor) {
+    const b = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const room of plan.rooms) {
+      for (const [f, x0, y0, x1, y1] of room.rects) {
+        if (f !== floor) continue;
+        b[0] = Math.min(b[0], x0, x1);
+        b[1] = Math.min(b[1], y0, y1);
+        b[2] = Math.max(b[2], x0, x1);
+        b[3] = Math.max(b[3], y0, y1);
+      }
+    }
+    return Number.isFinite(b[0]) ? b : [0, 0, 1, 1];
+  }
+  function fitView(plan, floor, width, height, margin) {
+    const [x0, y0, x1, y1] = bounds(plan, floor);
+    const w = Math.max(x1 - x0, 1);
+    const h = Math.max(y1 - y0, 1);
+    const boxW = Math.max(width - 2 * margin, 1);
+    const boxH = Math.max(height - 2 * margin, 1);
+    const flat = Math.min(boxW / w, boxH / h);
+    const turned = Math.min(boxW / h, boxH / w);
+    if (turned > flat) {
+      const scale2 = turned;
+      return { scale: scale2, rotate: 90, tx: width / 2 - (y0 + y1) / 2 * scale2, ty: height / 2 - (x0 + x1) / 2 * scale2 };
+    }
+    const scale = flat;
+    return { scale, rotate: 0, tx: width / 2 - (x0 + x1) / 2 * scale, ty: height / 2 + (y0 + y1) / 2 * scale };
+  }
+  function toScreen(view2, x, y) {
+    return view2.rotate === 90 ? [view2.tx + y * view2.scale, view2.ty + x * view2.scale] : [view2.tx + x * view2.scale, view2.ty - y * view2.scale];
+  }
+
+  // src/map/track.js
+  var KEEP = 8;
+  var RENDER_DELAY_MS = 300;
+  function pushSample(track, at2, x, y, yaw) {
+    track.push({ at: at2, x, y, yaw });
+    if (track.length > KEEP) track.splice(0, track.length - KEEP);
+  }
+  var turn = (yaw) => (yaw % 360 + 360) % 360;
+  function sampleTrack(track, at2) {
+    if (!track.length) return null;
+    const pick = ({ x, y, yaw }) => ({ x, y, yaw });
+    if (at2 <= track[0].at) return pick(track[0]);
+    const last = track[track.length - 1];
+    if (at2 >= last.at) return pick(last);
+    let i = 0;
+    while (track[i + 1].at <= at2) i += 1;
+    const a = track[i];
+    const b = track[i + 1];
+    const f = (at2 - a.at) / (b.at - a.at);
+    const d = (b.yaw - a.yaw + 540) % 360 - 180;
+    return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, yaw: turn(a.yaw + d * f) };
+  }
+
+  // src/map/net.js
+  var STATE_REPEAT_MS = 5e3;
+  var MAX_PLAYERS = 4;
+  var SLUGS = Object.values(MAP_SLUGS);
+  var bitText = (bits2) => bits2.map((b) => b ? "1" : "0").join("");
+  function sendMap(session, now) {
+    const map = session.map;
+    if (!session.peer) return;
+    if (map.liveReads !== map.sentReads) {
+      map.sentReads = map.liveReads;
+      const p = [...map.live].filter(([, e]) => e.read === map.liveReads).map(([n, e]) => [n, e.x, e.y, e.z, e.yaw, e.room, e.s]);
+      send(session, { t: "mapp", p });
+    }
+    const state = map.state;
+    if (!state) return;
+    const message = { t: "maps", slug: map.slug, sig: state.sig, doors: bitText(state.doors), rooms: bitText(state.rooms), box: state.box, power: state.power ? 1 : 0 };
+    const key = JSON.stringify(message);
+    if (key === map.sentStateKey && now - map.sentStateAt < STATE_REPEAT_MS) return;
+    map.sentStateKey = key;
+    map.sentStateAt = now;
+    send(session, message);
+  }
+  var validEntry = (e) => Array.isArray(e) && e.length === 7 && e.every(Number.isFinite) && Number.isInteger(e[0]) && e[0] >= 1 && e[0] <= MAX_PLAYERS;
+  var bits = (text2) => typeof text2 === "string" && /^[01]{0,256}$/.test(text2);
+  function onMapMessage(session, message) {
+    const map = session.map;
+    if (!map) return;
+    const now = Date.now();
+    if (message.t === "mapp") {
+      if (!Array.isArray(message.p) || message.p.length > MAX_PLAYERS || !message.p.every(validEntry)) return;
+      for (const [n, x, y, z, yaw, room, s] of message.p) {
+        map.live.set(n, { x, y, z, yaw, room, s, floor: map.plan ? floorOf(map.plan, z, x, y) : 0, at: now });
+        if (!map.tracks.has(n)) map.tracks.set(n, []);
+        pushSample(map.tracks.get(n), now, x, y, yaw);
+      }
+    } else if (message.t === "maps") {
+      const { slug, sig, doors, rooms, box, power } = message;
+      if (!SLUGS.includes(slug) || typeof sig !== "string" || !bits(doors) || !bits(rooms)) return;
+      if (!Array.isArray(box) || box.length > 8 || !box.every(Number.isInteger)) return;
+      if (slug !== map.slug) return;
+      map.state = { v: null, sig, doors: [...doors].map((c) => c === "1"), rooms: [...rooms].map((c) => c === "1"), box, power: power === 1, at: now };
+      map.planOk = Boolean(map.plan) && sig === map.plan.sig;
+    }
+  }
 
   // src/ui/strings.js
   var LANG = /^pt\b/i.test(navigator.language ?? "") ? "pt" : "en";
@@ -1006,13 +1135,13 @@
       return createGuestId();
     }
   }
-  var cleanName = (text) => String(text ?? "").replace(/[^\p{L}\p{N} _.-]/gu, "").replace(/\s+/g, " ").trim().slice(0, 16);
+  var cleanName = (text2) => String(text2 ?? "").replace(/[^\p{L}\p{N} _.-]/gu, "").replace(/\s+/g, " ").trim().slice(0, 16);
 
   // src/util/relay.js
   var DEFAULT_RELAY = "https://bo1z-coop-4p-relay.allanlotta.workers.dev";
-  function normalizeRelay(text) {
+  function normalizeRelay(text2) {
     try {
-      const url = new URL(String(text).trim());
+      const url = new URL(String(text2).trim());
       if (url.protocol === "wss:") url.protocol = "https:";
       return url.protocol === "https:" && url.hostname.includes(".") ? url.origin : "";
     } catch {
@@ -1105,13 +1234,13 @@
       copiedCodeAt: 0,
       log: []
     };
-    session.note = (text) => {
-      session.log.push(`${(/* @__PURE__ */ new Date()).toISOString().slice(11, 23)} ${text}`);
+    session.note = (text2) => {
+      session.log.push(`${(/* @__PURE__ */ new Date()).toISOString().slice(11, 23)} ${text2}`);
       if (session.log.length > 200) session.log.shift();
     };
     session.fail = (key, ...args) => {
-      const text = T[key];
-      session.error = typeof text === "function" ? text(...args) : text ?? key;
+      const text2 = T[key];
+      session.error = typeof text2 === "function" ? text2(...args) : text2 ?? key;
     };
     session.onSocket = ({ state, code }) => {
       session.socket = state;
@@ -1190,6 +1319,10 @@
       case "lobby":
         if (Array.isArray(message.players)) session.lobby = message;
         break;
+      case "mapp":
+      case "maps":
+        onMapMessage(session, message);
+        break;
       case "pos":
         if (Array.isArray(message.o) && message.o.length === 3 && message.o.every(Number.isFinite)) {
           session.hostPos = { origin: message.o, at: Date.now() };
@@ -1255,7 +1388,7 @@
 
   // src/session/guest.js
   var HOST_GONE_MS = 1e4;
-  var STATE_REPEAT_MS = 2e3;
+  var STATE_REPEAT_MS2 = 2e3;
   var SPAWN_JUMP = 400;
   var NEAR_HOST = 300;
   var HOST_POS_MAX_AGE_MS = 6e3;
@@ -1324,7 +1457,7 @@
       if (engine.dvar("clPaused")) engine.setDvar("clPaused", 0);
       if (engine.dvar("svPaused")) engine.setDvar("svPaused", 0);
     }
-    if (session.peer && (session.phase !== session.sentPhase || Date.now() - (session.sentPhaseAt ?? 0) > STATE_REPEAT_MS)) introduce(session);
+    if (session.peer && (session.phase !== session.sentPhase || Date.now() - (session.sentPhaseAt ?? 0) > STATE_REPEAT_MS2)) introduce(session);
     if (!session.peer) session.sentPhase = null;
     const step2 = STEPS[session.phase];
     if (step2) step2(session, engine, screen2);
@@ -1496,6 +1629,824 @@
     return true;
   }
 
+  // src/cheats/names.js
+  var WEAPONS = {
+    m1911_zm: "M1911",
+    python_zm: "Python",
+    cz75_zm: "CZ75",
+    cz75dw_zm: "CZ75 Dual Wield",
+    ak74u_zm: "AK-74u",
+    mp5k_zm: "MP5K",
+    mp40_zm: "MP40",
+    mpl_zm: "MPL",
+    pm63_zm: "PM63",
+    spectre_zm: "Spectre",
+    ithaca_zm: "Stakeout",
+    spas_zm: "SPAS-12",
+    hs10_zm: "HS10",
+    rottweil72_zm: "Olympia",
+    m14_zm: "M14",
+    m16_zm: "M16",
+    g11_lps_zm: "G11",
+    famas_zm: "FAMAS",
+    aug_acog_zm: "AUG",
+    galil_zm: "Galil",
+    commando_zm: "Commando",
+    fnfal_zm: "FN FAL",
+    dragunov_zm: "Dragunov",
+    l96a1_zm: "L96A1",
+    rpk_zm: "RPK",
+    hk21_zm: "HK21",
+    m72_law_zm: "M72 LAW",
+    china_lake_zm: "China Lake",
+    crossbow_explosive_zm: "Crossbow",
+    knife_ballistic_zm: "Ballistic Knife",
+    knife_ballistic_bowie_zm: "Ballistic Knife (Bowie)",
+    knife_ballistic_sickle_zm: "Ballistic Knife (Sickle)",
+    ray_gun_zm: "Ray Gun",
+    thundergun_zm: "Thundergun",
+    tesla_gun_zm: "Wunderwaffe DG-2",
+    freezegun_zm: "Winter's Howl",
+    sniper_explosive_zm: "Scavenger",
+    humangun_zm: "V-R11",
+    shrink_ray_zm: "31-79 JGb215",
+    microwavegun_zm: "Wave Gun",
+    microwavegundw_zm: "Zap Guns",
+    zombie_cymbal_monkey: "Monkey Bombs",
+    zombie_black_hole_bomb: "Gersh Device",
+    zombie_quantum_bomb: "QED",
+    zombie_nesting_dolls: "Matryoshka Dolls",
+    claymore_zm: "Claymores",
+    spikemore_zm: "Spikemores",
+    frag_grenade_zm: "Frag Grenades",
+    sticky_grenade_zm: "Semtex",
+    stielhandgranate: "Stielhandgranate",
+    bowie_knife_zm: "Bowie Knife",
+    sickle_knife_zm: "Sickle",
+    m2_flamethrower_zm: "M2 Flamethrower",
+    zombie_kar98k: "Kar98k",
+    kar98k_scoped_zombie: "Scoped Kar98k",
+    mine_bouncing_betty: "Bouncing Betties",
+    zombie_type99_rifle: "Arisaka",
+    zombie_gewehr43: "Gewehr 43",
+    zombie_m1carbine: "M1 Carbine",
+    zombie_m1garand: "M1 Garand",
+    zombie_thompson: "Thompson",
+    zombie_type100_smg: "Type 100",
+    zombie_stg44: "STG-44",
+    zombie_shotgun: "Trench Gun",
+    zombie_doublebarrel: "Double-Barreled Shotgun",
+    zombie_doublebarrel_sawed: "Sawed-Off Shotgun",
+    zombie_bar: "BAR",
+    zombie_bar_bipod: "BAR (Bipod)",
+    zombie_fg42: "FG42",
+    zombie_mg42: "MG42",
+    zombie_30cal: "Browning M1919",
+    zombie_ppsh: "PPSh-41",
+    zombie_ptrs41: "PTRS-41",
+    zombie_sw_357: ".357 Magnum"
+  };
+  var PERKS = {
+    specialty_armorvest: "Juggernog",
+    specialty_quickrevive: "Quick Revive",
+    specialty_fastreload: "Speed Cola",
+    specialty_rof: "Double Tap",
+    specialty_longersprint: "Stamin-Up",
+    specialty_flakjacket: "PhD Flopper",
+    specialty_deadshot: "Deadshot Daiquiri",
+    specialty_additionalprimaryweapon: "Mule Kick"
+  };
+  var POWERUPS = {
+    full_ammo: "Max Ammo",
+    insta_kill: "Insta-Kill",
+    double_points: "Double Points",
+    nuke: "Nuke",
+    carpenter: "Carpenter",
+    fire_sale: "Fire Sale",
+    minigun: "Death Machine",
+    bonfire_sale: "Bonfire Sale",
+    tesla: "Wunderwaffe",
+    random_weapon: "Random Weapon",
+    bonus_points_player: "Bonus Points",
+    bonus_points_team: "Bonus Points (Team)",
+    lose_points_team: "Lose Points",
+    lose_perk: "Lose Perk",
+    empty_clip: "Empty Clip",
+    free_perk: "Free Perk"
+  };
+  function readable(id) {
+    const words = String(id).replace(/_zm$/, "").replace(/^(zombie|specialty)_/, "").split("_").filter(Boolean);
+    return words.map((w) => w[0].toUpperCase() + w.slice(1)).join(" ") || String(id);
+  }
+  var weaponName = (id) => WEAPONS[id] ?? readable(id);
+  var perkName = (id) => PERKS[id] ?? readable(id);
+  var powerupName = (id) => POWERUPS[id] ?? readable(id);
+
+  // src/cheats/strings.js
+  var C = {
+    setting: "Cheat menu",
+    on: "On",
+    off: "Off",
+    turnOn: "Turn on",
+    turnOff: "Turn off",
+    reload: "Reload the page to apply.",
+    note: "Weapons, perks, power-ups and rounds in Fun mode, and the map (press N in a game). The cheat menu needs only the host; to see the map, friends need this version too. Turning it off also turns off the map. In a game, press M to open the cheat menu without pausing; click the game to go back.",
+    keyTip: "Tip: press M in game to open this card without pausing; click the game to go back.",
+    failed: "The cheat menu could not load in this game, so Fun mode works as before. Reload the page to try again.",
+    everyone: "Everyone",
+    player: "that player",
+    giveTo: "Give to",
+    weapons: "Weapons on this map",
+    pap: "Pack-a-Punch the weapon in hand",
+    perks: "Perks (free)",
+    noPerks: "This map has no perk machines.",
+    powerNote: "Giving a perk turns the power on.",
+    powerups: "Power-ups",
+    noPowerups: "This map has no power-ups.",
+    rounds: "Rounds",
+    roundNow: (n) => `now round ${n}`,
+    roundPlaceholder: "Go to round (1-255)",
+    go: "Go",
+    nextRound: "Next round",
+    freeze: "Freeze round",
+    giving: (thing, name) => `Giving ${thing} to ${name}…`,
+    packing: (name) => `Pack-a-Punching ${name}'s weapon…`,
+    given: (thing, name) => `${thing} given to ${name}.`,
+    packed: (name) => `Pack-a-Punched for ${name}.`,
+    dropped: (thing, name) => `${thing} dropped in front of ${name}.`,
+    goingTo: (n) => `Going to round ${n}.`,
+    frozenOn: "Round frozen: it will not end until you unfreeze it.",
+    frozenOff: "Round unfrozen.",
+    errNoPlayer: "That player is no longer in the game.",
+    errNotSpawned: "That player is still waiting to spawn (until the next round). Try again then.",
+    errNoWeapon: (w) => `${w} is not on this map.`,
+    errNoUpgrade: (w) => `${w} can't be Pack-a-Punched.`,
+    errHasUpgrade: "That weapon is already Pack-a-Punched.",
+    errNoPerk: (p) => `This map has no ${p} machine.`,
+    errPerkFailed: (p) => `Could not give ${p} on this map right now.`,
+    errNoPowerup: (p) => `${p} is not on this map.`,
+    errBadRound: (max) => `Pick a round from 1 to ${max}.`,
+    errHorde: "Round controls are not available in Hell mode.",
+    errOther: (code) => `That did not work (${code}).`
+  };
+
+  // src/cheats/section.js
+  var MAX_ROUND = 255;
+  var byName = (name) => (a, b) => name(a).localeCompare(name(b));
+  var AREA = { give: "weapons", pap: "weapons", perk: "perks", powerup: "powerups", round: "rounds", next: "rounds", freeze: "rounds" };
+  function say(session, text2, action) {
+    session.fun.notice = text2;
+    session.fun.noticeAt = Date.now();
+    session.cheats.noticeArea = AREA[action] ?? "rounds";
+  }
+  function noticeAfter(session, area, blocks) {
+    if (session.fun.notice && session.cheats.noticeArea === area) blocks.push({ kind: "callout", tone: "info", text: session.fun.notice });
+  }
+  function target(session, players) {
+    const chosen = session.cheats.target ?? 0;
+    return chosen === "all" || players.some((p) => p.slot === chosen) ? chosen : 0;
+  }
+  function who(session, players, slot) {
+    if (slot === "all") return C.everyone;
+    return players.find((p) => p.slot === slot)?.name ?? C.player;
+  }
+  var ERRORS = {
+    no_player: () => C.errNoPlayer,
+    not_spawned: () => C.errNotSpawned,
+    no_weapon: (d) => C.errNoWeapon(weaponName(d)),
+    no_upgrade: (d) => C.errNoUpgrade(weaponName(d)),
+    has_upgrade: () => C.errHasUpgrade,
+    no_perk: (d) => C.errNoPerk(perkName(d)),
+    perk_failed: (d) => C.errPerkFailed(perkName(d)),
+    no_powerup: (d) => C.errNoPowerup(powerupName(d)),
+    bad_round: () => C.errBadRound(MAX_ROUND),
+    horde: () => C.errHorde
+  };
+  function resultText(result, sent, name) {
+    if (!result.ok) return (ERRORS[result.code] ?? (() => C.errOther(result.code)))(result.detail);
+    switch (sent.action) {
+      case "give":
+        return C.given(weaponName(sent.arg), name);
+      case "pap":
+        return C.packed(name);
+      case "perk":
+        return C.given(perkName(sent.arg), name);
+      case "powerup":
+        return C.dropped(powerupName(sent.arg), name);
+      case "round":
+        return C.goingTo(sent.target);
+      case "next":
+        return C.nextRound;
+      case "freeze":
+        return sent.target === 1 ? C.frozenOn : C.frozenOff;
+    }
+    return "";
+  }
+  function cheatBlocks(session, players) {
+    const cheats = session.cheats;
+    const chosen = target(session, players);
+    const blocks = [];
+    if (players.length > 1) {
+      blocks.push({ kind: "label", text: C.giveTo });
+      const chips = players.map((p) => ({ act: "cheatTarget", arg: String(p.slot), label: p.name, on: chosen === p.slot }));
+      chips.push({ act: "cheatTarget", arg: "all", label: C.everyone, on: chosen === "all" });
+      blocks.push({ kind: "chips", chips });
+    }
+    blocks.push({ kind: "label", text: C.weapons });
+    blocks.push({ kind: "buttons", buttons: [{ act: "cheatPap", label: C.pap }] });
+    noticeAfter(session, "weapons", blocks);
+    blocks.push({ kind: "grid", buttons: [...cheats.weapons].sort(byName(weaponName)).map((w) => ({ act: "cheatGive", arg: w, label: weaponName(w) })) });
+    blocks.push({ kind: "label", text: C.perks });
+    if (!cheats.perks.length) blocks.push({ kind: "text", cls: "muted small", text: C.noPerks });
+    else {
+      if (!cheats.power) blocks.push({ kind: "text", cls: "muted small", text: C.powerNote });
+      blocks.push({ kind: "grid", buttons: [...cheats.perks].sort(byName(perkName)).map((p) => ({ act: "cheatPerk", arg: p, label: perkName(p) })) });
+    }
+    noticeAfter(session, "perks", blocks);
+    blocks.push({ kind: "label", text: C.powerups });
+    if (!cheats.powerups.length) blocks.push({ kind: "text", cls: "muted small", text: C.noPowerups });
+    else blocks.push({ kind: "grid", buttons: [...cheats.powerups].sort(byName(powerupName)).map((p) => ({ act: "cheatPowerup", arg: p, label: powerupName(p) })) });
+    noticeAfter(session, "powerups", blocks);
+    blocks.push({ kind: "label", text: C.rounds, aside: cheats.round ? C.roundNow(cheats.round) : "" });
+    if (cheats.horde) {
+      blocks.push({ kind: "text", cls: "muted small", text: C.errHorde });
+    } else {
+      blocks.push({ kind: "input", field: "cheatRound", placeholder: C.roundPlaceholder, act: "cheatRound", button: C.go, maxLength: 3 });
+      blocks.push({
+        kind: "chips",
+        chips: [
+          { act: "cheatNext", label: C.nextRound, on: false, plain: true },
+          { act: "cheatFreeze", label: C.freeze, on: cheats.frozen }
+        ]
+      });
+    }
+    noticeAfter(session, "rounds", blocks);
+    return blocks;
+  }
+  var cheatsFailedBlock = () => ({ kind: "callout", tone: "wait", text: C.failed });
+  function cheatActions(session, funPlayers2) {
+    const cheats = session.cheats;
+    cheats.onResult = (result, sent) => {
+      const players = funPlayers2(session);
+      say(session, resultText(result, sent, who(session, players, sent.target)), sent.action);
+    };
+    const toChosen = (action, arg, pending) => {
+      const players = funPlayers2(session);
+      const slot = target(session, players);
+      sendCheat(session, action, slot, arg);
+      say(session, pending(who(session, players, slot)), action);
+    };
+    return {
+      cheatTarget: (arg) => cheats.target = arg === "all" ? "all" : Number(arg),
+      cheatGive: (weapon) => toChosen("give", weapon, (name) => C.giving(weaponName(weapon), name)),
+      cheatPap: () => toChosen("pap", void 0, (name) => C.packing(name)),
+      cheatPerk: (perk) => toChosen("perk", perk, (name) => C.giving(perkName(perk), name)),
+      cheatPowerup: (powerup) => toChosen("powerup", powerup, (name) => C.giving(powerupName(powerup), name)),
+      cheatRound: (text2) => {
+        const round = Number(String(text2 ?? "").trim());
+        if (!Number.isInteger(round) || round < 1 || round > MAX_ROUND) return say(session, C.errBadRound(MAX_ROUND), "round");
+        sendCheat(session, "round", round);
+        say(session, C.goingTo(round), "round");
+      },
+      cheatNext: () => sendCheat(session, "next"),
+      cheatFreeze: () => {
+        cheats.frozen = !cheats.frozen;
+        sendCheat(session, "freeze", cheats.frozen ? 1 : 0);
+      }
+    };
+  }
+
+  // src/fun/fun.js
+  var TEXT = {
+    en: {
+      title: "Fun mode",
+      note: "Host only. Changes apply to everyone in your game.",
+      pause: "Tip: press Esc in game to open this card.",
+      flyHint: "Fly and Noclip go through walls: switch them off standing on the floor, or you fall out of the map.",
+      players: "Players",
+      all: "Everyone",
+      god: "God",
+      demigod: "Can't die",
+      notarget: "Invisible",
+      noclip: "Noclip",
+      ufo: "Fly",
+      speed: "Speed",
+      money: "Points",
+      ammo: "Ammo",
+      infiniteClip: "Infinite clip",
+      infiniteStock: "Infinite reserve",
+      refill: "Refill everyone",
+      zombies: "Zombies",
+      oneHit: "Die in one hit",
+      passive: "Ignore players",
+      clear: "Clear zombies",
+      world: "World",
+      timescale: "Game speed",
+      jump: "Jump height",
+      gravity: "Gravity",
+      weapons: "Weapons (for you)",
+      weaponMissing: (w) => `${w} is not on this map.`,
+      weaponGiven: (w) => `${w} given.`,
+      reset: "Reset everything",
+      notLoaded: "Start a map to use this.",
+      cheatsOff: "This map has cheats off: the commands won't work."
+    },
+    pt: {
+      title: "Modo diversão",
+      note: "Só o host. Vale para todo mundo na sua partida.",
+      pause: "Dica: aperte Esc no jogo para abrir este cartão.",
+      flyHint: "Voa e Atravessa passam por paredes: desligue com os pés no chão, senão o jogador cai para fora do mapa.",
+      players: "Jogadores",
+      all: "Todos",
+      god: "Imortal",
+      demigod: "Não morre",
+      notarget: "Invisível",
+      noclip: "Atravessa",
+      ufo: "Voa",
+      speed: "Velocidade",
+      money: "Pontos",
+      ammo: "Munição",
+      infiniteClip: "Pente infinito",
+      infiniteStock: "Reserva infinita",
+      refill: "Encher a de todos",
+      zombies: "Zumbis",
+      oneHit: "Morrem com 1 tiro",
+      passive: "Ignoram vocês",
+      clear: "Limpar zumbis",
+      world: "Mundo",
+      timescale: "Velocidade do jogo",
+      jump: "Altura do pulo",
+      gravity: "Gravidade",
+      weapons: "Armas (para você)",
+      weaponMissing: (w) => `${w} não existe neste mapa.`,
+      weaponGiven: (w) => `${w} entregue.`,
+      reset: "Resetar tudo",
+      notLoaded: "Abra um mapa para usar.",
+      cheatsOff: "Este mapa está com cheats desligados: os comandos não vão funcionar."
+    }
+  };
+  var F = TEXT[LANG];
+  var PLAYER_TOGGLES = ["god", "demigod", "notarget", "noclip", "ufo"];
+  var SPEEDS = [0.5, 0.75, 1, 1.5, 2, 3];
+  var TIMESCALES = [0.25, 0.5, 0.75, 1, 1.5, 2];
+  var JUMPS = [39, 80, 150, 300, 600];
+  var GRAVITIES = [800, 600, 400, 200, 100];
+  var STOCK = 999;
+  var WEAPONS2 = [
+    ["ray_gun_zm", "Ray Gun"],
+    ["ray_gun_upgraded_zm", "Ray Gun (PaP)"],
+    ["thundergun_zm", "Thundergun"],
+    ["thundergun_upgraded_zm", "Thundergun (PaP)"],
+    ["tesla_gun_zm", "Wunderwaffe"],
+    ["freezegun_zm", "Winter's Howl"],
+    ["microwavegun_zm", "Wave Gun"],
+    ["sniper_explosive_zm", "Scavenger"],
+    ["crossbow_explosive_zm", "Crossbow"],
+    ["knife_ballistic_zm", "Ballistic Knife"],
+    ["hk21_zm", "HK21"],
+    ["rpk_zm", "RPK"],
+    ["galil_zm", "Galil"],
+    ["commando_zm", "Commando"],
+    ["famas_zm", "FAMAS"],
+    ["aug_acog_zm", "AUG"],
+    ["spas_zm", "SPAS-12"],
+    ["china_lake_zm", "China Lake"],
+    ["python_zm", "Python"],
+    ["cz75dw_zm", "CZ75 Dual"],
+    ["zombie_cymbal_monkey", "Monkey Bomb"],
+    ["zombie_black_hole_bomb", "Gersh Device"],
+    ["bowie_knife_zm", "Bowie Knife"],
+    ["claymore_zm", "Claymores"]
+  ];
+  function createFun() {
+    return {
+      open: false,
+      players: {},
+      // slot -> { god, demigod, notarget, noclip, ufo, speed }
+      infiniteClip: false,
+      infiniteStock: false,
+      oneHit: false,
+      passive: false,
+      timescale: 1,
+      jump: 39,
+      gravity: 800,
+      queue: [],
+      // console commands waiting for the engine's mailbox
+      notice: null,
+      noticeAt: 0,
+      lastStockAt: 0,
+      lastZombiesAt: 0
+    };
+  }
+  var playerState = (fun, slot) => fun.players[slot] ??= { god: false, demigod: false, notarget: false, noclip: false, ufo: false, speed: 1 };
+  function funPlayers(session) {
+    const players = [{ slot: 0, n: 1, name: session.name || (LANG === "pt" ? "Você" : "You") }];
+    if (session.mode === "host") {
+      for (const g of session.guests.values()) {
+        if (g.present && g.slot?.state === SLOT.active) players.push({ slot: g.slot.slot, n: g.seat + 1, name: g.state?.name || `${LANG === "pt" ? "Jogador" : "Player"} ${g.seat + 1}` });
+      }
+    }
+    return players;
+  }
+  var funAvailable = (session) => session.mode !== "guest";
+  function addresses(session) {
+    const f = session.build?.fun;
+    const engine = session.engine;
+    if (!f || !engine) return null;
+    return {
+      f,
+      engine,
+      ent: (slot) => f.entities + slot * f.entitySize,
+      client: (slot) => engine.int(f.entities + slot * f.entitySize + f.ent.client)
+    };
+  }
+  function setBit(engine, address, bit, on) {
+    if (on) Atomics.or(engine.i32, address >> 2, bit);
+    else Atomics.and(engine.i32, address >> 2, ~bit);
+  }
+  function say2(fun, text2) {
+    fun.notice = text2;
+    fun.noticeAt = Date.now();
+  }
+  function funTick(session) {
+    const fun = session.fun;
+    if (fun.notice && Date.now() - fun.noticeAt > 6e3) fun.notice = null;
+    if (session.cheats) cheatsTick(session, Date.now(), funAvailable(session) && screen() === "playing");
+    const a = addresses(session);
+    if (!a || !funAvailable(session) || screen() !== "playing") {
+      flushQueue(session);
+      return;
+    }
+    const { f, engine } = a;
+    const now = Date.now();
+    for (const { slot } of funPlayers(session)) {
+      const p = fun.players[slot];
+      if (!p) continue;
+      const ent = a.ent(slot);
+      const client = a.client(slot);
+      if (!client) continue;
+      if (p.god || p.demigod || p.notarget) {
+        if (p.god) setBit(engine, ent + f.ent.flags, f.entFlags.god, true);
+        if (p.demigod) setBit(engine, ent + f.ent.flags, f.entFlags.demigod, true);
+        if (p.notarget) setBit(engine, ent + f.ent.flags, f.entFlags.notarget, true);
+      }
+      if (p.noclip) setBit(engine, client + f.client.flags, f.clientFlags.noclip, true);
+      if (p.ufo) setBit(engine, client + f.client.flags, f.clientFlags.ufo, true);
+      if (p.speed !== 1) new Float32Array(engine.buffer)[client + f.client.speedScale >> 2] = p.speed;
+    }
+    if (fun.infiniteStock && now - fun.lastStockAt > 500) {
+      fun.lastStockAt = now;
+      refillStock(session, a);
+    }
+    if ((fun.oneHit || fun.passive) && now - fun.lastZombiesAt > 1500) {
+      fun.lastZombiesAt = now;
+      if (!fun.queue.length) {
+        if (fun.oneHit) fun.queue.push("ai axis health 1");
+        if (fun.passive) fun.queue.push("ai axis ignoreall 1");
+      }
+    }
+    flushQueue(session);
+  }
+  function flushQueue(session) {
+    const fun = session.fun;
+    if (!fun.queue.length || !session.engine) return;
+    if (session.engine.command(fun.queue[0])) fun.queue.shift();
+  }
+  function refillStock(session, a, slots = funPlayers(session).map((p) => p.slot)) {
+    const { f, engine } = a;
+    for (const slot of slots) {
+      const client = a.client(slot);
+      if (!client) continue;
+      for (let i = 0; i < f.client.ammoSlots; i += 1) {
+        const pool = client + f.client.ammoPools + 8 * i;
+        if (engine.int(pool) && engine.int(pool + 4) < STOCK) engine.setInt(pool + 4, STOCK);
+      }
+    }
+  }
+  function watchConsole(session) {
+    for (const level of ["log", "warn", "error"]) {
+      const original = console[level];
+      console[level] = function(...args) {
+        const text2 = typeof args[0] === "string" ? args[0] : "";
+        onCheatsLine(session, text2);
+        const missing = text2.match(/Could not load weapon "([^"]+)"/);
+        if (missing && session.fun?.pendingWeapon === missing[1]) {
+          const label = WEAPONS2.find(([w]) => w === missing[1])?.[1] ?? missing[1];
+          say2(session.fun, F.weaponMissing(label));
+          session.fun.pendingWeapon = null;
+        }
+        return original.apply(this, args);
+      };
+    }
+  }
+  function step(list, value, direction) {
+    const i = list.indexOf(value);
+    const at2 = i < 0 ? list.indexOf(list.reduce((best, v) => Math.abs(v - value) < Math.abs(best - value) ? v : best, list[0])) : i;
+    return list[Math.max(0, Math.min(list.length - 1, at2 + direction))];
+  }
+  function funActions(session) {
+    const fun = session.fun;
+    const engineReady = () => Boolean(addresses(session));
+    const togglePlayer = (key, slot) => {
+      const a = addresses(session);
+      const p = playerState(fun, slot);
+      p[key] = !p[key];
+      if (!p[key] && a) {
+        const client = a.client(slot);
+        if (key === "noclip" || key === "ufo") {
+          if (client) setBit(a.engine, client + a.f.client.flags, a.f.clientFlags[key], false);
+        } else {
+          setBit(a.engine, a.ent(slot) + a.f.ent.flags, a.f.entFlags[key], false);
+        }
+      }
+    };
+    const setSpeed = (slot, value) => {
+      const a = addresses(session);
+      playerState(fun, slot).speed = value;
+      const client = a?.client(slot);
+      if (client) new Float32Array(a.engine.buffer)[client + a.f.client.speedScale >> 2] = value;
+    };
+    const addPoints = (slot, amount) => {
+      const a = addresses(session);
+      const client = a?.client(slot);
+      if (!client) return;
+      const score = client + a.f.client.score;
+      a.engine.setInt(score, amount === "max" ? 9999990 : amount === "zero" ? 0 : Math.min(9999990, a.engine.int(score) + amount));
+    };
+    const parse = (arg) => {
+      const [what, slot] = String(arg).split(":");
+      return { what, slot: slot === "all" ? "all" : Number(slot) };
+    };
+    const forSlots = (slot) => slot === "all" ? funPlayers(session).map((p) => p.slot) : [slot];
+    return {
+      ...session.cheats ? cheatActions(session, funPlayers) : {},
+      fun: () => fun.open = !fun.open,
+      funToggle: (arg) => {
+        if (!engineReady()) return;
+        const { what, slot } = parse(arg);
+        if (slot === "all") {
+          const slots = forSlots("all");
+          const turnOn = !slots.every((s) => playerState(fun, s)[what]);
+          for (const s of slots) if (playerState(fun, s)[what] !== turnOn) togglePlayer(what, s);
+        } else {
+          togglePlayer(what, slot);
+        }
+      },
+      funSpeed: (arg) => {
+        if (!engineReady()) return;
+        const { what, slot } = parse(arg);
+        for (const s of forSlots(slot)) setSpeed(s, step(SPEEDS, playerState(fun, s).speed, what === "up" ? 1 : -1));
+      },
+      funPoints: (arg) => {
+        if (!engineReady()) return;
+        const { what, slot } = parse(arg);
+        const amount = what === "max" || what === "zero" ? what : Number(what);
+        for (const s of forSlots(slot)) addPoints(s, amount);
+      },
+      funAmmo: (arg) => {
+        if (!engineReady()) return;
+        if (arg === "clip") {
+          fun.infiniteClip = !fun.infiniteClip;
+          fun.queue.push(`set player_sustainAmmo ${fun.infiniteClip ? 1 : 0}`);
+        } else if (arg === "stock") {
+          fun.infiniteStock = !fun.infiniteStock;
+        } else if (arg === "refill") {
+          refillStock(session, addresses(session));
+        }
+      },
+      funZombies: (arg) => {
+        if (!engineReady()) return;
+        if (arg === "onehit") fun.oneHit = !fun.oneHit;
+        else if (arg === "passive") {
+          fun.passive = !fun.passive;
+          if (!fun.passive) fun.queue.push("ai axis ignoreall 0");
+        } else if (arg === "clear") fun.queue.push("ai axis delete");
+        if (fun.oneHit && arg === "onehit") fun.queue.push("ai axis health 1");
+        if (fun.passive && arg === "passive") fun.queue.push("ai axis ignoreall 1");
+      },
+      funWorld: (arg) => {
+        if (!engineReady()) return;
+        const [what, dir2] = String(arg).split(":");
+        const direction = dir2 === "up" ? 1 : -1;
+        if (what === "timescale") {
+          fun.timescale = step(TIMESCALES, fun.timescale, direction);
+          fun.queue.push(`timescale ${fun.timescale}`);
+        } else if (what === "jump") {
+          fun.jump = step(JUMPS, fun.jump, direction);
+          fun.queue.push(`jump_height ${fun.jump}`);
+        } else if (what === "gravity") {
+          fun.gravity = step(GRAVITIES, fun.gravity, direction);
+          fun.queue.push(`bg_gravity ${fun.gravity}`);
+        }
+      },
+      funWeapon: (weapon) => {
+        if (!engineReady()) return;
+        fun.pendingWeapon = weapon;
+        fun.queue.push(`give ${weapon}`);
+        const label = WEAPONS2.find(([w]) => w === weapon)?.[1] ?? weapon;
+        say2(fun, F.weaponGiven(label));
+      },
+      funReset: () => {
+        const a = addresses(session);
+        for (const { slot } of funPlayers(session)) {
+          const p = playerState(fun, slot);
+          for (const key of PLAYER_TOGGLES) if (p[key]) togglePlayer(key, slot);
+          if (p.speed !== 1) setSpeed(slot, 1);
+        }
+        fun.infiniteStock = false;
+        fun.oneHit = false;
+        if (fun.passive) fun.queue.push("ai axis ignoreall 0");
+        fun.passive = false;
+        if (fun.infiniteClip) fun.queue.push("set player_sustainAmmo 0");
+        fun.infiniteClip = false;
+        if (fun.timescale !== 1) fun.queue.push("timescale 1");
+        if (fun.jump !== 39) fun.queue.push("jump_height 39");
+        if (fun.gravity !== 800) fun.queue.push("bg_gravity 800");
+        Object.assign(fun, { timescale: 1, jump: 39, gravity: 800 });
+        if (!a) fun.queue.length = 0;
+      }
+    };
+  }
+  var fmt = (v) => Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/0$/, "");
+  function funSection(session) {
+    const fun = session.fun;
+    const blocks = [];
+    const a = addresses(session);
+    if (!a || !["ready", "playing"].includes(screen())) {
+      blocks.push({ kind: "text", cls: "muted small", text: F.notLoaded });
+      return { kind: "section", title: F.title, act: "fun", open: fun.open, blocks };
+    }
+    const cheats = (() => {
+      const dvar = a.engine.int(a.f.cheatsDvar);
+      return dvar ? a.engine.byte(dvar + 24) === 1 : true;
+    })();
+    blocks.push({ kind: "text", cls: "muted small", text: `${F.note} ${session.cheats?.enabled ? C.keyTip : F.pause}` });
+    if (!cheats) blocks.push({ kind: "callout", tone: "wait", text: F.cheatsOff });
+    const cheating = session.cheats?.ok && session.cheats.ready;
+    if (fun.notice && !cheating) blocks.push({ kind: "callout", tone: "info", text: fun.notice });
+    const players = funPlayers(session);
+    blocks.push({ kind: "label", text: F.players });
+    const rows = players.length > 1 ? [...players, { slot: "all", n: 0, name: F.all }] : players;
+    for (const p of rows) {
+      const state = p.slot === "all" ? null : playerState(fun, p.slot);
+      const allOn = (key) => players.every((q) => playerState(fun, q.slot)[key]);
+      const on = (key) => state ? state[key] : allOn(key);
+      const speed = state ? state.speed : players.every((q) => playerState(fun, q.slot).speed === playerState(fun, players[0].slot).speed) ? playerState(fun, players[0].slot).speed : null;
+      const score = state ? a.engine.int((a.client(p.slot) || 0) + a.f.client.score) : null;
+      blocks.push({
+        kind: "funPlayer",
+        n: p.n,
+        name: p.name,
+        chips: PLAYER_TOGGLES.map((key) => ({ act: "funToggle", arg: `${key}:${p.slot}`, label: F[key], on: on(key) })),
+        speed: { label: F.speed, value: speed == null ? "–" : `${fmt(speed)}×`, dec: { act: "funSpeed", arg: `down:${p.slot}` }, inc: { act: "funSpeed", arg: `up:${p.slot}` } },
+        money: {
+          label: F.money,
+          value: score == null ? "" : score.toLocaleString(),
+          buttons: [
+            { act: "funPoints", arg: `5000:${p.slot}`, label: "+5k" },
+            { act: "funPoints", arg: `50000:${p.slot}`, label: "+50k" },
+            { act: "funPoints", arg: `max:${p.slot}`, label: "Max" },
+            { act: "funPoints", arg: `zero:${p.slot}`, label: "0" }
+          ]
+        }
+      });
+    }
+    if (players.some((p) => fun.players[p.slot]?.noclip || fun.players[p.slot]?.ufo)) blocks.push({ kind: "callout", tone: "wait", text: F.flyHint });
+    blocks.push({ kind: "label", text: F.ammo });
+    blocks.push({
+      kind: "chips",
+      chips: [
+        { act: "funAmmo", arg: "clip", label: F.infiniteClip, on: fun.infiniteClip },
+        { act: "funAmmo", arg: "stock", label: F.infiniteStock, on: fun.infiniteStock },
+        { act: "funAmmo", arg: "refill", label: F.refill, on: false, plain: true }
+      ]
+    });
+    blocks.push({ kind: "label", text: F.zombies });
+    blocks.push({
+      kind: "chips",
+      chips: [
+        { act: "funZombies", arg: "onehit", label: F.oneHit, on: fun.oneHit },
+        { act: "funZombies", arg: "passive", label: F.passive, on: fun.passive },
+        { act: "funZombies", arg: "clear", label: F.clear, on: false, plain: true }
+      ]
+    });
+    blocks.push({ kind: "label", text: F.world });
+    blocks.push({ kind: "stepper", label: F.timescale, value: `${fmt(fun.timescale)}×`, dec: { act: "funWorld", arg: "timescale:down" }, inc: { act: "funWorld", arg: "timescale:up" } });
+    blocks.push({ kind: "stepper", label: F.jump, value: String(fun.jump), dec: { act: "funWorld", arg: "jump:down" }, inc: { act: "funWorld", arg: "jump:up" } });
+    blocks.push({ kind: "stepper", label: F.gravity, value: String(fun.gravity), dec: { act: "funWorld", arg: "gravity:down" }, inc: { act: "funWorld", arg: "gravity:up" } });
+    if (cheating) blocks.push(...cheatBlocks(session, players));
+    else {
+      if (session.cheats?.ok === false) blocks.push(cheatsFailedBlock());
+      blocks.push({ kind: "label", text: F.weapons, aside: MAP_SLUGS[session.zone ?? currentZone()] ?? "" });
+      blocks.push({ kind: "grid", buttons: WEAPONS2.map(([w, label]) => ({ act: "funWeapon", arg: w, label })) });
+    }
+    blocks.push({ kind: "buttons", buttons: [{ act: "funReset", label: F.reset, style: "ghost" }] });
+    return { kind: "section", title: F.title, act: "fun", open: fun.open, blocks };
+  }
+
+  // src/map/plans/ascension.json
+  var ascension_default = { v: 1, slug: "ascension", sig: "z16d11", floors: [{ name: "Ground floor", below: null }], rooms: [{ id: "storage_lander_zone", label: [0, 144, -2280], rects: [[0, 0, -2544, 336, -2448], [0, -48, -2448, 384, -2352], [0, -96, -2352, 384, -2208], [0, -288, -2208, 624, -2160], [0, -288, -2160, 672, -2112], [0, -288, -2112, 624, -2064], [0, -288, -2064, 672, -2016], [0, -240, -2016, 672, -1968], [0, -288, -1968, 672, -1920], [0, 144, -1920, 672, -1872], [0, -336, -1920, 96, -1824], [0, 144, -1872, 384, -1824], [0, 432, -1872, 672, -1824], [0, -336, -1824, 672, -1776], [0, -288, -1776, 192, -1728], [0, 240, -1776, 672, -1728], [0, -192, -1728, 672, -1680], [0, -240, -1680, 672, -1632], [0, -240, -1632, -96, -1584], [0, -48, -1632, 672, -1584], [0, -192, -1584, -144, -1536], [0, -48, -1584, 144, -1536], [0, 240, -1584, 672, -1536], [0, -144, -1536, 672, -1488], [0, -144, -1488, 720, -1440], [0, -240, -1440, 720, -1392], [0, -336, -1392, 672, -1344], [0, -384, -1344, 48, -1296], [0, 96, -1344, 672, -1296], [0, -384, -1296, 0, -1248], [0, -336, -1248, 48, -1200], [0, -240, -1200, 96, -1152], [0, -192, -1152, 144, -1104], [0, -144, -1104, 192, -1056], [0, -192, -1056, 192, -1008], [0, -144, -1008, 144, -912], [0, -144, -912, 192, -816], [0, -192, -816, 144, -768], [0, -144, -768, 144, -672]] }, { id: "north_catwalk_zone3", label: [0, 744, 1104], rects: [[0, 1584, 720, 1728, 768], [0, 1632, 768, 1776, 816], [0, 1440, 816, 1536, 864], [0, 1584, 816, 1776, 864], [0, 576, 864, 912, 912], [0, 1392, 864, 1728, 912], [0, 528, 912, 960, 960], [0, 1392, 912, 1440, 1008], [0, 1488, 912, 1776, 1008], [0, 576, 960, 960, 1056], [0, 1056, 1008, 1104, 1056], [0, 1248, 1008, 1296, 1056], [0, 1344, 1008, 1440, 1056], [0, 1488, 1008, 1824, 1056], [0, 1056, 1056, 1200, 1104], [0, 1248, 1056, 1824, 1104], [0, 528, 1056, 960, 1152], [0, 1056, 1104, 1296, 1152], [0, 1344, 1104, 1440, 1152], [0, 1488, 1104, 1872, 1152], [0, 576, 1152, 960, 1200], [0, 1104, 1152, 1248, 1200], [0, 576, 1200, 912, 1248], [0, 1488, 1152, 1920, 1248], [0, 576, 1248, 624, 1296], [0, 672, 1248, 816, 1296], [0, 1392, 1248, 1488, 1296], [0, 1536, 1248, 1920, 1296], [0, 1392, 1296, 1920, 1344], [0, 1392, 1344, 1872, 1392], [0, 1488, 1392, 1824, 1440], [0, 1632, 1440, 1776, 1488], [0, 1392, 1440, 1584, 1584], [0, 1440, 1584, 1536, 1632]] }, { id: "power_building_roof", label: [0, -672, 1512], rects: [[0, -672, 864, -624, 912], [0, -768, 864, -720, 960], [0, -480, 912, -432, 960], [0, -384, 960, -336, 1008], [0, -720, 1008, -624, 1056], [0, -480, 1008, -384, 1056], [0, -576, 1008, -528, 1104], [0, -432, 1056, -336, 1104], [0, -672, 1104, -624, 1152], [0, -576, 1104, -336, 1152], [0, -528, 1200, -480, 1248], [0, -432, 1152, -384, 1248], [0, -432, 1248, -336, 1296], [0, -768, 1296, -720, 1344], [0, -672, 1296, -480, 1344], [0, -528, 1344, -432, 1392], [0, -720, 1392, -672, 1440], [0, -576, 1392, -480, 1440], [0, -384, 1296, -336, 1440], [0, -576, 1440, -528, 1488], [0, -480, 1440, -384, 1488], [0, -816, 1488, -528, 1536], [0, -768, 1536, -720, 1584]] }, { id: "centrifuge2power_zone", label: [0, -528, 768], rects: [[0, -432, 672, -384, 720], [0, -672, 720, -384, 816], [0, -288, 720, -48, 816], [0, -672, 816, -336, 864], [0, -240, 816, -192, 864], [0, 48, 816, 144, 864], [0, -432, 864, 144, 912], [0, -624, 912, -576, 960], [0, -336, 912, 144, 960], [0, -528, 960, -384, 1008], [0, -288, 960, -240, 1008], [0, -192, 960, 144, 1008], [0, -384, 1008, 144, 1056], [0, -192, 1056, 144, 1104], [0, -624, 1008, -576, 1152], [0, -336, 1104, 144, 1152], [0, -384, 1152, -336, 1200], [0, -288, 1152, -192, 1200], [0, -144, 1152, -48, 1200], [0, 0, 1152, 144, 1200], [0, -624, 1200, -528, 1248], [0, -480, 1200, -432, 1248], [0, -384, 1200, 144, 1248]] }, { id: "centrifuge_zone2", label: [0, -144, 24], rects: [[0, -288, -240, -144, -192], [0, -288, -144, -240, -96], [0, -144, -144, 0, -96], [0, -144, -96, -96, -48], [0, -432, -48, -240, 0], [0, -144, -48, -48, 0], [0, 0, -48, 96, 0], [0, 192, -48, 240, 0], [0, -528, 0, 240, 48], [0, -240, 48, -192, 96], [0, -48, 48, 0, 96], [0, 48, 48, 192, 96], [0, -528, 48, -336, 144], [0, 48, 96, 96, 144], [0, -624, 144, -384, 192], [0, 144, 96, 240, 192], [0, -528, 192, -432, 240], [0, 144, 192, 288, 240], [0, -864, 240, -816, 288], [0, -624, 240, -576, 288], [0, 96, 240, 192, 288], [0, -864, 288, -576, 336], [0, -528, 240, -480, 336], [0, 192, 288, 336, 336], [0, -864, 336, -480, 384], [0, -864, 384, -528, 432], [0, 192, 384, 288, 432], [0, -864, 432, -672, 480], [0, -576, 432, -432, 480], [0, -528, 480, -432, 528], [0, 144, 432, 288, 528], [0, 96, 528, 288, 576], [0, 96, 576, 240, 624], [0, 96, 624, 192, 672]] }, { id: "centrifuge_zone", label: [0, -288, 576], rects: [[0, -336, -480, -144, -432], [0, -384, -432, 0, -384], [0, -384, -384, -144, -336], [0, -96, -384, 0, -336], [0, -384, -336, -48, -288], [0, -624, -288, -576, -240], [0, -528, -288, -480, -240], [0, -432, -288, -192, -240], [0, -96, -288, 0, -240], [0, -864, -288, -816, -192], [0, -768, -240, -432, -192], [0, -384, -240, -288, -192], [0, -144, -240, -96, -192], [0, -336, -192, -240, -144], [0, -192, -192, 0, -144], [0, -480, -192, -384, -96], [0, -240, -144, -192, -96], [0, 0, -144, 96, -96], [0, -816, -192, -528, -48], [0, -432, -96, -240, -48], [0, -192, -96, -144, -48], [0, -48, -96, 144, -48], [0, -864, -48, -432, 0], [0, -240, -48, -144, 0], [0, -48, -48, 0, 0], [0, 96, -48, 192, 0], [0, -336, 48, -240, 96], [0, -192, 48, -48, 96], [0, 0, 48, 48, 96], [0, 192, 48, 288, 96], [0, -864, 0, -528, 144], [0, -336, 96, 48, 144], [0, 96, 96, 144, 144], [0, 240, 96, 288, 144], [0, -864, 144, -624, 192], [0, -384, 144, 0, 192], [0, 48, 144, 144, 192], [0, 240, 144, 336, 192], [0, -864, 192, -528, 240], [0, -432, 192, 144, 240], [0, 288, 192, 336, 240], [0, -816, 240, -624, 288], [0, -480, 240, 96, 288], [0, 192, 240, 336, 288], [0, -576, 240, -528, 336], [0, -480, 288, 192, 336], [0, -480, 336, -192, 384], [0, -96, 336, 336, 384], [0, -528, 384, -192, 432], [0, -144, 384, 192, 432], [0, -672, 432, -576, 480], [0, -432, 432, 144, 480], [0, -672, 480, -528, 528], [0, -432, 480, -336, 528], [0, -288, 480, 144, 528], [0, 288, 384, 336, 576], [0, -672, 528, 96, 624], [0, -672, 624, -432, 672], [0, -384, 624, 96, 672], [0, -720, 672, -432, 720], [0, -384, 672, 240, 720], [0, -48, 720, 240, 768], [0, -384, 720, -288, 816], [0, -48, 768, 96, 816], [0, 144, 768, 192, 816], [0, -336, 816, -240, 864], [0, -192, 816, 48, 864]] }, { id: "control_room_zone", label: [0, 648, 384], rects: [[0, 336, 48, 720, 96], [0, 288, 96, 720, 144], [0, 336, 144, 720, 240], [0, 336, 240, 768, 288], [0, 336, 288, 960, 480], [0, 336, 480, 720, 528], [0, 480, 528, 720, 720]] }, { id: "under_rocket_zone", label: [0, 1392, 576], rects: [[0, 1248, -48, 1296, 0], [0, 1344, -48, 1584, 0], [0, 1632, -48, 1776, 0], [0, 1200, 0, 1824, 48], [0, 1152, 48, 1824, 96], [0, 1104, 96, 1776, 144], [0, 1008, 144, 1824, 192], [0, 1008, 192, 1632, 240], [0, 1680, 192, 1776, 240], [0, 1008, 240, 1824, 288], [0, 960, 288, 1488, 336], [0, 1536, 288, 1824, 336], [0, 960, 336, 1776, 384], [0, 960, 384, 1824, 432], [0, 960, 432, 1488, 480], [0, 1536, 432, 1824, 480], [0, 1056, 480, 1824, 528], [0, 1008, 528, 1776, 624], [0, 1104, 624, 1584, 672], [0, 1632, 624, 1824, 672], [0, 1104, 672, 1824, 720], [0, 1200, 720, 1584, 768], [0, 1728, 720, 1824, 768]] }, { id: "roof_connector_zone", label: [0, 120, 1296], rects: [[0, -336, 960, -288, 1008], [0, -240, 960, -192, 1008], [0, -336, 1056, -192, 1104], [0, -336, 1152, -288, 1200], [0, -192, 1152, -144, 1200], [0, -48, 1152, 0, 1200], [0, 144, 1152, 576, 1248], [0, -336, 1248, 576, 1344], [0, -336, 1344, 480, 1440], [0, -384, 1440, 480, 1488], [0, -336, 1488, -240, 1536], [0, 0, 1488, 528, 1536], [0, 192, 1536, 240, 1584], [0, 288, 1536, 528, 1584], [0, 144, 1584, 528, 1680]] }, { id: "north_path_zone", label: [0, 792, 1752], rects: [[0, 1056, 672, 1104, 720], [0, 1008, 720, 1200, 768], [0, 960, 768, 1632, 816], [0, 912, 816, 1440, 864], [0, 1536, 816, 1584, 864], [0, 912, 864, 1392, 912], [0, 960, 912, 1392, 1008], [0, 1104, 1008, 1248, 1056], [0, 1296, 1008, 1344, 1056], [0, 1440, 912, 1488, 1056], [0, 1200, 1056, 1248, 1104], [0, 960, 1008, 1056, 1152], [0, 1296, 1104, 1344, 1152], [0, 1440, 1104, 1488, 1152], [0, 960, 1152, 1104, 1200], [0, 1248, 1152, 1488, 1200], [0, 912, 1200, 1488, 1248], [0, 624, 1248, 672, 1296], [0, 816, 1248, 1392, 1296], [0, 1488, 1248, 1536, 1296], [0, 576, 1296, 1392, 1344], [0, 528, 1344, 1248, 1392], [0, 1296, 1344, 1392, 1392], [0, 576, 1392, 1248, 1440], [0, 1296, 1392, 1488, 1440], [0, 144, 1536, 192, 1584], [0, 240, 1536, 288, 1584], [0, 528, 1440, 1392, 1584], [0, 528, 1584, 1440, 1680], [0, 144, 1680, 1440, 1824], [0, 144, 1824, 528, 1872], [0, 576, 1824, 1440, 1872], [0, 144, 1872, 1440, 1920], [0, 144, 1920, 1392, 1968], [0, 144, 1968, 288, 2016], [0, 336, 1968, 1392, 2016], [0, 192, 2016, 672, 2064], [0, 720, 2016, 768, 2064], [0, 816, 2016, 864, 2064], [0, 912, 2016, 960, 2064], [0, 192, 2064, 288, 2112], [0, 336, 2064, 432, 2112]] }, { id: "base_entry_zone2", label: [0, -360, 1752], rects: [[0, -528, 864, -432, 912], [0, -528, 912, -480, 960], [0, -432, 912, -336, 960], [0, -768, 960, -672, 1008], [0, -528, 1008, -480, 1056], [0, -720, 1056, -672, 1104], [0, -528, 1056, -432, 1104], [0, -576, 1152, -432, 1200], [0, -720, 1152, -624, 1248], [0, -768, 1248, -672, 1296], [0, -624, 1248, -432, 1296], [0, -480, 1296, -384, 1344], [0, -912, 1344, -864, 1392], [0, -768, 1344, -720, 1392], [0, -672, 1344, -528, 1392], [0, -432, 1344, -384, 1392], [0, -864, 1392, -720, 1440], [0, -624, 1392, -576, 1440], [0, -480, 1392, -384, 1440], [0, -816, 1440, -720, 1488], [0, -672, 1440, -576, 1488], [0, -528, 1440, -480, 1488], [0, -528, 1488, -336, 1536], [0, -240, 1488, 0, 1536], [0, -576, 1536, 144, 1584], [0, -624, 1584, 144, 1632], [0, -672, 1632, 144, 1680], [0, -768, 1680, 144, 1728], [0, -864, 1728, 144, 1776], [0, -912, 1776, -336, 1824], [0, -288, 1776, 144, 1824], [0, -864, 1824, -336, 1872], [0, -192, 1824, 144, 1872], [0, -864, 1872, -528, 1920], [0, -912, 1920, -528, 1968], [0, -912, 1968, -576, 2016], [0, -144, 1872, 144, 2016], [0, -864, 2016, -576, 2064], [0, -816, 2064, -576, 2112], [0, -144, 2016, 192, 2112]] }, { id: "power_building", label: [0, -816, 1056], rects: [[0, -816, 816, -672, 864], [0, -720, 864, -672, 912], [0, -624, 864, -528, 912], [0, -912, 864, -768, 960], [0, -720, 912, -624, 960], [0, -576, 912, -528, 960], [0, -864, 960, -768, 1008], [0, -672, 960, -528, 1008], [0, -912, 1008, -720, 1104], [0, -672, 1056, -624, 1104], [0, -912, 1104, -672, 1152], [0, -624, 1152, -576, 1200], [0, -912, 1152, -720, 1248], [0, -912, 1248, -768, 1296], [0, -672, 1248, -624, 1296], [0, -864, 1296, -768, 1392], [0, -720, 1296, -672, 1392], [0, -672, 1392, -624, 1440], [0, -720, 1440, -672, 1488], [0, -912, 1440, -816, 1536]] }, { id: "storage_zone2", label: [0, 312, -480], rects: [[0, -144, -672, 480, -624], [0, -144, -624, 672, -576], [0, -48, -576, 720, -528], [0, -144, -528, 768, -432], [0, 0, -432, 672, -384], [0, -144, -384, -96, -336], [0, 0, -384, 192, -336], [0, 240, -384, 672, -336], [0, -48, -336, 720, -288], [0, -192, -288, -96, -240], [0, 0, -288, 672, -240], [0, -96, -240, 672, -192], [0, 0, -192, 672, -144], [0, -192, -144, -144, -96], [0, 192, -144, 672, -96], [0, -96, -96, -48, -48], [0, 192, -96, 576, -48]] }, { id: "storage_zone", label: [0, -936, -120], rects: [[0, -672, -480, -624, -432], [0, -816, -432, -432, -384], [0, -864, -384, -384, -336], [0, -960, -336, -384, -288], [0, -1008, -288, -864, -240], [0, -816, -288, -624, -240], [0, -576, -288, -528, -240], [0, -480, -288, -432, -240], [0, -1056, -240, -864, -192], [0, -816, -240, -768, -192], [0, -432, -240, -384, -192], [0, -384, -192, -336, -144], [0, -240, -192, -192, -144], [0, -528, -192, -480, -96], [0, -384, -144, -288, -96], [0, -1056, -192, -816, -48], [0, -528, -96, -432, -48], [0, -240, -96, -192, -48]] }, { id: "base_entry_zone", label: [0, -1728, 1968], rects: [[0, -1584, 816, -1344, 864], [0, -1632, 864, -1344, 912], [0, -1680, 912, -1296, 960], [0, -1680, 960, -1248, 1008], [0, -1680, 1008, -1200, 1104], [0, -1680, 1104, -1152, 1152], [0, -1584, 1152, -1152, 1200], [0, -1680, 1200, -1152, 1296], [0, -1104, 1248, -1008, 1296], [0, -960, 1248, -912, 1296], [0, -1680, 1296, -864, 1344], [0, -1680, 1344, -912, 1392], [0, -1680, 1392, -1488, 1440], [0, -1440, 1392, -1344, 1440], [0, -1296, 1392, -864, 1440], [0, -2448, 1440, -2352, 1488], [0, -2304, 1440, -1920, 1488], [0, -1872, 1440, -1776, 1488], [0, -1728, 1440, -1392, 1488], [0, -1296, 1440, -912, 1488], [0, -2448, 1488, -1296, 1536], [0, -1248, 1488, -912, 1536], [0, -2544, 1536, -1248, 1584], [0, -1200, 1536, -864, 1584], [0, -2544, 1584, -864, 1632], [0, -2544, 1632, -1248, 1680], [0, -1200, 1632, -864, 1680], [0, -2496, 1680, -2448, 1728], [0, -2400, 1680, -1776, 1728], [0, -2544, 1728, -1776, 1776], [0, -1680, 1680, -1200, 1776], [0, -1152, 1680, -864, 1776], [0, -2544, 1776, -912, 1824], [0, -2544, 1824, -2448, 1872], [0, -2400, 1824, -864, 1872], [0, -2544, 1872, -864, 1920], [0, -2544, 1920, -912, 2016], [0, -1536, 2016, -1488, 2064], [0, -1440, 2016, -864, 2064], [0, -2544, 2016, -1776, 2112], [0, -1392, 2064, -864, 2112], [0, -2544, 2112, -2208, 2160], [0, -2160, 2112, -1776, 2160], [0, -1344, 2112, -1104, 2160], [0, -1056, 2112, -960, 2160], [0, -2496, 2160, -2448, 2208], [0, -2400, 2160, -1824, 2208], [0, -2448, 2208, -1776, 2256], [0, -2400, 2256, -1776, 2304], [0, -1296, 2160, -864, 2304], [0, -2448, 2304, -1776, 2352], [0, -1296, 2304, -912, 2352], [0, -2400, 2352, -1776, 2400]] }, { id: "access_tunnel_zone", label: [0, -1104, 696], rects: [[0, -1104, -48, -864, 0], [0, -1056, 0, -864, 48], [0, -1104, 48, -864, 144], [0, -1056, 144, -864, 240], [0, -1104, 240, -864, 432], [0, -1056, 432, -864, 480], [0, -1344, 576, -1200, 624], [0, -1104, 480, -864, 624], [0, -1344, 624, -864, 768], [0, -1344, 768, -768, 816], [0, -1344, 816, -816, 864], [0, -1344, 864, -912, 912], [0, -1296, 912, -912, 960], [0, -1248, 960, -864, 1008], [0, -1200, 1008, -912, 1056]] }], doors: [{ kind: "door", cost: 750, at: [0, -866, 364], rooms: [15, 4] }, { kind: "door", cost: 1250, at: [0, -331, 990], rooms: [2, 8] }, { kind: "door", cost: 750, at: [0, -505, 704], rooms: [5, 3] }, { kind: "door", cost: 1e3, at: [0, -764, 941], rooms: [11, 2] }, { kind: "door", cost: 1250, at: [0, -336, 922], rooms: [3, 10] }, { kind: "door", cost: 1250, at: [0, 589, 1226], rooms: [1, 8] }, { kind: "door", cost: 1500, at: [0, 307, 1532], rooms: [8, 1] }, { kind: "door", cost: 1250, at: [0, 155, 1863], rooms: [9, 10] }, { kind: "door", cost: 1250, at: [0, -885, 1919], rooms: [10, 14] }, { kind: "door", cost: 1e3, at: [0, -951, -42], rooms: [15, 13] }, { kind: "door", cost: 1250, at: [0, 67, -694], rooms: [0, 12] }], pois: [{ kind: "perk", id: "specialty_quickrevive", at: [0, -184, 830] }, { kind: "perk", id: "specialty_fastreload", at: [0, 887, 1236] }, { kind: "perk", id: "specialty_longersprint", at: [0, 622, -122] }, { kind: "perk", id: "specialty_armorvest", at: [0, -65, 791] }, { kind: "perk", id: "specialty_flakjacket", at: [0, -2313, 2370] }, { kind: "perk", id: "specialty_additionalprimaryweapon", at: [0, 420, 1359] }, { kind: "pap", id: null, at: [0, 401, 388] }, { kind: "power", id: null, at: [0, -465, 914] }, { kind: "box", id: null, at: [0, 471, -1922] }, { kind: "box", id: null, at: [0, 1222, 1654] }, { kind: "box", id: null, at: [0, 675, -317] }, { kind: "box", id: null, at: [0, -468, 1477] }, { kind: "box", id: null, at: [0, -624, 588] }, { kind: "box", id: null, at: [0, -93, 1472] }, { kind: "box", id: null, at: [0, -2005, 2114] }, { kind: "box", id: null, at: [0, 1405, 1248] }] };
+
+  // src/map/plans/cotd.json
+  var cotd_default = { v: 1, slug: "cotd", sig: "z20d18", floors: [{ name: "Ground floor", below: null }], rooms: [{ id: "catwalk_zone", label: [0, 312, 1392], rects: [[0, -48, 912, 0, 960], [0, 144, 912, 240, 960], [0, -192, 960, 240, 1008], [0, -96, 1008, 240, 1056], [0, 48, 1056, 240, 1104], [0, 0, 1104, 144, 1152], [0, 192, 1104, 336, 1152], [0, 0, 1152, 96, 1200], [0, 144, 1152, 336, 1200], [0, 192, 1200, 384, 1248], [0, -144, 1248, -96, 1296], [0, 0, 1248, 48, 1296], [0, 144, 1248, 192, 1296], [0, 288, 1248, 384, 1296], [0, -192, 1296, -144, 1344], [0, -96, 1296, -48, 1344], [0, -192, 1344, -96, 1392], [0, 144, 1344, 192, 1392], [0, -144, 1392, -96, 1440], [0, 0, 1296, 96, 1440], [0, -48, 1440, 0, 1488], [0, 48, 1440, 96, 1488], [0, 144, 1440, 192, 1488], [0, 240, 1296, 384, 1488], [0, 0, 1488, 48, 1536], [0, 96, 1488, 144, 1536], [0, 192, 1488, 384, 1536], [0, 192, 1536, 336, 1584], [0, 144, 1584, 336, 1632], [0, -144, 1632, -96, 1680], [0, -48, 1632, 0, 1680], [0, 48, 1536, 96, 1680], [0, 144, 1632, 288, 1680], [0, -96, 1680, 288, 1728], [0, -192, 1728, -144, 1776], [0, -96, 1728, 192, 1776]] }, { id: "lighthouse2_zone", label: [0, -24, 1128], rects: [[0, -144, 1104, -96, 1152], [0, -192, 1152, -144, 1200], [0, -48, 1056, 0, 1200], [0, 96, 1152, 144, 1200], [0, -240, 1200, -192, 1248], [0, -336, 1248, -288, 1296], [0, -96, 1248, 0, 1296], [0, 48, 1248, 96, 1296], [0, -144, 1296, -96, 1344], [0, 96, 1296, 192, 1344], [0, -336, 1344, -192, 1392], [0, 96, 1344, 144, 1392], [0, -336, 1392, -240, 1440], [0, -192, 1392, -144, 1440], [0, -144, 1440, -48, 1488], [0, -336, 1488, -240, 1536], [0, -144, 1488, 0, 1536], [0, 48, 1488, 96, 1536], [0, 144, 1488, 192, 1536], [0, -288, 1536, -240, 1584], [0, -144, 1536, -96, 1584], [0, -192, 1584, -48, 1632], [0, 0, 1584, 48, 1632]] }, { id: "beach_zone2", label: [0, -1896, 1968], rects: [[0, -1200, 1200, -864, 1248], [0, -1248, 1248, -864, 1344], [0, -1200, 1344, -816, 1392], [0, -1776, 1392, -1536, 1440], [0, -1488, 1392, -960, 1440], [0, -1824, 1440, -960, 1488], [0, -1776, 1488, -912, 1536], [0, -1776, 1536, -960, 1584], [0, -1824, 1584, -1536, 1632], [0, -1488, 1584, -1440, 1632], [0, -1392, 1584, -1248, 1632], [0, -1200, 1584, -1056, 1632], [0, -1776, 1632, -1584, 1680], [0, -2208, 1680, -2064, 1728], [0, -2208, 1728, -2016, 1776], [0, -1824, 1680, -1632, 1776], [0, -2160, 1776, -2016, 1824], [0, -1776, 1776, -1632, 1824], [0, -1824, 1824, -1632, 1872], [0, -2208, 1824, -1920, 1920], [0, -1776, 1872, -1632, 1920], [0, -2160, 1920, -1632, 2016], [0, -2112, 2016, -1680, 2064], [0, -2112, 2064, -1776, 2112], [0, -2064, 2112, -1776, 2160], [0, -1968, 2160, -1872, 2208]] }, { id: "residence_roof_zone", label: [0, -696, 1296], rects: [[0, -480, 576, -432, 624], [0, -624, 624, -576, 672], [0, -480, 624, -384, 672], [0, -624, 672, -528, 720], [0, -480, 672, -336, 720], [0, -912, 624, -720, 768], [0, -624, 720, -432, 768], [0, -912, 768, -288, 816], [0, -960, 816, -480, 864], [0, -960, 864, -768, 912], [0, -480, 864, -336, 912], [0, -912, 912, -720, 960], [0, -672, 912, -624, 960], [0, -576, 912, -528, 960], [0, -480, 912, -432, 960], [0, -336, 912, -288, 960], [0, -864, 960, -528, 1008], [0, -480, 960, -288, 1008], [0, -864, 1008, -720, 1056], [0, -672, 1008, -432, 1056], [0, -336, 1008, -288, 1056], [0, -720, 1056, -672, 1104], [0, -576, 1056, -336, 1104], [0, -864, 1056, -768, 1152], [0, -672, 1104, -432, 1152], [0, -384, 1104, -288, 1152], [0, -864, 1152, -528, 1200], [0, -480, 1152, -336, 1200], [0, -864, 1200, -384, 1248], [0, -864, 1248, -528, 1344], [0, -816, 1344, -768, 1392], [0, -672, 1344, -576, 1392]] }, { id: "residence1_zone", label: [0, -624, 888], rects: [[0, -384, 624, -336, 672], [0, -432, 720, -336, 768], [0, -480, 816, -288, 864], [0, -768, 864, -480, 912], [0, -336, 864, -288, 912], [0, -720, 912, -672, 960], [0, -624, 912, -576, 960], [0, -432, 912, -336, 960], [0, -528, 912, -480, 1008], [0, -720, 1008, -672, 1056], [0, -432, 1008, -336, 1056], [0, -768, 1056, -720, 1104], [0, -672, 1056, -576, 1104], [0, -768, 1104, -672, 1152], [0, -432, 1104, -384, 1152], [0, -528, 1152, -480, 1200]] }, { id: "shipback_level3_zone", label: [0, -600, -1080], rects: [[0, -576, -1152, -528, -1104], [0, -672, -1104, -528, -1056], [0, -720, -1008, -672, -960], [0, -672, -912, -576, -864], [0, -720, -864, -672, -816]] }, { id: "shipback_near2_zone", label: [0, -1080, -1104], rects: [[0, -1392, -1536, -1344, -1488], [0, -1296, -1536, -1200, -1488], [0, -1152, -1536, -1104, -1488], [0, -1296, -1488, -1248, -1440], [0, -1056, -1488, -1008, -1440], [0, -960, -1488, -912, -1440], [0, -1296, -1440, -960, -1392], [0, -912, -1440, -864, -1392], [0, -816, -1440, -528, -1392], [0, -1392, -1440, -1344, -1344], [0, -1296, -1392, -1200, -1344], [0, -1152, -1392, -864, -1344], [0, -768, -1392, -624, -1344], [0, -576, -1392, -528, -1344], [0, -480, -1440, -432, -1344], [0, -1152, -1344, -1056, -1296], [0, -1008, -1344, -960, -1296], [0, -912, -1344, -576, -1296], [0, -528, -1344, -432, -1296], [0, -1392, -1344, -1200, -1248], [0, -1152, -1296, -1104, -1248], [0, -1056, -1296, -864, -1248], [0, -816, -1296, -432, -1248], [0, -1440, -1248, -1008, -1200], [0, -912, -1248, -672, -1200], [0, -576, -1248, -432, -1200], [0, -1440, -1200, -864, -1152], [0, -624, -1200, -480, -1152], [0, -672, -1152, -576, -1104], [0, -1296, -1152, -864, -1056], [0, -768, -1104, -672, -1056], [0, -528, -1104, -480, -1056], [0, -1296, -1056, -912, -1008], [0, -768, -1056, -720, -1008], [0, -672, -1056, -624, -1008], [0, -1344, -1008, -912, -960], [0, -624, -1008, -528, -960], [0, -1488, -960, -912, -912], [0, -672, -960, -528, -912], [0, -1488, -912, -1440, -864], [0, -1344, -912, -912, -864], [0, -1488, -864, -912, -816], [0, -672, -864, -576, -816], [0, -1440, -816, -912, -768], [0, -864, -864, -816, -768], [0, -672, -816, -528, -768], [0, -1536, -768, -1440, -720], [0, -1296, -768, -1248, -720], [0, -1200, -768, -1152, -720], [0, -1104, -768, -912, -720], [0, -864, -768, -768, -720], [0, -720, -768, -528, -720], [0, -1536, -720, -1344, -672], [0, -1296, -720, -1200, -672], [0, -1104, -720, -1056, -672], [0, -912, -720, -528, -672], [0, -1392, -672, -1056, -624], [0, -768, -672, -720, -624], [0, -672, -672, -528, -624], [0, -1200, -624, -1152, -576], [0, -960, -624, -672, -576], [0, -624, -624, -528, -576], [0, -912, -576, -576, -528], [0, -768, -528, -576, -480]] }, { id: "shipback_far_zone", label: [0, -2256, -1152], rects: [[0, -2448, -1776, -1920, -1728], [0, -2592, -1728, -1872, -1680], [0, -2640, -1680, -1920, -1632], [0, -2688, -1632, -1920, -1584], [0, -2736, -1584, -2304, -1536], [0, -2208, -1584, -1872, -1536], [0, -2688, -1536, -2304, -1488], [0, -2256, -1536, -1920, -1488], [0, -2736, -1488, -2448, -1440], [0, -2304, -1488, -1920, -1392], [0, -1872, -1440, -1728, -1392], [0, -2736, -1440, -2496, -1344], [0, -2304, -1392, -1728, -1296], [0, -2784, -1344, -2496, -1248], [0, -2736, -1248, -2448, -1200], [0, -2400, -1296, -1728, -1200], [0, -2736, -1200, -1776, -1104], [0, -2688, -1104, -1776, -1056], [0, -2640, -1056, -1728, -1008], [0, -2592, -1008, -1728, -960], [0, -2496, -960, -1728, -912], [0, -2352, -912, -2304, -864], [0, -2256, -912, -1728, -864], [0, -2256, -864, -1776, -816], [0, -2064, -816, -1968, -768]] }, { id: "shipback_near_zone", label: [0, -1152, -1560], rects: [[0, -1872, -1728, -1728, -1680], [0, -1152, -1728, -1056, -1680], [0, -1920, -1680, -1584, -1632], [0, -1536, -1680, -1488, -1632], [0, -1200, -1680, -768, -1632], [0, -1920, -1632, -1248, -1584], [0, -1200, -1632, -576, -1584], [0, -1872, -1584, -432, -1536], [0, -1824, -1536, -1392, -1488], [0, -1344, -1536, -1296, -1488], [0, -1200, -1536, -1152, -1488], [0, -1104, -1536, -432, -1488], [0, -1728, -1488, -1296, -1440], [0, -1248, -1488, -1056, -1440], [0, -1008, -1488, -960, -1440], [0, -912, -1488, -432, -1440], [0, -1680, -1440, -1392, -1392], [0, -960, -1440, -912, -1392], [0, -864, -1440, -816, -1392], [0, -1344, -1440, -1296, -1344], [0, -864, -1392, -768, -1344], [0, -624, -1392, -576, -1344], [0, -528, -1440, -480, -1344], [0, -1632, -1392, -1392, -1296], [0, -1056, -1344, -1008, -1296], [0, -960, -1344, -912, -1296], [0, -576, -1344, -528, -1296], [0, -1680, -1296, -1392, -1248], [0, -1200, -1392, -1152, -1248], [0, -1104, -1296, -1056, -1248], [0, -864, -1296, -816, -1248], [0, -432, -1440, -336, -1248], [0, -1680, -1248, -1440, -1200], [0, -1008, -1248, -912, -1200], [0, -672, -1248, -576, -1200], [0, -1728, -1200, -1488, -1152], [0, -864, -1200, -624, -1152], [0, -864, -1152, -672, -1104], [0, -1728, -1152, -1440, -1056], [0, -864, -1104, -768, -1008], [0, -624, -1056, -576, -1008], [0, -1728, -1056, -1344, -960], [0, -864, -1008, -816, -960], [0, -912, -960, -816, -912], [0, -1728, -960, -1488, -864], [0, -1440, -912, -1344, -864], [0, -720, -960, -672, -864], [0, -1776, -864, -1488, -816], [0, -912, -864, -864, -816], [0, -816, -864, -768, -816], [0, -576, -912, -480, -816], [0, -1968, -816, -1440, -768], [0, -768, -816, -672, -768], [0, -1440, -768, -1296, -720], [0, -1248, -768, -1200, -720], [0, -1152, -768, -1104, -720], [0, -768, -768, -720, -720], [0, -1344, -720, -1296, -672], [0, -1200, -720, -1104, -672], [0, -1056, -720, -1008, -672], [0, -960, -720, -912, -672], [0, -2016, -768, -1536, -624], [0, -1008, -672, -960, -624], [0, -912, -672, -768, -624], [0, -720, -672, -672, -624], [0, -2016, -624, -1824, -576], [0, -1728, -624, -1536, -576], [0, -672, -624, -624, -576], [0, -2016, -576, -1776, -528], [0, -1968, -528, -1728, -480], [0, -1968, -480, -1776, -432], [0, -1968, -432, -1728, -384], [0, -2064, -384, -1776, -336], [0, -2112, -336, -1776, -288], [0, -2160, -288, -1776, -240], [0, -2160, -240, -1872, -192], [0, -2112, -192, -1968, -144], [0, -2064, -144, -2016, -96]] }, { id: "shipfront_storage_zone", label: [0, 1680, -2184], rects: [[0, 1392, -2640, 1440, -2592], [0, 1536, -2688, 1632, -2592], [0, 1296, -2592, 1344, -2544], [0, 1440, -2592, 1680, -2544], [0, 1248, -2544, 1440, -2496], [0, 1488, -2544, 1584, -2496], [0, 1632, -2544, 1680, -2496], [0, 1152, -2496, 1488, -2448], [0, 1536, -2496, 1728, -2448], [0, 1152, -2448, 1392, -2400], [0, 1536, -2448, 1776, -2400], [0, 1200, -2400, 1344, -2352], [0, 1440, -2400, 1824, -2352], [0, 1248, -2352, 1296, -2304], [0, 1392, -2352, 1584, -2304], [0, 1632, -2352, 1824, -2304], [0, 1296, -2304, 1584, -2256], [0, 1632, -2304, 1872, -2256], [0, 1200, -2256, 1248, -2208], [0, 1296, -2256, 1536, -2208], [0, 1584, -2256, 1920, -2208], [0, 1104, -2208, 1248, -2160], [0, 1296, -2208, 1344, -2160], [0, 1440, -2208, 1920, -2160], [0, 1056, -2160, 1248, -2112], [0, 1488, -2160, 1824, -2112], [0, 960, -2112, 1344, -2064], [0, 1488, -2112, 1776, -2064], [0, 1872, -2160, 1968, -2064], [0, 1008, -2064, 1344, -2016], [0, 1440, -2064, 1536, -2016], [0, 1584, -2064, 1728, -2016], [0, 1824, -2064, 1872, -2016], [0, 1008, -2016, 1056, -1968], [0, 1152, -2016, 1344, -1968], [0, 1536, -2016, 1680, -1968], [0, 1152, -1968, 1392, -1920], [0, 1440, -1968, 1488, -1920], [0, 1200, -1920, 1344, -1872], [0, 1392, -1920, 1440, -1872], [0, 1536, -1968, 1584, -1872], [0, 1200, -1872, 1392, -1824], [0, 1488, -1872, 1536, -1824], [0, 1248, -1824, 1344, -1776], [0, 1536, -1824, 1632, -1776], [0, 1392, -1824, 1440, -1728], [0, 1488, -1776, 1632, -1728], [0, 1440, -1728, 1584, -1680], [0, 1488, -1680, 1584, -1632]] }, { id: "beach_zone", label: [0, -1896, 768], rects: [[0, -2496, -288, -2352, -240], [0, -2208, -240, -2160, -192], [0, -2544, -240, -2352, -144], [0, -2256, -192, -2112, -144], [0, -2544, -144, -2064, -96], [0, -1488, -144, -1200, -96], [0, -1008, -144, -864, -96], [0, -2544, -96, -2016, -48], [0, -1488, -96, -1152, -48], [0, -1056, -96, -816, -48], [0, -2592, -48, -1968, 0], [0, -1536, -48, -816, 0], [0, -2640, 0, -1872, 48], [0, -1632, 0, -816, 48], [0, -2304, 48, -1776, 96], [0, -1632, 48, -1440, 96], [0, -1392, 48, -1056, 96], [0, -1008, 48, -816, 96], [0, -2640, 48, -2400, 144], [0, -2160, 96, -1728, 144], [0, -1680, 96, -768, 144], [0, -2688, 144, -2448, 192], [0, -2064, 144, -768, 192], [0, -2016, 192, -816, 240], [0, -2688, 192, -2496, 288], [0, -1920, 240, -816, 288], [0, -2688, 288, -2448, 336], [0, -1872, 288, -816, 336], [0, -2688, 336, -2496, 384], [0, -1872, 336, -1008, 384], [0, -2688, 384, -2448, 432], [0, -1776, 384, -1008, 432], [0, -1776, 432, -1056, 480], [0, -2688, 432, -2496, 528], [0, -2064, 480, -1872, 528], [0, -1728, 480, -1056, 528], [0, -2688, 528, -2400, 576], [0, -2688, 576, -2352, 624], [0, -2064, 528, -1008, 624], [0, -2736, 624, -2256, 672], [0, -2208, 624, -2112, 672], [0, -1968, 624, -1056, 672], [0, -2736, 672, -2064, 720], [0, -1968, 672, -1104, 720], [0, -2688, 720, -1104, 816], [0, -2688, 816, -1152, 864], [0, -2640, 864, -1104, 912], [0, -2448, 912, -1104, 960], [0, -2448, 960, -1728, 1008], [0, -1680, 960, -1104, 1008], [0, -2352, 1008, -1920, 1056], [0, -1872, 1008, -1200, 1056], [0, -2352, 1056, -2112, 1104], [0, -1776, 1056, -1200, 1104], [0, -1776, 1104, -1680, 1152], [0, -2304, 1104, -2064, 1200], [0, -1632, 1104, -1200, 1200], [0, -2352, 1200, -2064, 1248], [0, -1536, 1200, -1200, 1248], [0, -2304, 1248, -2064, 1344], [0, -2352, 1344, -2064, 1392], [0, -2304, 1392, -2016, 1488], [0, -2352, 1488, -2016, 1536], [0, -2304, 1536, -2016, 1584], [0, -2256, 1584, -2016, 1632], [0, -2208, 1632, -2112, 1680]] }, { id: "shipfront_2_beach_zone", label: [0, -1320, -192], rects: [[0, -240, -1296, -144, -1248], [0, -432, -1248, -96, -1200], [0, -480, -1200, -48, -1152], [0, -528, -1152, -144, -1104], [0, -480, -1104, -240, -1056], [0, -720, -1056, -672, -1008], [0, -576, -1056, -336, -1008], [0, -672, -1008, -624, -960], [0, -528, -1008, -432, -960], [0, -816, -1008, -720, -912], [0, -912, -912, -720, -864], [0, -768, -864, -720, -816], [0, -816, -816, -768, -768], [0, -912, -816, -864, -720], [0, -1008, -720, -960, -672], [0, -1056, -672, -1008, -624], [0, -960, -672, -912, -624], [0, -1152, -624, -960, -576], [0, -1200, -576, -912, -528], [0, -1248, -528, -960, -480], [0, -1296, -480, -1008, -432], [0, -1344, -432, -1056, -384], [0, -1392, -384, -1104, -336], [0, -1392, -336, -1152, -288], [0, -1440, -288, -1152, -240], [0, -1440, -240, -1200, -144]] }, { id: "shipfront_far_zone", label: [0, 2040, -2808], rects: [[0, 2160, -2976, 2304, -2928], [0, 2400, -2976, 2496, -2928], [0, 1824, -2928, 2016, -2880], [0, 2064, -2928, 2496, -2880], [0, 1776, -2880, 2496, -2832], [0, 1632, -2832, 2448, -2784], [0, 1584, -2784, 1872, -2736], [0, 1968, -2784, 2448, -2736], [0, 1488, -2736, 1920, -2688], [0, 2064, -2736, 2496, -2688], [0, 1392, -2688, 1536, -2640], [0, 1344, -2640, 1392, -2592], [0, 1440, -2640, 1536, -2592], [0, 1632, -2688, 1968, -2592], [0, 2160, -2688, 2496, -2592], [0, 1344, -2592, 1440, -2544], [0, 1680, -2592, 2016, -2544], [0, 2160, -2592, 2400, -2544], [0, 1440, -2544, 1488, -2496], [0, 1584, -2544, 1632, -2496], [0, 1680, -2544, 2400, -2496], [0, 1488, -2496, 1536, -2448], [0, 1728, -2496, 2352, -2448], [0, 1392, -2448, 1536, -2400], [0, 1776, -2448, 2352, -2400], [0, 1008, -2400, 1200, -2352], [0, 1344, -2400, 1440, -2352], [0, 1824, -2400, 2304, -2352], [0, 960, -2352, 1248, -2304], [0, 1296, -2352, 1392, -2304], [0, 1824, -2352, 2256, -2304], [0, 864, -2304, 1296, -2256], [0, 1872, -2304, 2256, -2256], [0, 864, -2256, 1200, -2208], [0, 1920, -2256, 2208, -2208], [0, 864, -2208, 1104, -2160], [0, 1248, -2256, 1296, -2160], [0, 1344, -2208, 1440, -2160], [0, 1920, -2208, 2160, -2160], [0, 912, -2160, 1056, -2112], [0, 1248, -2160, 1488, -2112], [0, 1824, -2160, 1872, -2112], [0, 1968, -2160, 2112, -2112], [0, 1344, -2112, 1488, -2064], [0, 1776, -2112, 1872, -2064], [0, 1968, -2112, 2064, -2064], [0, 1344, -2064, 1440, -2016], [0, 1536, -2064, 1584, -2016], [0, 1728, -2064, 1824, -2016], [0, 1872, -2064, 1968, -2016], [0, 1056, -2016, 1152, -1968], [0, 1344, -2016, 1536, -1968], [0, 1680, -2016, 1968, -1968], [0, 1008, -1968, 1152, -1920], [0, 1392, -1968, 1440, -1920], [0, 1488, -1968, 1536, -1920], [0, 960, -1920, 1200, -1872], [0, 1344, -1920, 1392, -1872], [0, 1440, -1920, 1536, -1872], [0, 1584, -1968, 1872, -1872], [0, 1008, -1872, 1200, -1824], [0, 1392, -1872, 1488, -1824], [0, 1536, -1872, 1824, -1824], [0, 1056, -1824, 1248, -1776], [0, 1344, -1824, 1392, -1776], [0, 1440, -1824, 1536, -1776], [0, 1104, -1776, 1392, -1728], [0, 1440, -1776, 1488, -1728], [0, 1632, -1824, 1776, -1728], [0, 1104, -1728, 1440, -1680], [0, 1584, -1728, 1776, -1680], [0, 1680, -1680, 1728, -1632], [0, 1152, -1680, 1488, -1584], [0, 912, -1584, 960, -1536], [0, 1008, -1584, 1488, -1536], [0, 864, -1536, 1392, -1488], [0, 768, -1488, 1344, -1440], [0, 768, -1440, 1296, -1392], [0, 816, -1392, 1200, -1344], [0, 864, -1344, 1104, -1296], [0, 912, -1296, 1104, -1248], [0, 912, -1248, 1008, -1200]] }, { id: "shipfront_near_zone", label: [0, 720, -1776], rects: [[0, 528, -2064, 672, -1968], [0, 384, -1968, 576, -1920], [0, 624, -1968, 672, -1920], [0, 384, -1920, 528, -1872], [0, 336, -1872, 480, -1824], [0, 288, -1824, 336, -1776], [0, 384, -1824, 432, -1776], [0, 336, -1776, 384, -1728], [0, 432, -1776, 528, -1728], [0, 624, -1824, 816, -1728], [0, 192, -1776, 288, -1680], [0, 384, -1728, 432, -1680], [0, 672, -1728, 816, -1680], [0, 48, -1728, 144, -1632], [0, 336, -1680, 480, -1632], [0, 0, -1632, 96, -1584], [0, 192, -1632, 240, -1584], [0, 432, -1632, 480, -1584], [0, -96, -1584, 0, -1536], [0, 48, -1584, 96, -1536], [0, 384, -1584, 432, -1536], [0, 480, -1584, 528, -1536], [0, -144, -1536, 96, -1488], [0, 432, -1536, 480, -1488], [0, 528, -1536, 576, -1488], [0, -192, -1488, -96, -1440], [0, -336, -1440, -192, -1392], [0, -96, -1440, 0, -1392], [0, 480, -1488, 528, -1392], [0, 576, -1440, 624, -1392], [0, -336, -1392, 0, -1344], [0, 528, -1392, 576, -1344], [0, 624, -1392, 672, -1344], [0, 768, -1392, 816, -1344], [0, -336, -1344, 48, -1296], [0, 624, -1344, 864, -1296], [0, -336, -1296, -240, -1248], [0, -144, -1296, -96, -1248], [0, -48, -1296, 48, -1248], [0, 672, -1296, 720, -1248], [0, 768, -1296, 816, -1248], [0, 48, -1248, 96, -1200], [0, 624, -1248, 720, -1200], [0, 864, -1248, 912, -1200], [0, 0, -1200, 48, -1152], [0, 96, -1200, 144, -1152], [0, 528, -1200, 624, -1152], [0, 768, -1200, 960, -1152], [0, 0, -1152, 144, -1104], [0, 528, -1152, 864, -1104], [0, 144, -1104, 192, -1056], [0, 576, -1104, 624, -1056], [0, 672, -1104, 816, -1056], [0, 48, -1056, 96, -1008], [0, 576, -1056, 768, -1008], [0, 192, -1056, 240, -960], [0, 336, -1056, 384, -960], [0, 432, -1008, 720, -960], [0, 144, -960, 192, -912], [0, 240, -960, 336, -912], [0, 480, -960, 672, -912], [0, 288, -912, 336, -864], [0, 432, -912, 624, -864], [0, 288, -864, 480, -768], [0, 288, -768, 384, -720]] }, { id: "shipfront_bottom_zone", label: [0, -24, -360], rects: [[0, 816, -2160, 912, -2112], [0, 720, -2112, 960, -2064], [0, 576, -1968, 624, -1920], [0, 672, -2064, 1008, -1920], [0, 528, -1920, 960, -1872], [0, 480, -1872, 864, -1824], [0, 336, -1824, 384, -1776], [0, 432, -1824, 624, -1776], [0, 288, -1776, 336, -1728], [0, 384, -1776, 432, -1728], [0, 144, -1728, 192, -1680], [0, 288, -1728, 384, -1680], [0, 432, -1728, 624, -1680], [0, 144, -1680, 336, -1632], [0, 480, -1680, 624, -1632], [0, 96, -1632, 192, -1584], [0, 240, -1632, 432, -1584], [0, 480, -1632, 672, -1584], [0, 0, -1584, 48, -1536], [0, 96, -1584, 384, -1536], [0, 432, -1584, 480, -1536], [0, 528, -1584, 720, -1536], [0, 96, -1536, 432, -1488], [0, 480, -1536, 528, -1488], [0, 576, -1536, 768, -1488], [0, -96, -1488, 480, -1440], [0, 528, -1488, 768, -1440], [0, -192, -1440, -96, -1392], [0, 0, -1440, 480, -1392], [0, 528, -1440, 576, -1392], [0, 624, -1440, 768, -1392], [0, 0, -1392, 528, -1344], [0, 576, -1392, 624, -1344], [0, 672, -1392, 768, -1344], [0, 48, -1344, 624, -1296], [0, -96, -1296, -48, -1248], [0, 48, -1296, 672, -1248], [0, 720, -1296, 768, -1248], [0, 816, -1296, 912, -1248], [0, -96, -1248, 48, -1200], [0, 96, -1248, 624, -1200], [0, 720, -1248, 864, -1200], [0, 48, -1200, 96, -1152], [0, 624, -1200, 768, -1152], [0, -48, -1200, 0, -1104], [0, 144, -1200, 528, -1104], [0, 0, -1104, 144, -1056], [0, 192, -1104, 576, -1056], [0, 624, -1104, 672, -1056], [0, 96, -1056, 192, -1008], [0, 384, -1056, 576, -1008], [0, 48, -1008, 192, -960], [0, 240, -1056, 336, -960], [0, 384, -1008, 432, -960], [0, 96, -960, 144, -912], [0, 192, -960, 240, -912], [0, 336, -960, 480, -912], [0, 144, -912, 288, -864], [0, 336, -912, 432, -864], [0, 96, -864, 288, -768], [0, 48, -768, 288, -720], [0, 48, -720, 336, -672], [0, 0, -672, 240, -624], [0, -48, -624, 240, -576], [0, -96, -576, 192, -480], [0, -144, -480, 96, -240], [0, -96, -240, 144, -144], [0, -48, -144, 192, -48], [0, 0, -48, 240, 0], [0, 0, 0, 144, 48], [0, 48, 48, 96, 96]] }, { id: "start_beach_zone", label: [0, 1824, 1056], rects: [[0, 1824, 0, 1968, 48], [0, 1824, 48, 2016, 96], [0, 1152, 96, 1296, 144], [0, 1344, 96, 1488, 144], [0, 1824, 96, 2112, 144], [0, 1152, 144, 1680, 192], [0, 1824, 144, 2160, 192], [0, 912, 192, 1728, 240], [0, 1824, 192, 2208, 240], [0, 912, 240, 1392, 288], [0, 1440, 240, 1728, 288], [0, 1776, 240, 2400, 288], [0, 864, 288, 1248, 336], [0, 1296, 288, 2400, 336], [0, 864, 336, 2400, 384], [0, 864, 384, 2160, 432], [0, 2208, 384, 2400, 432], [0, 1200, 432, 1488, 480], [0, 1584, 432, 2496, 480], [0, 1248, 480, 1440, 528], [0, 1680, 480, 1824, 528], [0, 1872, 480, 2496, 528], [0, 1200, 528, 1440, 576], [0, 1680, 528, 2544, 576], [0, 1680, 576, 1824, 624], [0, 1872, 576, 2544, 624], [0, 1248, 576, 1488, 672], [0, 1680, 624, 1872, 672], [0, 1920, 624, 2592, 672], [0, 1296, 672, 1584, 720], [0, 1680, 672, 2592, 720], [0, 1248, 720, 2592, 768], [0, 1248, 768, 1824, 816], [0, 1296, 816, 1584, 864], [0, 1632, 816, 1824, 864], [0, 1872, 768, 2592, 864], [0, 1392, 864, 1584, 912], [0, 1632, 864, 2592, 912], [0, 1344, 912, 2544, 960], [0, 1344, 960, 1488, 1008], [0, 1536, 960, 2496, 1008], [0, 1200, 1008, 2448, 1104], [0, 1200, 1104, 1968, 1152], [0, 2016, 1104, 2400, 1152], [0, 1296, 1152, 1872, 1200], [0, 2064, 1152, 2304, 1200], [0, 1392, 1200, 1728, 1248], [0, 2160, 1200, 2256, 1248], [0, 1344, 1248, 1632, 1344], [0, 1344, 1344, 1584, 1440], [0, 1296, 1440, 1536, 1488], [0, 1248, 1488, 1488, 1536], [0, 1248, 1536, 1440, 1584], [0, 1200, 1584, 1440, 1632], [0, 1200, 1632, 1392, 1680], [0, 1104, 1680, 1392, 1728], [0, 1056, 1728, 1344, 1776], [0, 1008, 1776, 1344, 1824], [0, 1008, 1824, 1296, 1872], [0, 1056, 1872, 1248, 1920], [0, 1152, 1920, 1200, 1968]] }, { id: "rear_lagoon_zone", label: [0, 96, 3696], rects: [[0, -336, 2304, -96, 2496], [0, -384, 2496, -96, 2592], [0, -432, 2592, -48, 2640], [0, -432, 2640, 0, 2736], [0, -480, 2736, 0, 2784], [0, -432, 2784, 0, 2832], [0, -384, 2832, -48, 2880], [0, -432, 2880, -144, 2928], [0, -432, 2928, -96, 2976], [0, -480, 2976, -144, 3120], [0, -528, 3120, -144, 3264], [0, 192, 3216, 432, 3264], [0, -528, 3264, 48, 3312], [0, 192, 3264, 480, 3312], [0, 528, 3264, 576, 3312], [0, -480, 3312, 624, 3360], [0, -480, 3360, -288, 3408], [0, -192, 3360, 624, 3408], [0, -480, 3408, -96, 3456], [0, -48, 3408, 576, 3456], [0, -480, 3456, 576, 3504], [0, -432, 3504, -384, 3552], [0, -336, 3504, -288, 3552], [0, -240, 3504, 576, 3552], [0, -480, 3552, 288, 3600], [0, 336, 3552, 480, 3600], [0, -480, 3600, 528, 3648], [0, -480, 3648, -384, 3696], [0, -336, 3648, 528, 3744], [0, -240, 3744, 528, 3792], [0, -192, 3792, 528, 3840], [0, 48, 3840, 528, 3888], [0, 192, 3888, 480, 3936], [0, 240, 3936, 480, 3984], [0, 288, 3984, 480, 4032]] }, { id: "start_cave_zone", label: [0, 288, 2088], rects: [[0, -144, 1728, -96, 1776], [0, -336, 1776, 48, 1824], [0, 960, 1824, 1008, 1872], [0, -384, 1824, 48, 1920], [0, 912, 1872, 1056, 1920], [0, 816, 1920, 1152, 1968], [0, -432, 1920, 48, 2016], [0, 672, 1968, 1152, 2016], [0, -432, 2016, 288, 2064], [0, 336, 2016, 384, 2064], [0, 432, 2016, 1056, 2064], [0, -432, 2064, 1008, 2112], [0, -384, 2112, 912, 2160], [0, -288, 2160, 768, 2208], [0, -288, 2208, 528, 2256], [0, 576, 2208, 672, 2256], [0, -288, 2256, 48, 2304], [0, -48, 2304, 0, 2352]] }, { id: "lighthouse1_zone", label: [0, 0, 1224], rects: [[0, -240, 1008, -96, 1056], [0, -336, 1056, -48, 1104], [0, 0, 1056, 48, 1104], [0, -288, 1104, -144, 1152], [0, -96, 1104, -48, 1152], [0, 144, 1104, 192, 1152], [0, -336, 1152, -192, 1200], [0, -144, 1152, -48, 1200], [0, -384, 1200, -240, 1248], [0, -192, 1200, 192, 1248], [0, -432, 1248, -336, 1296], [0, -288, 1248, -144, 1296], [0, 96, 1248, 144, 1296], [0, 192, 1248, 288, 1296], [0, -432, 1296, -192, 1344], [0, -48, 1296, 0, 1344], [0, 192, 1296, 240, 1392], [0, -432, 1344, -336, 1440], [0, -240, 1392, -192, 1440], [0, -96, 1344, 0, 1440], [0, 96, 1392, 240, 1440], [0, -432, 1440, -144, 1488], [0, 0, 1440, 48, 1488], [0, 96, 1440, 144, 1488], [0, 192, 1440, 240, 1488], [0, -432, 1488, -336, 1536], [0, -432, 1536, -288, 1584], [0, -240, 1488, -144, 1584], [0, -96, 1536, 48, 1584], [0, 96, 1536, 192, 1584], [0, -432, 1584, -192, 1632], [0, -48, 1584, 0, 1632], [0, -384, 1632, -144, 1680], [0, -96, 1632, -48, 1680], [0, 0, 1632, 48, 1680], [0, 96, 1584, 144, 1680], [0, -240, 1680, -96, 1728]] }, { id: "start_zone", label: [0, 216, 528], rects: [[0, 912, -432, 1056, -384], [0, 624, -384, 1104, -288], [0, 576, -288, 1152, -240], [0, 528, -240, 1152, -192], [0, 528, -192, 1200, -144], [0, 480, -144, 1200, -48], [0, 528, -48, 960, 0], [0, 144, 0, 288, 48], [0, 576, 0, 864, 48], [0, 96, 48, 288, 96], [0, 576, 48, 720, 96], [0, 768, 48, 864, 96], [0, 96, 96, 336, 144], [0, 528, 96, 864, 144], [0, -336, 144, -240, 192], [0, 144, 144, 336, 192], [0, 432, 144, 864, 192], [0, -432, 192, -240, 240], [0, -528, 240, -192, 288], [0, 144, 192, 912, 288], [0, -768, 288, 864, 336], [0, -1008, 336, 864, 384], [0, -1008, 384, -384, 432], [0, -336, 384, 864, 432], [0, -1056, 432, -528, 480], [0, -1056, 480, -624, 528], [0, -768, 528, -624, 624], [0, -336, 432, 768, 624], [0, -576, 576, -480, 672], [0, -336, 624, 240, 672], [0, 288, 624, 720, 672], [0, -528, 672, -480, 720], [0, 480, 672, 576, 720], [0, -720, 624, -624, 768], [0, -336, 672, 192, 768], [0, -288, 768, 192, 912], [0, -192, 912, -48, 960], [0, 0, 912, 144, 960], [0, 240, 960, 336, 1104]] }], doors: [{ kind: "door", cost: 1e3, at: [0, -111, 999], rooms: [18, 19] }, { kind: "door", cost: 1e3, at: [0, -459, 711], rooms: [19, 4] }, { kind: "door", cost: 1e3, at: [0, -112, 1723], rooms: [17, 18] }, { kind: "door", cost: 1e3, at: [0, -322, 1167], rooms: [3, 1] }, { kind: "door", cost: 1e3, at: [0, 1189, -2365], rooms: [12, 9] }, { kind: "door", cost: 1e3, at: [0, 999, -2023], rooms: [14, 9] }, { kind: "door", cost: 1e3, at: [0, 861, -1327], rooms: [12, 13] }, { kind: "door", cost: 750, at: [0, -602, -1152], rooms: [6, 5] }, { kind: "door", cost: 750, at: [0, -679, -787], rooms: [5, 6] }, { kind: "door", cost: 1e3, at: [0, -369, 1128], rooms: [4, 18] }, { kind: "debris", cost: 1e3, at: [0, -355, -1335], rooms: [8, 13] }, { kind: "debris", cost: 750, at: [0, -146, 1309], rooms: [1, 18] }, { kind: "debris", cost: 750, at: [0, -2084, -193], rooms: [8, 10] }, { kind: "debris", cost: 750, at: [0, 137, 31], rooms: [14, 19] }, { kind: "debris", cost: 1e3, at: [0, -1738, -933], rooms: [7, 8] }, { kind: "debris", cost: 750, at: [0, 8, 1409], rooms: [0, 1] }, { kind: "debris", cost: 750, at: [0, -2144, 1714], rooms: [2, 10] }, { kind: "debris", cost: 1250, at: [0, -1393, -1273], rooms: [6, 8] }], pois: [{ kind: "perk", id: "specialty_rof", at: [0, -2535, -1447] }, { kind: "perk", id: "specialty_armorvest", at: [0, 1526, -2651] }, { kind: "perk", id: "specialty_fastreload", at: [0, 1260, 1567] }, { kind: "perk", id: "specialty_deadshot", at: [0, 15, 1064] }, { kind: "perk", id: "specialty_longersprint", at: [0, 306, 3546] }, { kind: "perk", id: "specialty_flakjacket", at: [0, -344, 874] }, { kind: "perk", id: "specialty_quickrevive", at: [0, -1055, 545] }, { kind: "perk", id: "specialty_additionalprimaryweapon", at: [0, 2424, -2884] }, { kind: "pap", id: null, at: [0, 1086, -347] }, { kind: "power", id: null, at: [0, -706, -959] }, { kind: "box", id: null, at: [0, 2222, -2718] }, { kind: "box", id: null, at: [0, -551, -958] }, { kind: "box", id: null, at: [0, -78, 2827] }, { kind: "box", id: null, at: [0, 138, 1609] }, { kind: "box", id: null, at: [0, -2054, 700] }, { kind: "box", id: null, at: [0, -665, 809] }] };
+
+  // src/map/plans/five.json
+  var five_default = { v: 1, slug: "five", sig: "z14d13", floors: [{ name: "Labs", below: -560 }, { name: "War room", below: -250 }, { name: "Top floor", below: null }], rooms: [{ id: "labs_zone3", label: [0, -1200, 3720], rects: [[0, -1344, 3312, -1248, 3360], [0, -1488, 3360, -1200, 3408], [0, -1488, 3408, -1152, 3456], [0, -1488, 3456, -1200, 3504], [0, -1488, 3504, -1104, 3552], [0, -1008, 3504, -912, 3552], [0, -1536, 3552, -1104, 3648], [0, -1056, 3552, -864, 3648], [0, -1488, 3648, -912, 3792], [0, -1488, 3792, -960, 3840], [0, -1344, 3840, -1200, 3888]] }, { id: "labs_zone2", label: [0, -384, 4776], rects: [[0, -624, 4032, -480, 4080], [0, -672, 4080, -432, 4128], [0, -720, 4128, -432, 4224], [0, -720, 4224, -336, 4272], [0, -720, 4272, -96, 4320], [0, -720, 4320, -48, 4368], [0, -720, 4368, -96, 4416], [0, -720, 4416, -48, 4464], [0, -720, 4464, 0, 4560], [0, -672, 4560, -48, 4608], [0, -672, 4608, -96, 4656], [0, -720, 4656, -96, 4704], [0, -720, 4704, -48, 4848], [0, -672, 4848, -480, 4896], [0, -432, 4848, -336, 4896], [0, -288, 4848, -48, 4896], [0, -672, 4896, -576, 4944], [0, -384, 4896, -48, 4944], [0, -432, 4944, -48, 5040], [0, -384, 5040, -48, 5088]] }, { id: "labs_zone1", label: [0, -1200, 4992], rects: [[0, -1392, 4416, -1200, 4464], [0, -1152, 4416, -912, 4464], [0, -1392, 4464, -912, 4512], [0, -1440, 4512, -864, 4608], [0, -1344, 4608, -912, 4704], [0, -1296, 4704, -864, 4752], [0, -1344, 4752, -864, 4800], [0, -1296, 4800, -864, 4848], [0, -1488, 4848, -864, 4896], [0, -1488, 4896, -912, 4944], [0, -1536, 4944, -864, 5040], [0, -1488, 5040, -864, 5088]] }, { id: "labs_hallway2", label: [0, -1608, 4728], rects: [[0, -960, 4224, -912, 4272], [0, -1728, 4272, -864, 4320], [0, -1728, 4320, -720, 4416], [0, -1728, 4416, -1392, 4464], [0, -1200, 4416, -1152, 4464], [0, -1728, 4464, -1536, 4512], [0, -912, 4416, -720, 4512], [0, -864, 4512, -720, 4608], [0, -912, 4608, -672, 4656], [0, -912, 4656, -720, 4704], [0, -864, 4704, -720, 4848], [0, -864, 4848, -672, 4896], [0, -1728, 4512, -1488, 4944], [0, -912, 4896, -672, 4944], [0, -1728, 4944, -1536, 5040], [0, -864, 4944, -672, 5040], [0, -1728, 5040, -1488, 5088], [0, -864, 5040, -720, 5088], [0, -1728, 5088, -1248, 5136], [0, -1152, 5088, -960, 5136], [0, -912, 5088, -864, 5136], [0, -816, 5088, -768, 5136], [0, -720, 5088, -528, 5136], [0, -480, 5088, -384, 5136], [0, -1728, 5136, -384, 5184], [0, -336, 5136, -288, 5184], [0, -1728, 5184, -240, 5232], [0, -1680, 5232, -240, 5280], [0, -1728, 5280, -288, 5328], [0, -1680, 5328, -1584, 5376], [0, -1536, 5328, -1248, 5376], [0, -1200, 5328, -1152, 5376], [0, -1104, 5328, -1056, 5376], [0, -1008, 5328, -960, 5376], [0, -912, 5328, -864, 5376], [0, -816, 5328, -768, 5376], [0, -720, 5328, -384, 5376]] }, { id: "labs_hallway1", label: [0, -984, 3960], rects: [[0, -1632, 3312, -1536, 3360], [0, -1680, 3360, -1488, 3408], [0, -912, 3216, -672, 3456], [0, -1728, 3408, -1488, 3552], [0, -912, 3456, -624, 3552], [0, -864, 3552, -672, 3648], [0, -1728, 3552, -1536, 3696], [0, -912, 3648, -720, 3792], [0, -1728, 3696, -1488, 3840], [0, -960, 3792, -720, 3840], [0, -1728, 3840, -1344, 3888], [0, -1056, 3840, -288, 3888], [0, -1728, 3888, -240, 4032], [0, -1728, 4032, -624, 4080], [0, -480, 4032, -336, 4080], [0, -1680, 4080, -720, 4224], [0, -1680, 4224, -1536, 4272], [0, -1488, 4224, -960, 4272], [0, -912, 4224, -720, 4272], [0, -864, 4272, -720, 4320]] }, { id: "labs_elevator", label: [0, -792, 3048], rects: [[0, -960, 2880, -624, 3216]] }, { id: "war_room_zone_elevator", label: [1, -792, 3072], rects: [[1, -960, 2880, -672, 2928], [1, -960, 2928, -624, 3216], [1, -912, 3216, -864, 3264], [1, -816, 3216, -768, 3264], [1, -720, 3216, -672, 3264]] }, { id: "war_room_zone_top", label: [1, -1464, 2064], rects: [[1, -720, 1248, -672, 1296], [1, -768, 1296, -624, 1392], [1, -816, 1392, -624, 1440], [1, -1152, 1440, -1008, 1488], [1, -912, 1440, -864, 1488], [1, -720, 1440, -624, 1488], [1, -576, 1440, -528, 1488], [1, -1296, 1488, -1008, 1536], [1, -960, 1488, -912, 1536], [1, -864, 1488, -816, 1536], [1, -624, 1488, -480, 1536], [1, -1392, 1536, -1104, 1584], [1, -1056, 1536, -960, 1584], [1, -1440, 1584, -1200, 1632], [1, -1152, 1584, -1104, 1632], [1, -528, 1536, -432, 1632], [1, -1440, 1632, -1392, 1680], [1, -1248, 1632, -1200, 1680], [1, -480, 1632, -432, 1680], [1, -1440, 1680, -1296, 1728], [1, -432, 1680, -336, 1728], [1, -1440, 1728, -1200, 1776], [1, -432, 1728, -288, 1776], [1, -1488, 1776, -1392, 1824], [1, -336, 1776, -288, 1824], [1, -1488, 1824, -1200, 1872], [1, -336, 1824, -240, 1872], [1, -1440, 1872, -1344, 1920], [1, -1296, 1872, -1248, 1920], [1, -336, 1872, -192, 1920], [1, -1728, 1920, -1392, 1968], [1, -1344, 1920, -1200, 1968], [1, -288, 1920, -144, 1968], [1, -240, 1968, -144, 2016], [1, -240, 2016, -96, 2064], [1, -1728, 1968, -1200, 2160], [1, -288, 2064, -48, 2160], [1, -1296, 2160, -1248, 2208], [1, -336, 2160, -96, 2208], [1, -1440, 2208, -1296, 2256], [1, -1248, 2208, -1200, 2256], [1, -384, 2208, -192, 2256], [1, -1344, 2256, -1200, 2304], [1, -384, 2256, -288, 2304], [1, -1344, 2304, -1296, 2352], [1, -432, 2304, -288, 2352], [1, -1392, 2352, -1248, 2400], [1, -480, 2352, -432, 2400], [1, -1392, 2400, -1296, 2448], [1, -1248, 2400, -1200, 2448], [1, -1392, 2448, -1152, 2496], [1, -528, 2400, -432, 2496], [1, -1248, 2496, -1008, 2544], [1, -960, 2496, -864, 2544], [1, -1152, 2544, -864, 2592], [1, -816, 2544, -768, 2592], [1, -720, 2544, -672, 2592], [1, -576, 2496, -432, 2592], [1, -1104, 2592, -480, 2640], [1, -720, 2640, -528, 2688], [1, -768, 2688, -576, 2736], [1, -720, 2736, -624, 2784]] }, { id: "war_room_zone_north", label: [1, -864, 2328], rects: [[1, -1200, 1968, -1152, 2016], [1, -480, 2016, -384, 2064], [1, -1200, 2016, -1104, 2112], [1, -576, 2064, -288, 2112], [1, -1200, 2112, -1056, 2160], [1, -624, 2112, -288, 2160], [1, -1440, 2160, -1296, 2208], [1, -1248, 2160, -1056, 2208], [1, -624, 2160, -336, 2208], [1, -1296, 2208, -1248, 2256], [1, -1200, 2208, -1104, 2256], [1, -1008, 2160, -768, 2256], [1, -720, 2208, -384, 2256], [1, -1488, 2256, -1344, 2304], [1, -1200, 2256, -1008, 2304], [1, -960, 2256, -384, 2304], [1, -1536, 2304, -1344, 2352], [1, -1296, 2304, -432, 2352], [1, -1536, 2352, -1392, 2400], [1, -1248, 2352, -480, 2400], [1, -432, 2352, -288, 2400], [1, -1488, 2400, -1440, 2448], [1, -1296, 2400, -1248, 2448], [1, -1200, 2400, -672, 2448], [1, -624, 2400, -528, 2448], [1, -432, 2400, -336, 2448], [1, -1152, 2448, -528, 2496], [1, -432, 2448, -384, 2496], [1, -1008, 2496, -960, 2544], [1, -864, 2496, -576, 2544], [1, -864, 2544, -816, 2592], [1, -768, 2544, -720, 2592], [1, -672, 2544, -576, 2592], [1, -912, 2640, -720, 2688], [1, -912, 2688, -768, 2736], [1, -960, 2736, -720, 2784], [1, -960, 2784, -672, 2832], [1, -912, 2832, -720, 2880]] }, { id: "war_room_zone_south", label: [1, -864, 1800], rects: [[1, -864, 1392, -816, 1440], [1, -624, 1296, -528, 1440], [1, -1008, 1392, -912, 1488], [1, -864, 1440, -720, 1488], [1, -624, 1440, -576, 1488], [1, -1008, 1488, -960, 1536], [1, -912, 1488, -864, 1536], [1, -816, 1488, -624, 1536], [1, -1104, 1536, -1056, 1584], [1, -960, 1536, -528, 1584], [1, -1200, 1584, -1152, 1632], [1, -1104, 1584, -528, 1632], [1, -1488, 1632, -1440, 1680], [1, -1392, 1632, -1248, 1680], [1, -1200, 1632, -672, 1680], [1, -576, 1632, -480, 1680], [1, -432, 1584, -336, 1680], [1, -1296, 1680, -432, 1728], [1, -1680, 1680, -1440, 1776], [1, -1200, 1728, -432, 1776], [1, -1392, 1776, -336, 1824], [1, -1680, 1776, -1488, 1872], [1, -1200, 1824, -336, 1872], [1, -1344, 1872, -1296, 1920], [1, -1248, 1872, -336, 1920], [1, -1392, 1920, -1344, 1968], [1, -1200, 1920, -288, 1968], [1, -1152, 1968, -240, 2016], [1, -384, 2016, -240, 2064], [1, -1104, 2016, -624, 2112], [1, -1056, 2112, -624, 2160], [1, -768, 2160, -720, 2208]] }, { id: "conference_level2", label: [1, -2136, 1944], rects: [[1, -2160, 1680, -1680, 1824], [1, -2448, 1824, -2304, 1872], [1, -2256, 1824, -1680, 1872], [1, -2496, 1872, -1776, 2016], [1, -2592, 2016, -2208, 2112], [1, -1968, 2016, -1776, 2112], [1, -2592, 2112, -1776, 2160], [1, -2496, 2160, -1776, 2208], [1, -2448, 2208, -1776, 2256], [1, -2448, 2256, -2304, 2304], [1, -2256, 2256, -1968, 2304], [1, -2160, 2304, -2064, 2352]] }, { id: "hallway3_level1", label: [2, -1392, 2904], rects: [[2, -1680, 2784, -1488, 2832], [2, -1440, 2784, -1152, 2832], [2, -1680, 2832, -1104, 2976], [2, -1680, 2976, -1056, 3072], [2, -1632, 3072, -1104, 3120]] }, { id: "hallway_level1", label: [2, -1008, 2064], rects: [[2, -1488, 1872, -1200, 1920], [2, -1104, 1872, -816, 1920], [2, -768, 1872, -672, 1920], [2, -576, 1872, -240, 1920], [2, -1680, 1920, -192, 1968], [2, -1728, 1968, -240, 2016], [2, -1728, 2016, -288, 2112], [2, -1680, 2112, -720, 2160], [2, -672, 2112, -336, 2160], [2, -1536, 2160, -1344, 2208], [2, -1296, 2160, -1104, 2208]] }, { id: "conference_level1", label: [2, -648, 2784], rects: [[2, -720, 2112, -672, 2160], [2, -336, 2112, -240, 2160], [2, -1056, 2160, -240, 2304], [2, -1008, 2304, -192, 2352], [2, -1056, 2352, -720, 2400], [2, -1008, 2400, -720, 2640], [2, -576, 2352, -240, 2640], [2, -1056, 2640, -720, 2688], [2, -624, 2640, -240, 2688], [2, -1056, 2688, -240, 2880], [2, -1104, 2880, -240, 2976], [2, -1056, 2976, -240, 3072], [2, -1056, 3072, -864, 3120], [2, -816, 3072, -288, 3120]] }], doors: [{ kind: "door", cost: 750, at: [2, -716, 2209], rooms: [13, 12] }, { kind: "door", cost: 750, at: [2, -322, 2206], rooms: [13, 12] }, { kind: "door", cost: 1250, at: [0, -714, 4448], rooms: [3, 1] }, { kind: "door", cost: 1250, at: [0, -1071, 4422], rooms: [2, 3] }, { kind: "door", cost: 1250, at: [0, -883, 4759], rooms: [2, 3] }, { kind: "door", cost: 1250, at: [0, -1071, 5104], rooms: [2, 3] }, { kind: "door", cost: 1250, at: [0, -883, 3600], rooms: [4, 0] }, { kind: "door", cost: 1250, at: [0, -1518, 3490], rooms: [4, 0] }, { kind: "debris", cost: 1e3, at: [1, -1210, 2040], rooms: [7, 8] }, { kind: "debris", cost: 1250, at: [1, -1356, 2072], rooms: [7, 9] }, { kind: "debris", cost: 1250, at: [1, -372, 2047], rooms: [8, 9] }, { kind: "debris", cost: 1e3, at: [2, -1501, 2041], rooms: [12, 7] }, { kind: "debris", cost: 1e3, at: [1, -818, 2877], rooms: [8, 6] }], pois: [{ kind: "perk", id: "specialty_rof", at: [1, -1492, 1974] }, { kind: "perk", id: "specialty_fastreload", at: [2, -1147, 1929] }, { kind: "perk", id: "specialty_quickrevive", at: [2, -1062, 2970] }, { kind: "perk", id: "specialty_armorvest", at: [1, -1569, 1842] }, { kind: "perk", id: "specialty_additionalprimaryweapon", at: [1, -1081, 1496] }, { kind: "pap", id: null, at: [1, -1703, 2061] }, { kind: "power", id: null, at: [0, -1177, 4256] }, { kind: "box", id: null, at: [0, -1333, 4913] }, { kind: "box", id: null, at: [0, -486, 4849] }, { kind: "box", id: null, at: [0, -1102, 3598] }, { kind: "box", id: null, at: [2, -457, 2132] }, { kind: "box", id: null, at: [1, -945, 1770] }, { kind: "box", id: null, at: [2, -651, 2875] }] };
+
+  // src/map/plans/kino.json
+  var kino_default = { v: 1, slug: "kino", sig: "z10d12", floors: [{ name: "Ground floor", below: 180 }, { name: "Upstairs", below: null }], rooms: [{ id: "theater_zone", label: [0, 0, 816], rects: [[0, -336, -528, -144, -480], [0, -48, -528, 48, -480], [0, -432, -480, -144, -240], [0, -96, -480, 96, -240], [0, -384, -240, 96, -192], [0, -336, -192, -288, -144], [0, -240, -192, 96, -96], [0, -192, -96, 144, 0], [0, -144, 0, 144, 48], [0, -144, 48, 96, 192], [0, -144, 192, 144, 336], [0, -144, 336, 96, 384], [0, -144, 384, 144, 528], [0, -96, 528, 144, 576], [0, -144, 576, 96, 624], [0, -528, 624, -432, 672], [0, -144, 624, 288, 672], [0, 432, 624, 528, 672], [0, -672, 672, -240, 720], [0, -192, 672, 528, 720], [0, -816, 720, 816, 912], [0, 624, 912, 768, 960], [0, -816, 912, 576, 1008], [0, -576, 1008, 576, 1056], [0, -576, 1056, -432, 1104], [0, -384, 1056, 576, 1104], [0, -576, 1104, -192, 1152], [0, -144, 1104, 192, 1152], [0, 240, 1104, 336, 1152], [0, -528, 1152, -432, 1200], [0, -336, 1152, 336, 1200], [0, -288, 1200, -48, 1248], [0, 0, 1200, 192, 1248], [0, 240, 1200, 336, 1248]] }, { id: "west_balcony_zone", label: [0, -1488, 1464], rects: [[0, -1824, 768, -1632, 816], [0, -1536, 768, -1488, 816], [0, -1824, 816, -1296, 864], [0, -1776, 864, -1296, 912], [0, -1776, 912, -1248, 1008], [0, -1200, 960, -1104, 1008], [0, -1776, 1008, -1056, 1056], [0, -1824, 1056, -1056, 1152], [0, -1776, 1152, -1056, 1200], [0, -1776, 1200, -1152, 1344], [0, -1776, 1344, -1488, 1392], [0, -1440, 1344, -1152, 1392], [0, -1824, 1392, -1152, 1536], [0, -1824, 1536, -1104, 1632], [0, -1776, 1632, -1536, 1680], [0, -1344, 1632, -1104, 1680]] }, { id: "stage_zone", label: [0, 0, 1704], rects: [[0, -1008, 1152, -816, 1200], [0, -672, 1152, -576, 1200], [0, 336, 1152, 384, 1200], [0, -1152, 1200, -768, 1248], [0, -720, 1200, -384, 1248], [0, -336, 1200, -288, 1248], [0, -48, 1200, 0, 1248], [0, 192, 1200, 240, 1248], [0, 336, 1200, 432, 1248], [0, 576, 1200, 720, 1248], [0, -1152, 1248, 432, 1296], [0, -1152, 1296, 480, 1392], [0, 528, 1248, 720, 1392], [0, -1152, 1392, 144, 1440], [0, -1152, 1440, -240, 1488], [0, -96, 1440, 144, 1488], [0, 240, 1392, 720, 1488], [0, -1152, 1488, -288, 1536], [0, -96, 1488, 96, 1536], [0, -1104, 1536, -288, 1584], [0, -240, 1536, 144, 1584], [0, -1104, 1584, 240, 1632], [0, 288, 1488, 720, 1632], [0, -1104, 1632, -720, 1680], [0, 624, 1632, 720, 1680], [0, -576, 1632, 576, 1776], [0, -528, 1776, 480, 1824], [0, -432, 1824, 240, 1920], [0, 336, 1824, 480, 1920], [0, -288, 1920, -192, 1968], [0, -144, 1920, -96, 1968], [0, 48, 1920, 192, 1968], [0, 384, 1920, 432, 1968]] }, { id: "dressing_zone", label: [0, 1152, 1512], rects: [[0, 864, 864, 1200, 912], [0, 1248, 864, 1392, 912], [0, 864, 912, 1488, 960], [0, 768, 960, 1536, 1104], [0, 816, 1104, 1248, 1152], [0, 1296, 1104, 1536, 1200], [0, 768, 1152, 1248, 1248], [0, 816, 1248, 1248, 1344], [0, 1296, 1200, 1584, 1344], [0, 768, 1344, 1248, 1392], [0, 1296, 1344, 1536, 1392], [0, 768, 1392, 1536, 1632], [0, 816, 1632, 1392, 1680], [0, 1440, 1632, 1488, 1680], [0, 864, 1680, 912, 1728]] }, { id: "alleyway_zone", label: [0, -1464, 0], rects: [[0, -1776, -624, -1536, -480], [0, -1824, -480, -1440, -432], [0, -1776, -432, -1344, -288], [0, -1776, -288, -1248, -240], [0, -1776, -240, -1104, -192], [0, -1776, -192, -1056, -144], [0, -1776, -144, -1104, -96], [0, -1776, -96, -1152, 96], [0, -1776, 96, -1104, 144], [0, -1776, 144, -1056, 240], [0, -1776, 240, -1104, 288], [0, -1776, 288, -1056, 384], [0, -1824, 384, -1104, 432], [0, -1824, 432, -1056, 480], [0, -1776, 480, -1104, 528], [0, -1776, 528, -1296, 624], [0, -1824, 624, -1296, 720], [0, -1776, 720, -1296, 768], [0, -1632, 768, -1536, 816], [0, -1488, 768, -1344, 816]] }, { id: "dining_zone", label: [0, 1320, 240], rects: [[0, 1296, -240, 1392, -192], [0, 1440, -240, 1536, -192], [0, 1296, -192, 1536, -96], [0, 768, -96, 960, -48], [0, 1248, -96, 1536, -48], [0, 720, -48, 1776, 48], [0, 720, 48, 1872, 144], [0, 720, 144, 1920, 336], [0, 720, 336, 1440, 384], [0, 1584, 336, 1920, 384], [0, 720, 384, 1152, 432], [0, 1248, 384, 1488, 432], [0, 1632, 384, 1920, 432], [0, 768, 432, 912, 480], [0, 1248, 432, 1968, 480], [0, 1248, 480, 1920, 528], [0, 960, 432, 1200, 576], [0, 1296, 528, 1920, 576], [0, 960, 576, 1920, 624], [0, 1008, 624, 1872, 672], [0, 960, 672, 1824, 720], [0, 912, 720, 1680, 768], [0, 960, 768, 1056, 816], [0, 1152, 768, 1632, 816], [0, 1344, 816, 1584, 864], [0, 1392, 864, 1584, 912], [0, 1488, 912, 1536, 960], [1, 1584, -336, 1728, -288], [1, 1296, -288, 1728, -144], [1, 1488, -144, 1728, -48], [1, 1536, -48, 1728, 0]] }, { id: "crematorium_zone", label: [0, -984, -648], rects: [[0, -1056, -1200, -960, -1152], [0, -912, -1200, -864, -1152], [0, -1104, -1152, -816, -1104], [0, -1104, -1104, -768, -1056], [0, -1056, -1056, -768, -1008], [0, -1344, -1008, -1152, -960], [0, -1056, -1008, -576, -960], [0, -1392, -960, -528, -864], [0, -1392, -864, -1248, -768], [0, -1200, -864, -528, -768], [0, -1392, -768, -528, -720], [0, -1392, -720, -576, -576], [0, -1392, -576, -528, -528], [0, -720, -528, -528, -480], [0, -1392, -528, -816, -432], [0, -1344, -432, -816, -384], [0, -1344, -384, -768, -336], [0, -1344, -336, -1200, -288], [0, -1152, -336, -768, -288]] }, { id: "vip_zone", label: [1, 960, -720], rects: [[1, 528, -1152, 816, -1104], [1, 864, -1152, 960, -1104], [1, 528, -1104, 960, -960], [1, 528, -960, 1008, -912], [1, 1104, -960, 1440, -912], [1, 1488, -960, 1632, -912], [1, 576, -912, 624, -864], [1, 672, -912, 1008, -864], [1, 1104, -912, 1632, -864], [1, 528, -864, 1680, -816], [1, 528, -816, 1728, -768], [1, 1392, -768, 1728, -720], [1, 576, -768, 1344, -672], [1, 1440, -720, 1728, -624], [1, 1488, -624, 1728, -576], [1, 576, -672, 960, -528], [1, 1104, -672, 1344, -528], [1, 1440, -576, 1680, -528], [1, 432, -528, 960, -480], [1, 1104, -528, 1632, -480], [1, 1104, -480, 1680, -432], [1, 432, -480, 1008, -384], [1, 1104, -432, 1728, -384], [1, 1104, -384, 1680, -336], [1, 384, -384, 1008, -288], [1, 1104, -336, 1584, -288], [1, 432, -288, 816, -240], [1, 720, -240, 768, -192]] }, { id: "foyer2_zone", label: [1, -24, -672], rects: [[0, -432, -816, -240, -768], [0, -96, -816, -48, -768], [0, 48, -816, 96, -768], [0, -528, -768, -240, -720], [0, -144, -768, 240, -720], [0, -576, -720, 240, -576], [0, -528, -576, 144, -528], [0, -528, -528, -480, -480], [0, -432, -528, -336, -480], [0, -144, -528, -48, -480], [0, 48, -528, 96, -480], [1, -480, -816, -432, -768], [1, -576, -768, -96, -720], [1, -48, -816, 48, -720], [1, 144, -768, 576, -720], [1, -624, -720, 576, -624], [1, -624, -624, 96, -576], [1, 144, -624, 576, -576], [1, -624, -576, -96, -528], [1, 96, -576, 576, -528], [1, -480, -528, -96, -480], [1, 96, -528, 432, -480]] }, { id: "foyer_zone", label: [0, 48, -1344], rects: [[0, -432, -1536, -288, -1488], [0, -192, -1536, -48, -1488], [0, 96, -1536, 240, -1488], [0, -432, -1488, 240, -1440], [0, 288, -1536, 576, -1440], [0, -432, -1440, 576, -1392], [0, -432, -1392, 528, -1296], [0, -432, -1296, -192, -1248], [0, -144, -1296, 576, -1248], [0, -384, -1248, 576, -1200], [0, -432, -1200, 528, -1152], [0, -432, -1152, 432, -1104], [0, -384, -1104, 96, -1056], [0, 192, -1104, 384, -1056], [0, -432, -1056, 96, -1008], [0, 144, -1056, 384, -1008], [0, -432, -1008, 432, -960], [0, -432, -960, 144, -912], [0, -192, -912, 144, -864], [0, 192, -960, 432, -864], [0, -240, -864, 240, -816], [0, -240, -816, -96, -768], [0, -48, -816, 48, -768], [0, 96, -816, 240, -768], [0, -240, -768, -144, -720], [1, -288, -1008, -240, -960], [1, -384, -960, -192, -864], [1, 144, -960, 288, -864], [1, 336, -912, 384, -864], [1, -144, -864, 432, -816], [1, -432, -864, -240, -768], [1, -144, -816, -48, -768], [1, 192, -816, 432, -768], [1, -96, -768, -48, -720], [1, 48, -816, 144, -720]] }], doors: [{ kind: "door", cost: 1250, at: [0, -830, 1274], rooms: [2, 1] }, { kind: "door", cost: 1250, at: [1, -1155, 1430], rooms: [1, 2] }, { kind: "door", cost: 750, at: [1, 582, -641], rooms: [7, 8] }, { kind: "door", cost: 1e3, at: [1, 1409, -325], rooms: [7, 5] }, { kind: "door", cost: 1e3, at: [1, 1407, -26], rooms: [5, 7] }, { kind: "door", cost: 1250, at: [0, 747, 1539], rooms: [3, 2] }, { kind: "power", cost: 750, at: [0, 1, -515], rooms: [0, 8] }, { kind: "door", cost: 1250, at: [0, 1444, 904], rooms: [5, 3] }, { kind: "door", cost: 1250, at: [0, -1547, 811], rooms: [1, 4] }, { kind: "power", cost: 750, at: [0, 0, -188], rooms: [0, 8] }, { kind: "door", cost: 1e3, at: [0, -1351, -384], rooms: [4, 6] }, { kind: "door", cost: 750, at: [0, -580, -641], rooms: [8, 6] }], pois: [{ kind: "perk", id: "specialty_quickrevive", at: [0, 527, -1261] }, { kind: "perk", id: "specialty_fastreload", at: [0, 1269, 143] }, { kind: "perk", id: "specialty_rof", at: [0, -1730, -375] }, { kind: "perk", id: "specialty_armorvest", at: [0, -328, -490] }, { kind: "perk", id: "specialty_additionalprimaryweapon", at: [1, 1172, -359] }, { kind: "pap", id: null, at: [1, 7, -473] }, { kind: "power", id: null, at: [0, -488, 1246] }, { kind: "box", id: null, at: [1, 901, -620] }, { kind: "box", id: null, at: [0, 49, 136] }, { kind: "box", id: null, at: [0, 1657, 714] }, { kind: "box", id: null, at: [0, 1, 1842] }, { kind: "box", id: null, at: [1, -1385, 1016] }, { kind: "box", id: null, at: [0, 1343, 1313] }, { kind: "box", id: null, at: [1, -1, -775] }, { kind: "box", id: null, at: [0, -1288, -635] }, { kind: "box", id: null, at: [0, -1500, 226] }] };
+
+  // src/map/plans/moon.json
+  var moon_default = { v: 1, slug: "moon", sig: "z23d24", floors: [{ name: "No Man's Land", below: null, area: [1e4, -2e4, 2e4, -1e4] }, { name: "Tunnels", below: -250 }, { name: "Moon base", below: null }], rooms: [{ id: "nml_zone", label: [0, 14064, -15504], rects: [[0, 13776, -15696, 13968, -15648], [0, 14016, -15696, 14304, -15648], [0, 13776, -15648, 14352, -15360], [0, 13776, -15360, 14304, -15312], [0, 13728, -15312, 14304, -15264], [0, 13776, -15264, 14352, -15216], [0, 13872, -15216, 14352, -15168], [0, 13872, -15168, 14208, -15120], [0, 14256, -15168, 14304, -15120], [0, 13824, -15120, 14256, -15024], [0, 13920, -15024, 14256, -14976], [0, 13920, -14976, 14160, -14928], [0, 13920, -14928, 14208, -14832], [0, 14256, -14880, 14496, -14832], [0, 13488, -14832, 14160, -14784], [0, 14208, -14832, 14496, -14784], [0, 13488, -14784, 14496, -14736], [0, 13536, -14736, 14640, -14688], [0, 13488, -14688, 14688, -14592], [0, 13488, -14592, 14640, -14544], [0, 13488, -14544, 14688, -14496], [0, 14304, -14496, 14640, -14448], [0, 13440, -14496, 14208, -14400], [0, 14256, -14448, 14688, -14400], [0, 13440, -14400, 14688, -14352], [0, 13440, -14352, 14064, -14304], [0, 14112, -14352, 14400, -14304], [0, 14448, -14352, 14640, -14304], [0, 13440, -14304, 14688, -14256], [0, 13488, -14256, 14688, -14208], [0, 13440, -14208, 14688, -14112], [0, 13440, -14112, 13728, -14064], [0, 13488, -14064, 13776, -13968], [0, 13824, -14112, 14688, -13968], [0, 13536, -13968, 13968, -13920], [0, 14016, -13968, 14640, -13920], [0, 13536, -13920, 14592, -13872], [0, 13536, -13872, 14496, -13824], [0, 13536, -13824, 14640, -13776], [0, 14016, -13776, 14688, -13728], [0, 14016, -13728, 14640, -13680], [0, 13536, -13776, 13920, -13632], [0, 14064, -13680, 14688, -13632], [0, 14064, -13632, 14640, -13584], [0, 13488, -13632, 13920, -13536], [0, 14112, -13584, 14400, -13536], [0, 14448, -13584, 14640, -13536], [0, 13440, -13536, 13920, -13488], [0, 13968, -13536, 14688, -13488], [0, 13968, -13488, 14112, -13440], [0, 14160, -13488, 14688, -13440], [0, 14016, -13440, 14640, -13392], [0, 13440, -13488, 13872, -13344], [0, 14064, -13392, 14688, -13344], [0, 13536, -13344, 13872, -13296], [0, 14112, -13344, 14640, -13296]] }, { id: "airlock_labs_2_biodome", label: [2, 1512, 5928], rects: [[2, 1488, 5808, 1536, 5856], [2, 1440, 5856, 1584, 5904], [2, 1392, 5904, 1632, 5952], [2, 1440, 5952, 1632, 6e3], [2, 1488, 6e3, 1584, 6048]] }, { id: "tower_zone_east2", label: [2, 48, 4872], rects: [[2, -96, 4512, 144, 4560], [2, -96, 4560, 192, 4608], [2, -96, 4608, 144, 4656], [2, -96, 4656, 192, 4704], [2, -96, 4704, 144, 4800], [2, -96, 4800, 192, 4944]] }, { id: "forest_zone", label: [2, 24, 7512], rects: [[2, -48, 5136, 144, 5184], [2, -96, 5184, 144, 5232], [2, -240, 5232, -192, 5280], [2, -96, 5232, 240, 5280], [2, -480, 5280, 240, 5376], [2, -576, 5376, 240, 5424], [2, -624, 5424, -432, 5472], [2, -384, 5424, 240, 5472], [2, -624, 5472, 240, 5520], [2, -672, 5520, -240, 5568], [2, -96, 5520, 48, 5568], [2, 144, 5520, 240, 5568], [2, -672, 5568, 48, 5616], [2, -528, 5616, 48, 5664], [2, -720, 5616, -576, 5712], [2, -528, 5664, 0, 5712], [2, -576, 5712, -48, 5760], [2, -528, 5760, -144, 5808], [2, -768, 5712, -624, 5856], [2, -576, 5808, -432, 5856], [2, -336, 5808, -144, 5856], [2, -816, 5856, -192, 5904], [2, -864, 5904, -336, 5952], [2, -288, 5904, -240, 5952], [2, -960, 5952, -384, 6e3], [2, 1296, 5952, 1440, 6e3], [2, -1104, 6e3, -816, 6048], [2, -768, 6e3, -480, 6048], [2, 1248, 6e3, 1488, 6048], [2, -1200, 6048, -576, 6096], [2, 1152, 6048, 1536, 6096], [2, -1248, 6096, -576, 6144], [2, 576, 6096, 768, 6144], [2, 816, 6096, 1008, 6144], [2, 1056, 6096, 1632, 6144], [2, -1296, 6144, -576, 6192], [2, 576, 6144, 1632, 6192], [2, -1104, 6192, -672, 6240], [2, 576, 6192, 1152, 6240], [2, 1200, 6192, 1632, 6240], [2, -1392, 6192, -1152, 6288], [2, -1104, 6240, -720, 6288], [2, 528, 6240, 768, 6288], [2, 960, 6240, 1008, 6288], [2, 1056, 6240, 1536, 6288], [2, -1536, 6288, -1200, 6336], [2, -1152, 6288, -912, 6336], [2, 528, 6288, 1440, 6336], [2, -1584, 6336, -912, 6384], [2, 480, 6336, 1392, 6384], [2, -1632, 6384, -1008, 6432], [2, 480, 6384, 768, 6432], [2, 816, 6384, 1008, 6432], [2, 1056, 6384, 1296, 6432], [2, -1632, 6432, -1056, 6480], [2, 528, 6432, 1248, 6480], [2, -1584, 6480, -1152, 6528], [2, 0, 6480, 144, 6528], [2, 480, 6480, 1296, 6528], [2, -1632, 6528, -1152, 6576], [2, -432, 6528, -336, 6576], [2, -240, 6528, -144, 6576], [2, -48, 6528, 192, 6576], [2, 240, 6528, 1008, 6576], [2, 1056, 6528, 1104, 6576], [2, 1152, 6528, 1296, 6576], [2, -1632, 6576, -1200, 6624], [2, -576, 6576, -480, 6624], [2, -432, 6576, 912, 6624], [2, -1632, 6624, -1152, 6672], [2, -624, 6624, 912, 6672], [2, -1632, 6672, -1056, 6720], [2, -672, 6672, -432, 6720], [2, -384, 6672, -192, 6720], [2, 0, 6672, 864, 6720], [2, -1584, 6720, -1056, 6768], [2, -720, 6720, -192, 6768], [2, -144, 6672, -48, 6768], [2, 0, 6720, 912, 6768], [2, -1536, 6768, -1056, 6816], [2, -768, 6768, -576, 6816], [2, -528, 6768, 912, 6816], [2, -1488, 6816, -1056, 6864], [2, -816, 6816, -624, 6864], [2, -576, 6816, 864, 6864], [2, -1536, 6864, -1008, 6912], [2, -816, 6864, 432, 6912], [2, 480, 6864, 912, 6912], [2, -1488, 6912, 48, 6960], [2, 672, 6912, 1008, 6960], [2, -1392, 6960, 96, 7008], [2, 720, 6960, 1008, 7008], [2, -1344, 7008, -432, 7056], [2, -384, 7008, 144, 7056], [2, 768, 7008, 960, 7056], [2, -1344, 7056, -864, 7104], [2, -816, 7056, -480, 7104], [2, -336, 7056, 192, 7104], [2, 720, 7056, 912, 7104], [2, 1008, 7008, 1152, 7104], [2, -1344, 7104, -528, 7152], [2, -288, 7104, 192, 7152], [2, 672, 7104, 1104, 7152], [2, -1296, 7152, -624, 7200], [2, -240, 7152, 240, 7200], [2, 624, 7152, 1248, 7200], [2, -1248, 7200, -624, 7248], [2, -192, 7200, 288, 7248], [2, 432, 7200, 1248, 7248], [2, -1008, 7248, -720, 7296], [2, -240, 7248, 1248, 7296], [2, -1200, 7248, -1056, 7344], [2, -1008, 7296, -672, 7344], [2, -240, 7296, 1200, 7344], [2, -1152, 7344, -624, 7392], [2, -240, 7344, 528, 7392], [2, -1104, 7392, 480, 7440], [2, 576, 7344, 1152, 7440], [2, -1056, 7440, 432, 7488], [2, 528, 7440, 1152, 7488], [2, -1008, 7488, 1056, 7536], [2, -1008, 7536, 1008, 7584], [2, -912, 7584, 912, 7632], [2, -864, 7632, -144, 7680], [2, -96, 7632, -48, 7680], [2, 0, 7632, 48, 7680], [2, 144, 7632, 192, 7680], [2, 288, 7632, 672, 7680], [2, 720, 7632, 768, 7680], [2, -432, 7680, -96, 7728], [2, -576, 7728, -528, 7776], [2, -480, 7728, -48, 7776], [2, -624, 7776, 96, 7872], [2, -576, 7872, -48, 7920], [2, 0, 7872, 96, 7920], [2, -624, 7920, 96, 7968], [2, -432, 7968, 96, 8016], [2, -576, 7968, -480, 8064], [2, -432, 8016, 48, 8064], [2, -624, 8064, 48, 8112], [2, -624, 8112, -480, 8160], [2, -432, 8112, 96, 8160], [2, -624, 8160, -432, 8208], [2, -240, 8160, 48, 8208], [2, -624, 8208, -336, 8256], [2, -192, 8208, -48, 8256], [2, 0, 8208, 96, 8256], [2, -192, 8256, 96, 8304], [2, -624, 8256, -288, 8352], [2, -240, 8304, 96, 8352], [2, -624, 8352, 48, 8400], [2, -624, 8400, -288, 8448], [2, -240, 8400, 96, 8448], [2, -576, 8448, 96, 8496], [2, -384, 8496, -288, 8544], [2, -240, 8496, -48, 8544], [2, 0, 8496, 48, 8544]] }, { id: "airlock_biodome_zone", label: [2, 48, 5040], rects: [[2, -48, 4944, 144, 5136]] }, { id: "tower_zone_east", label: [2, 1488, 4512], rects: [[2, 720, 3360, 816, 3408], [2, 864, 3360, 912, 3408], [2, 1296, 3360, 1344, 3408], [2, 1248, 3408, 1536, 3456], [2, 672, 3408, 960, 3552], [2, 240, 3552, 336, 3600], [2, 720, 3552, 1008, 3600], [2, 1248, 3456, 1584, 3600], [2, 1632, 3552, 1680, 3600], [2, 768, 3600, 1008, 3648], [2, 1056, 3600, 1104, 3648], [2, 1152, 3600, 1728, 3648], [2, 192, 3600, 384, 3696], [2, 720, 3648, 1728, 3696], [2, 240, 3696, 432, 3744], [2, 768, 3696, 1776, 3744], [2, 240, 3744, 480, 3792], [2, 720, 3744, 1776, 3792], [2, -96, 3792, 144, 3840], [2, 240, 3792, 1776, 3840], [2, -192, 3840, -144, 3888], [2, -96, 3840, 1776, 3888], [2, 1152, 3888, 1776, 3936], [2, -240, 3888, 1056, 3984], [2, 1248, 3936, 1440, 3984], [2, 1488, 3936, 1728, 3984], [2, -192, 3984, 1056, 4032], [2, 1536, 3984, 1728, 4032], [2, 1536, 4032, 1920, 4080], [2, -96, 4032, 1056, 4128], [2, 1296, 4080, 1440, 4128], [2, 1536, 4080, 1968, 4128], [2, -144, 4128, 1248, 4176], [2, 1296, 4128, 1920, 4176], [2, -144, 4176, 480, 4224], [2, 1344, 4176, 1392, 4224], [2, 1440, 4176, 1488, 4224], [2, 1536, 4176, 1920, 4224], [2, -144, 4224, 432, 4272], [2, 720, 4176, 1248, 4272], [2, -192, 4272, 432, 4320], [2, 720, 4272, 1488, 4320], [2, 1536, 4224, 1872, 4320], [2, 672, 4320, 1440, 4368], [2, 1536, 4320, 1632, 4368], [2, 1680, 4320, 1872, 4368], [2, -192, 4320, 384, 4416], [2, 720, 4368, 912, 4416], [2, 1824, 4368, 1872, 4416], [2, -144, 4416, 432, 4464], [2, -96, 4464, 432, 4512], [2, 144, 4512, 384, 4560], [2, 1200, 4368, 1776, 4656], [2, 1008, 4656, 1776, 4800], [2, 960, 4800, 1776, 4896], [2, 960, 4896, 1680, 4944], [2, 960, 4944, 1776, 5040], [2, 960, 5040, 1872, 5088], [2, 960, 5088, 1488, 5136], [2, 1680, 5088, 1872, 5136], [2, 1008, 5136, 1488, 5184], [2, 1680, 5136, 1824, 5184], [2, 1008, 5184, 1104, 5232], [2, 1248, 5184, 1296, 5232], [2, 1344, 5184, 1440, 5232]] }, { id: "enter_forest_east_zone", label: [2, 1968, 5712], rects: [[2, 1824, 5136, 2064, 5184], [2, 1680, 5184, 2064, 5280], [2, 1440, 5280, 2064, 5328], [2, 1440, 5328, 1824, 5376], [2, 1872, 5328, 2064, 5376], [2, 1440, 5376, 1872, 5424], [2, 1920, 5376, 2160, 5424], [2, 1440, 5424, 2160, 5472], [2, 1440, 5472, 1872, 5520], [2, 1920, 5472, 2112, 5520], [2, 1632, 5520, 2160, 5568], [2, 1632, 5568, 1872, 5616], [2, 1920, 5568, 2160, 5616], [2, 1632, 5616, 2352, 5664], [2, 1584, 5664, 2352, 5760], [2, 1536, 5760, 2352, 5808], [2, 1536, 5808, 2208, 5856], [2, 1584, 5856, 1872, 5904], [2, 1920, 5856, 2208, 5904], [2, 1632, 5904, 2208, 6e3], [2, 1776, 6e3, 2208, 6048], [2, 1872, 6048, 2016, 6096], [2, 2112, 6048, 2160, 6096]] }, { id: "airlock_digsite_zone", label: [2, 1584, 5184], rects: [[2, 1488, 5088, 1680, 5280]] }, { id: "generator_exit_east_zone", label: [2, 2280, 5280], rects: [[1, 1248, 3504, 1392, 3552], [1, 1200, 3552, 1440, 3600], [1, 1200, 3600, 1680, 3744], [1, 1152, 3744, 1680, 3792], [1, 1152, 3792, 1632, 3888], [1, 1152, 3888, 1680, 3936], [1, 1152, 3936, 1632, 3984], [1, 1152, 3984, 1680, 4032], [1, 1152, 4032, 1632, 4128], [1, 1104, 4128, 1632, 4176], [1, 1104, 4176, 1872, 4224], [1, 1104, 4224, 1920, 4368], [1, 1200, 4368, 1296, 4416], [1, 1392, 4368, 1440, 4416], [1, 1584, 4368, 1872, 4416], [2, 1440, 3936, 1488, 3984], [2, 1440, 3984, 1536, 4128], [2, 1248, 4128, 1296, 4176], [2, 1248, 4176, 1344, 4224], [2, 1392, 4176, 1440, 4224], [2, 1488, 4176, 1536, 4224], [2, 1920, 4176, 2064, 4224], [2, 2112, 4176, 2352, 4224], [2, 1248, 4224, 1536, 4272], [2, 1488, 4272, 1536, 4320], [2, 1440, 4320, 1536, 4368], [2, 1872, 4224, 2352, 4368], [2, 1872, 4368, 2400, 4416], [2, 1872, 4416, 2112, 4464], [2, 2160, 4416, 2400, 4464], [2, 1824, 4464, 2352, 4512], [2, 1776, 4512, 2496, 4560], [2, 1776, 4560, 2544, 4608], [2, 1776, 4608, 2496, 4656], [2, 1824, 4656, 2352, 4704], [2, 1920, 4704, 2112, 4752], [2, 2160, 4704, 2400, 4752], [2, 1872, 4752, 2400, 4800], [2, 1872, 4800, 2496, 4848], [2, 1824, 4848, 2496, 4896], [2, 1872, 4896, 2496, 4944], [2, 1920, 4944, 2496, 4992], [2, 2064, 5136, 2160, 5184], [2, 2256, 4992, 2496, 5184], [2, 2064, 5184, 2496, 5376]] }, { id: "airlock_generator_zone", label: [1, 1104, 3672], rects: [[1, 1056, 3552, 1152, 3600], [1, 1008, 3600, 1200, 3744], [1, 1008, 3744, 1152, 3792]] }, { id: "cata_right_middle_zone", label: [1, 936, 1704], rects: [[1, 720, 1488, 1200, 1536], [1, 672, 1536, 1248, 1632], [1, 672, 1632, 1200, 1776], [1, 720, 1776, 864, 1824], [1, 912, 1776, 1152, 1824], [1, 1056, 1824, 1200, 1920], [1, 672, 1824, 1008, 1968], [1, 672, 1968, 1200, 2016], [1, 672, 2016, 1248, 2064], [1, 624, 2064, 1296, 2160], [1, 624, 2160, 1248, 2208], [1, 720, 2208, 1200, 2256], [1, 672, 2256, 1248, 2304], [1, 624, 2304, 1248, 2400], [1, 672, 2400, 1248, 2448], [1, 912, 2448, 1152, 2496]] }, { id: "airlock_west2_zone", label: [1, -672, 2688], rects: [[1, -768, 2592, -576, 2784]] }, { id: "cata_right_end_zone", label: [1, 1152, 2640], rects: [[1, 864, 2496, 1200, 2544], [1, 1296, 2496, 1440, 2544], [1, 864, 2544, 1440, 2736], [1, 864, 2736, 1248, 2784], [1, 864, 2784, 1200, 2832], [1, 1296, 2736, 1440, 2832], [1, 864, 2832, 1248, 2880], [1, 1296, 2832, 1392, 2880], [1, 912, 2880, 1536, 3024], [1, 912, 3024, 960, 3072], [1, 1296, 3024, 1440, 3072]] }, { id: "generator_zone", label: [1, -24, 2856], rects: [[1, 0, 1920, 144, 1968], [1, -48, 1968, 192, 2064], [1, -48, 2064, 144, 2112], [1, 0, 2112, 144, 2352], [1, -96, 2352, 144, 2400], [1, 192, 2352, 288, 2400], [1, -144, 2400, 288, 2496], [1, -96, 2496, -48, 2544], [1, 192, 2496, 240, 2544], [1, -144, 2544, 0, 2640], [1, -96, 2640, 0, 2688], [1, 384, 2640, 720, 2688], [1, -144, 2688, 0, 2736], [1, 144, 2544, 288, 2736], [1, 384, 2688, 768, 2736], [1, -144, 2736, 288, 2784], [1, 384, 2736, 720, 2784], [1, -816, 2784, 720, 2832], [1, -816, 2832, 768, 2880], [1, -816, 2880, 720, 2928], [1, -768, 2928, 720, 2976], [1, -144, 2976, 192, 3024], [1, -144, 3024, 240, 3072], [1, 528, 2976, 720, 3072], [1, -288, 3072, 240, 3120], [1, 528, 3072, 672, 3120], [1, -336, 3120, 288, 3168], [1, -288, 3168, 288, 3216], [1, -336, 3216, -96, 3312], [1, 96, 3216, 336, 3312], [1, -288, 3312, -96, 3360], [1, -48, 3312, 336, 3360], [1, -336, 3360, 336, 3408], [1, -336, 3408, 192, 3456], [1, 240, 3408, 480, 3456], [1, 528, 3408, 624, 3456], [1, -336, 3456, 672, 3504], [1, -336, 3504, 864, 3552], [1, -336, 3552, 960, 3600], [1, -336, 3600, 1008, 3648], [1, -336, 3648, 624, 3696], [1, 672, 3648, 1008, 3696], [1, -144, 3696, 1008, 3744], [1, -336, 3696, -192, 3792], [1, -96, 3744, 0, 3792], [1, 144, 3744, 1008, 3792], [1, 240, 3792, 480, 3840], [1, 528, 3792, 864, 3840], [1, -336, 3792, -96, 3888], [1, 192, 3840, 480, 3888], [1, 768, 3840, 816, 3888], [1, 240, 3888, 480, 3936], [1, -288, 3888, -96, 3984], [1, 192, 3936, 432, 3984], [1, -336, 3984, -96, 4080], [1, 192, 3984, 480, 4080], [1, -288, 4080, -144, 4128], [1, -96, 4080, 480, 4128], [1, -288, 4128, 432, 4176], [1, -240, 4176, 384, 4224], [1, -192, 4224, 336, 4272], [1, -144, 4272, 336, 4320], [1, 240, 4320, 288, 4368]] }, { id: "airlock_east2_zone", label: [1, 816, 2976], rects: [[1, 768, 2832, 864, 2880], [1, 720, 2880, 912, 3072]] }, { id: "cata_right_start_zone", label: [2, 1248, 816], rects: [[2, 1200, 672, 1248, 720], [2, 1392, 672, 1584, 720], [2, 816, 720, 912, 768], [2, 1104, 720, 1632, 768], [2, 816, 768, 1680, 864], [2, 864, 864, 1632, 912], [2, 912, 912, 1008, 960], [2, 1440, 912, 1584, 960], [2, 864, 960, 1008, 1008], [2, 1056, 960, 1344, 1008], [2, 1440, 960, 1632, 1008], [2, 864, 1008, 1392, 1056], [2, 1488, 1008, 1584, 1056], [2, 912, 1056, 1584, 1104], [2, 864, 1104, 1584, 1152], [2, 864, 1152, 1392, 1200], [2, 1488, 1152, 1584, 1200], [2, 912, 1200, 1008, 1248], [2, 1056, 1200, 1104, 1248], [2, 1152, 1200, 1344, 1248], [2, 1200, 1248, 1296, 1296], [2, 1440, 1200, 1584, 1296], [2, 1440, 1296, 1680, 1344], [2, 1440, 1344, 1728, 1440], [2, 1440, 1440, 1680, 1488], [1, 1200, 1152, 1248, 1200], [1, 864, 1200, 1056, 1296], [1, 1152, 1200, 1296, 1296], [1, 816, 1296, 1152, 1344], [1, 1200, 1296, 1440, 1344], [1, 816, 1344, 1488, 1440], [1, 816, 1440, 1152, 1488]] }, { id: "airlock_east_zone", label: [2, 1320, 600], rects: [[2, 1248, 528, 1440, 576], [2, 1200, 576, 1440, 624], [2, 1248, 624, 1440, 672], [2, 1248, 672, 1392, 720]] }, { id: "cata_left_middle_zone", label: [1, -1032, 2184], rects: [[2, -1056, 1296, -816, 1344], [2, -1104, 1344, -768, 1440], [2, -1056, 1440, -912, 1488], [2, -864, 1440, -816, 1488], [1, -1056, 1392, -768, 1440], [1, -1104, 1440, -768, 1632], [1, -1104, 1632, -528, 1680], [1, -1056, 1680, -528, 1728], [1, -1536, 1728, -1248, 1776], [1, -1200, 1728, -1152, 1776], [1, -1104, 1728, -480, 1776], [1, -1584, 1776, -432, 1824], [1, -1632, 1824, -432, 1872], [1, -1632, 1872, -528, 1920], [1, -1584, 1920, -864, 1968], [1, -1536, 1968, -1248, 2016], [1, -1104, 1968, -864, 2016], [1, -1536, 2016, -1296, 2064], [1, -1152, 2016, -912, 2064], [1, -768, 1920, -528, 2064], [1, -1536, 2064, -1248, 2112], [1, -1200, 2064, -528, 2112], [1, -1536, 2112, -528, 2256], [1, -1536, 2256, -1248, 2304], [1, -1200, 2256, -528, 2304], [1, -1488, 2304, -1296, 2352], [1, -1104, 2304, -960, 2352], [1, -768, 2304, -576, 2352], [1, -1536, 2352, -1248, 2400], [1, -1200, 2352, -864, 2400], [1, -816, 2352, -528, 2400], [1, -1584, 2400, -528, 2448], [1, -1632, 2448, -528, 2544], [1, -1584, 2544, -528, 2592], [1, -1536, 2592, -1248, 2640], [1, -1152, 2592, -912, 2640], [1, -816, 2592, -768, 2640], [1, -576, 2592, -528, 2640], [1, -1440, 2640, -1344, 2688], [1, -1104, 2640, -960, 2688]] }, { id: "cata_left_start_zone", label: [2, -984, 1152], rects: [[2, -1152, 720, -960, 768], [2, -1488, 768, -816, 816], [2, -768, 768, -672, 816], [2, -1488, 816, -672, 864], [2, -1488, 864, -624, 912], [2, -1488, 912, -576, 960], [2, -1440, 960, -864, 1008], [2, -816, 960, -624, 1008], [2, -1440, 1008, -624, 1056], [2, -1440, 1056, -576, 1104], [2, -1440, 1104, -528, 1200], [2, -1392, 1200, -1296, 1248], [2, -1248, 1200, -576, 1248], [2, -1008, 1248, -816, 1296]] }, { id: "airlock_west_zone", label: [2, -1248, 648], rects: [[2, -1344, 528, -1152, 768]] }, { id: "water_zone", label: [2, -912, 624], rects: [[2, -336, -48, -288, 0], [2, -912, 0, -720, 48], [2, 144, 0, 288, 48], [2, -1056, 48, -672, 96], [2, -480, 0, -240, 96], [2, -192, 48, -144, 96], [2, 0, 48, 48, 96], [2, 96, 48, 480, 96], [2, -1056, 96, -336, 144], [2, -240, 96, -192, 144], [2, -96, 48, -48, 144], [2, 96, 96, 192, 144], [2, 240, 96, 528, 144], [2, 576, 48, 720, 144], [2, -1056, 144, -144, 192], [2, -96, 144, 0, 192], [2, 240, 144, 288, 192], [2, 336, 144, 720, 192], [2, -288, 192, -144, 240], [2, -96, 192, -48, 240], [2, 48, 144, 144, 240], [2, 192, 192, 288, 240], [2, 432, 192, 816, 240], [2, 912, 192, 1008, 240], [2, -1152, 192, -336, 288], [2, -240, 240, -192, 288], [2, 0, 240, 144, 288], [2, 192, 240, 1104, 288], [2, -1104, 288, -240, 336], [2, 144, 288, 384, 336], [2, 432, 288, 816, 336], [2, 912, 288, 1248, 336], [2, -1296, 336, -1248, 384], [2, -1200, 336, -192, 384], [2, 192, 336, 288, 384], [2, 336, 336, 1392, 384], [2, -1344, 384, -336, 432], [2, -288, 384, -192, 432], [2, 96, 336, 144, 432], [2, 192, 384, 1440, 432], [2, -1344, 432, -384, 480], [2, -336, 432, -96, 480], [2, 336, 432, 1440, 480], [2, -1296, 480, -384, 528], [2, -336, 480, -240, 528], [2, -144, 480, -96, 528], [2, 0, 480, 336, 528], [2, 432, 480, 1440, 528], [2, -432, 528, -96, 576], [2, -48, 528, 96, 576], [2, 384, 528, 432, 576], [2, 624, 528, 1248, 576], [2, -336, 576, -288, 624], [2, -240, 576, -192, 624], [2, -144, 576, 96, 624], [2, 144, 576, 240, 624], [2, 672, 576, 1200, 624], [2, -384, 624, -288, 672], [2, -240, 624, -144, 672], [2, -96, 624, 192, 672], [2, 288, 528, 336, 672], [2, 672, 624, 1248, 672], [2, -1152, 528, -672, 720], [2, -96, 672, -48, 720], [2, 48, 672, 96, 720], [2, 672, 672, 1200, 720], [2, -960, 720, -912, 768], [2, 912, 720, 960, 768], [2, 1008, 720, 1056, 768], [1, 672, -48, 864, 0], [1, 672, 0, 912, 48], [1, 672, 48, 1008, 96], [1, 672, 96, 1104, 144], [1, 720, 144, 1152, 192], [1, 768, 192, 960, 240], [1, 1008, 192, 1248, 240], [1, 816, 240, 912, 288], [1, 1056, 240, 1248, 288], [1, 1104, 288, 1248, 336]] }, { id: "bridge_zone", label: [2, 96, -48], rects: [[2, 192, -288, 240, -240], [2, -336, -240, -192, -192], [2, -144, -240, -48, -192], [2, 48, -240, 336, -192], [2, 384, -240, 432, -192], [2, -336, -192, 0, -144], [2, 48, -192, 480, -144], [2, -336, -144, 480, -96], [2, -288, -96, 480, 0], [2, -240, 0, 144, 48], [2, 288, 0, 480, 48], [2, -240, 48, -192, 96], [2, -144, 48, -96, 96], [2, -48, 48, 0, 96], [2, 48, 48, 96, 96], [2, -336, 96, -240, 144], [2, -192, 96, -96, 144], [2, -48, 96, 96, 144], [2, 192, 96, 240, 144], [2, 0, 144, 48, 192], [2, 144, 144, 240, 192], [2, 288, 144, 336, 192], [2, -336, 192, -288, 240], [2, -144, 144, -96, 240], [2, -48, 192, 48, 240], [2, 288, 192, 432, 240], [2, -336, 240, -240, 288], [2, -192, 240, 0, 288], [2, 144, 192, 192, 288], [2, -240, 288, 144, 336], [2, 384, 288, 432, 336], [2, 288, 336, 336, 384], [2, -336, 384, -288, 432], [2, -192, 336, 96, 432], [2, 144, 336, 192, 432], [2, -96, 432, 336, 480], [2, -384, 432, -336, 528], [2, -240, 480, -144, 528], [2, -96, 480, 0, 528], [2, 336, 480, 432, 528], [2, -480, 528, -432, 576], [2, -96, 528, -48, 576], [2, 96, 528, 288, 576], [2, 336, 528, 384, 576], [2, 432, 528, 480, 576], [2, -480, 576, -336, 624], [2, -192, 576, -144, 624], [2, 96, 576, 144, 624], [2, 240, 576, 288, 624], [2, -480, 624, -384, 672], [2, -288, 576, -240, 672], [2, -144, 624, -96, 672], [2, 192, 624, 288, 672], [2, 336, 576, 480, 672], [2, -480, 672, -96, 720], [2, 144, 672, 480, 720], [2, -480, 720, -192, 768], [2, -480, 768, -288, 816], [2, 288, 720, 480, 816], [2, -432, 816, -336, 864], [2, 336, 816, 480, 912]] }, { id: "airlock_bridge_zone", label: [2, -576, 624], rects: [[2, 480, 528, 624, 576], [2, -672, 528, -480, 720], [2, 480, 576, 672, 720]] }], doors: [{ kind: "door", cost: 1e3, at: [2, -926, 1295], rooms: [17, 18] }, { kind: "door", cost: 750, at: [2, 1039, 1465], rooms: [15, 10] }, { kind: "door", cost: 750, at: [1, 1038, 2491], rooms: [10, 12] }, { kind: "door", cost: 750, at: [2, 1313, 514], rooms: [20, 16] }, { kind: "door", cost: 750, at: [2, 1313, 716], rooms: [16, 15] }, { kind: "door", cost: 750, at: [2, -1224, 547], rooms: [19, 20] }, { kind: "door", cost: 750, at: [2, -1224, 741], rooms: [19, 18] }, { kind: "door", cost: 1e3, at: [2, 1584, 5078], rooms: [7, 5] }, { kind: "door", cost: 1e3, at: [2, 1584, 5276], rooms: [6, 7] }, { kind: "door", cost: 750, at: [1, 1019, 3676], rooms: [13, 9] }, { kind: "door", cost: 750, at: [1, 1218, 3675], rooms: [9, 8] }, { kind: "door", cost: 1250, at: [1, 704, 2962], rooms: [13, 14] }, { kind: "door", cost: 1250, at: [1, 904, 2961], rooms: [12, 14] }, { kind: "door", cost: 1250, at: [1, -672, 2611], rooms: [17, 11] }, { kind: "door", cost: 1250, at: [1, -672, 2810], rooms: [13, 11] }, { kind: "door", cost: 1e3, at: [2, 2058, 5285], rooms: [8, 6] }, { kind: "door", cost: 750, at: [2, -492, 625], rooms: [22, 21] }, { kind: "door", cost: 750, at: [2, 490, 625], rooms: [21, 22] }, { kind: "door", cost: 750, at: [2, 689, 625], rooms: [20, 22] }, { kind: "door", cost: 750, at: [2, -692, 626], rooms: [22, 20] }, { kind: "door", cost: 1e3, at: [2, 1602, 5870], rooms: [6, 1] }, { kind: "door", cost: 1e3, at: [2, 1462, 6010], rooms: [1, 3] }, { kind: "door", cost: 1e3, at: [2, 40, 4933], rooms: [2, 4] }, { kind: "door", cost: 1e3, at: [2, 40, 5132], rooms: [3, 4] }], pois: [{ kind: "perk", id: "specialty_armorvest", at: [0, 14281, -15033] }, { kind: "perk", id: "specialty_fastreload", at: [0, 14279, -15033] }, { kind: "perk", id: "specialty_additionalprimaryweapon", at: [2, 1480, 3450] }, { kind: "perk", id: "specialty_longersprint", at: [1, 674, 2236] }, { kind: "perk", id: "specialty_deadshot", at: [2, 2142, 6043] }, { kind: "perk", id: "specialty_flakjacket", at: [2, -262, 8344] }, { kind: "perk", id: "specialty_quickrevive", at: [2, 17, -154] }, { kind: "perk", id: "specialty_rof", at: [1, 1599, 3808] }, { kind: "pap", id: null, at: [0, 14045, -13960] }, { kind: "power", id: null, at: [1, 48, 3191] }, { kind: "box", id: null, at: [1, -101, 2412] }, { kind: "box", id: null, at: [2, -175, -195] }, { kind: "box", id: null, at: [2, -461, 8474] }, { kind: "box", id: null, at: [2, 1215, 4154] }] };
+
+  // src/map/plans/nacht.json
+  var nacht_default = { v: 1, slug: "nacht", sig: "z3d4", floors: [{ name: "Ground floor", below: 80 }, { name: "Upstairs", below: null }], rooms: [{ id: "upstairs_zone", label: [1, 408, 768], rects: [[1, -192, -144, -48, 48], [1, -192, 48, 0, 96], [1, -192, 96, 240, 144], [1, -192, 144, 288, 192], [1, -240, 192, 240, 336], [1, -240, 336, 192, 384], [1, -192, 384, 240, 528], [1, -240, 528, 336, 576], [1, -240, 576, -96, 624], [1, 0, 576, 384, 624], [1, -192, 624, -144, 672], [1, -96, 624, 1056, 672], [1, -240, 672, 1056, 864], [1, -240, 864, 528, 912], [1, 576, 864, 768, 912], [1, 816, 864, 1008, 912], [1, -240, 912, 1008, 1008], [1, 624, 1008, 960, 1056], [1, -240, 1008, -48, 1104], [1, 96, 1008, 336, 1104], [1, -192, 1104, -48, 1152], [1, 144, 1104, 336, 1152], [1, 192, 1152, 288, 1200]] }, { id: "box_zone", label: [0, 456, 912], rects: [[0, -96, 576, 48, 624], [0, 144, 576, 240, 624], [0, 576, 576, 720, 624], [0, -144, 624, 48, 672], [0, 96, 624, 768, 672], [0, 864, 624, 960, 672], [0, -192, 672, 1008, 720], [0, -192, 720, 0, 768], [0, 48, 720, 1008, 768], [0, -192, 768, 1056, 816], [0, -192, 816, 96, 864], [0, 144, 816, 288, 864], [0, 384, 816, 1056, 864], [0, -192, 864, 1104, 960], [0, -144, 960, 816, 1008], [0, 864, 960, 912, 1008], [0, -96, 1008, 336, 1056], [0, 384, 1008, 528, 1056], [0, -48, 1056, 336, 1104], [0, 0, 1104, 48, 1152], [1, -48, 1008, 48, 1104]] }, { id: "start_zone", label: [0, 0, 288], rects: [[0, 144, -960, 192, -912], [0, -48, -912, 240, -864], [0, -240, -912, -96, -816], [0, -48, -864, 288, -816], [0, -240, -816, 288, -720], [0, -240, -720, 240, -672], [0, -240, -672, 288, -624], [0, -240, -624, 240, -528], [0, -240, -528, 192, -480], [0, -144, -480, 144, -432], [0, -144, -432, 192, -384], [0, 0, -384, 240, -336], [0, -240, -336, 288, -240], [0, -240, -240, 240, -144], [0, -240, -144, 192, -96], [0, -240, -96, 240, -48], [0, -240, -48, -96, 0], [0, -48, -48, 192, 0], [0, -240, 0, 192, 48], [0, -240, 48, 144, 144], [0, -240, 144, 240, 432], [0, -240, 432, -48, 480], [0, 48, 432, 240, 480], [0, -240, 480, 288, 528], [0, -240, 528, 240, 576], [0, -240, 576, -96, 624], [0, 48, 576, 144, 624], [1, 96, -48, 240, 0], [1, 48, 0, 288, 96]] }], doors: [{ kind: "door", cost: 1e3, at: [0, 175, 587], rooms: [1, 2] }, { kind: "debris", cost: 1e3, at: [1, 167, 42], rooms: [2, 0] }, { kind: "debris", cost: 1e3, at: [1, 172, 147], rooms: [0, 2] }, { kind: "debris", cost: 1e3, at: [1, -58, 1060], rooms: [0, 1] }], pois: [{ kind: "perk", id: "specialty_additionalprimaryweapon", at: [0, -160, -528] }, { kind: "box", id: null, at: [0, -130, 684] }] };
+
+  // src/map/plans/riese.json
+  var riese_default = { v: 1, slug: "riese", sig: "z12d12", floors: [{ name: "Ground floor", below: null }], rooms: [{ id: "tp_west_zone", label: [0, -1272, -696], rects: [[0, -1488, -1632, -1200, -1584], [0, -1536, -1584, -1200, -1488], [0, -1152, -1536, -1104, -1488], [0, -1488, -1488, -1056, -1440], [0, -1584, -1440, -1104, -1392], [0, -1584, -1392, -1344, -1344], [0, -1296, -1392, -1104, -1344], [0, -1584, -1344, -1440, -1296], [0, -1296, -1344, -1056, -1296], [0, -1680, -1296, -1440, -1248], [0, -1728, -1248, -1440, -1200], [0, -1296, -1296, -960, -1200], [0, -912, -1296, -864, -1200], [0, -1872, -1200, -960, -1152], [0, -1872, -1152, -1008, -1104], [0, -960, -1152, -864, -1104], [0, -1872, -1104, -1056, -1056], [0, -1872, -1056, -1440, -1008], [0, -1392, -1056, -1104, -1008], [0, -1680, -1008, -1488, -960], [0, -1296, -1008, -1104, -960], [0, -1680, -960, -1440, -912], [0, -1296, -960, -1056, -912], [0, -1632, -912, -1392, -864], [0, -1296, -912, -1152, -864], [0, -1536, -864, -1152, -816], [0, -1536, -816, -1104, -768], [0, -1440, -768, -1104, -624], [0, -1392, -624, -1104, -480], [0, -1296, -480, -1104, -432], [0, -1248, -432, -1152, -384]] }, { id: "outside_south_zone", label: [0, 144, -840], rects: [[0, 528, -2016, 576, -1968], [0, 96, -1968, 672, -1920], [0, 48, -1920, 672, -1824], [0, 96, -1824, 672, -1776], [0, 48, -1776, 672, -1728], [0, 48, -1728, 192, -1680], [0, 240, -1728, 528, -1680], [0, 576, -1728, 672, -1680], [0, 48, -1680, 528, -1584], [0, 96, -1584, 672, -1488], [0, 144, -1488, 624, -1440], [0, 144, -1440, 672, -1344], [0, 192, -1344, 480, -1296], [0, 384, -1296, 480, -1248], [0, 240, -1248, 384, -1200], [0, 528, -1248, 576, -1200], [0, 144, -1200, 672, -1104], [0, 48, -1104, 96, -1056], [0, 144, -1104, 528, -1056], [0, 0, -1056, 48, -1008], [0, 96, -1056, 480, -1008], [0, 576, -1056, 624, -960], [0, -288, -960, -48, -912], [0, 0, -1008, 480, -912], [0, 528, -960, 672, -912], [0, -384, -912, 672, -768], [0, -384, -768, 576, -720], [0, -384, -720, 432, -672], [0, -384, -672, -192, -624], [0, -384, -624, -240, -576], [0, -384, -576, -192, -528], [0, -144, -672, -96, -528], [0, 240, -672, 432, -528], [0, 480, -576, 576, -528], [0, -432, -528, -192, -480], [0, 240, -528, 576, -480], [0, -384, -480, -240, -432], [0, 192, -480, 576, -432], [0, -336, -432, -240, -384], [0, 240, -432, 624, -288], [0, 192, -288, 336, -240], [0, 432, -288, 624, -240], [0, 192, -240, 240, -192], [0, 480, -240, 576, -192]] }, { id: "tp_south_zone", label: [0, 48, -2160], rects: [[0, 240, -3264, 384, -3120], [0, -48, -3120, 144, -3072], [0, 192, -3120, 528, -3072], [0, -144, -3072, 624, -3024], [0, -192, -3024, 624, -2976], [0, -144, -2976, 624, -2928], [0, -192, -2928, 624, -2880], [0, -192, -2880, -48, -2784], [0, 0, -2880, 624, -2784], [0, -192, -2784, 624, -2736], [0, -144, -2736, 624, -2640], [0, -192, -2640, 624, -2592], [0, -192, -2592, -48, -2544], [0, 0, -2592, 624, -2544], [0, -192, -2544, 624, -2448], [0, -192, -2448, 672, -2400], [0, -192, -2400, 624, -2352], [0, -480, -2352, 624, -2256], [0, -528, -2256, -48, -2208], [0, 0, -2256, 672, -2208], [0, -528, -2208, 624, -2112], [0, -480, -2112, 672, -2016], [0, -480, -2016, -192, -1968], [0, -48, -2016, 528, -1968], [0, 576, -2016, 672, -1968], [0, -432, -1968, -384, -1920]] }, { id: "tp_east_zone", label: [0, 1272, 840], rects: [[0, 1296, 288, 1392, 336], [0, 912, 336, 1056, 384], [0, 1104, 336, 1392, 384], [0, 912, 384, 1584, 432], [0, 912, 432, 1632, 480], [0, 960, 480, 1584, 528], [0, 912, 528, 1584, 576], [0, 912, 576, 1152, 624], [0, 1200, 576, 1296, 624], [0, 912, 624, 1104, 672], [0, 1392, 576, 1632, 672], [0, 1344, 672, 1584, 720], [0, 912, 672, 1152, 768], [0, 1344, 720, 1632, 768], [0, 912, 768, 1632, 912], [0, 720, 912, 1632, 1008], [0, 720, 1008, 1584, 1056], [0, 672, 1056, 960, 1104], [0, 1008, 1056, 1536, 1104], [0, 720, 1104, 960, 1152], [0, 1056, 1104, 1440, 1152], [0, 768, 1152, 912, 1200], [0, 1104, 1152, 1392, 1248], [0, 1152, 1248, 1344, 1296], [0, 1200, 1296, 1296, 1344]] }, { id: "bridge_zone", label: [0, -120, -1416], rects: [[0, -288, -1536, -192, -1488], [0, -384, -1488, 144, -1344], [0, -336, -1344, 192, -1296], [0, -336, -1296, -144, -1248], [0, -96, -1296, 288, -1248], [0, -336, -1248, 240, -1200], [0, -336, -1200, 144, -1104], [0, -384, -1104, 48, -1056], [0, 96, -1104, 144, -1056], [0, -336, -1056, 0, -1008], [0, 48, -1056, 96, -1008], [0, -384, -1008, 0, -960], [0, -336, -960, -288, -912]] }, { id: "warehouse_top_zone", label: [0, -576, -1272], rects: [[0, -768, -1536, -624, -1488], [0, -768, -1488, -576, -1440], [0, -528, -1488, -432, -1440], [0, -864, -1440, -816, -1392], [0, -768, -1440, -720, -1392], [0, -624, -1440, -576, -1392], [0, -528, -1440, -480, -1392], [0, -864, -1392, -576, -1344], [0, -528, -1392, -432, -1344], [0, -864, -1344, -816, -1296], [0, -768, -1344, -576, -1296], [0, -384, -1344, -336, -1296], [0, -816, -1296, -336, -1248], [0, -816, -1248, -480, -1200], [0, -432, -1248, -336, -1200], [0, -912, -1200, -864, -1152], [0, -816, -1200, -768, -1152], [0, -720, -1200, -480, -1152], [0, -864, -1152, -672, -1104], [0, -432, -1152, -336, -1104], [0, -912, -1104, -816, -1056], [0, -768, -1104, -720, -1056], [0, -528, -1104, -480, -1056], [0, -432, -1104, -384, -1056], [0, -912, -1056, -720, -1008], [0, -528, -1056, -336, -1008]] }, { id: "warehouse_bottom_zone", label: [0, -768, -840], rects: [[0, -960, -1488, -912, -1440], [0, -432, -1488, -384, -1440], [0, -816, -1488, -768, -1392], [0, -720, -1440, -624, -1392], [0, -480, -1440, -384, -1392], [0, -1104, -1440, -864, -1344], [0, -576, -1488, -528, -1344], [0, -432, -1392, -384, -1344], [0, -1056, -1344, -864, -1296], [0, -816, -1344, -768, -1296], [0, -576, -1344, -384, -1296], [0, -480, -1248, -432, -1200], [0, -960, -1296, -912, -1152], [0, -864, -1296, -816, -1152], [0, -768, -1200, -720, -1152], [0, -480, -1200, -336, -1152], [0, -1008, -1152, -960, -1104], [0, -672, -1152, -432, -1104], [0, -1056, -1104, -912, -1056], [0, -816, -1104, -768, -1056], [0, -480, -1104, -432, -1056], [0, -1104, -1056, -912, -1008], [0, -720, -1104, -528, -1008], [0, -1104, -1008, -384, -960], [0, -1056, -960, -336, -912], [0, -1152, -912, -768, -864], [0, -720, -912, -384, -864], [0, -1152, -864, -384, -816], [0, -672, -816, -384, -768], [0, -1104, -816, -720, -720], [0, -672, -768, -432, -720], [0, -1104, -720, -864, -672], [0, -816, -720, -768, -672], [0, -720, -720, -384, -672], [0, -1104, -672, -384, -624], [0, -1056, -624, -384, -576], [0, -1056, -576, -624, -528], [0, -576, -576, -432, -528], [0, -1056, -528, -816, -480], [0, -768, -528, -432, -480], [0, -1104, -480, -528, -432], [0, -1152, -432, -528, -384], [0, -1152, -384, -960, -336], [0, -576, -384, -528, -336]] }, { id: "wnuen_bridge_zone", label: [0, 1080, -1464], rects: [[0, 672, -1584, 720, -1536], [0, 864, -1584, 960, -1536], [0, 1200, -1584, 1296, -1536], [0, 672, -1536, 1344, -1488], [0, 624, -1488, 1536, -1440], [0, 672, -1440, 1536, -1392], [0, 672, -1392, 1056, -1344], [0, 1200, -1392, 1296, -1344], [0, 1344, -1392, 1488, -1344], [0, 480, -1344, 624, -1296], [0, 720, -1344, 768, -1296], [0, 816, -1344, 1056, -1296], [0, 288, -1296, 384, -1248], [0, 480, -1296, 672, -1248], [0, 384, -1248, 528, -1200], [0, 576, -1248, 672, -1200], [0, 816, -1296, 1008, -1104], [0, 528, -1104, 1056, -1056], [0, 624, -1056, 1056, -1008], [0, 480, -1056, 576, -960], [0, 624, -1008, 1008, -960], [0, 480, -960, 528, -912], [0, 672, -960, 1008, -912]] }, { id: "wnuen_zone", label: [0, 936, 144], rects: [[0, 1056, -1056, 1200, -1008], [0, 1008, -1008, 1248, -912], [0, 672, -912, 1248, -816], [0, 768, -816, 1248, -768], [0, 576, -768, 1248, -720], [0, 528, -720, 1056, -624], [0, 672, -624, 1056, -576], [0, 624, -576, 1008, -528], [0, 624, -528, 864, -480], [0, 624, -480, 1056, -384], [0, 624, -384, 1104, -288], [0, 624, -288, 1056, -240], [0, 576, -240, 1056, -144], [0, 528, -144, 1056, -96], [0, 576, -96, 1056, -48], [0, 672, -48, 1056, 0], [0, 624, 0, 1200, 48], [0, 624, 48, 1008, 96], [0, 1056, 48, 1248, 96], [0, 576, 96, 1296, 192], [0, 576, 192, 1248, 240], [0, 624, 240, 1248, 288], [0, 672, 288, 960, 336], [0, 1008, 288, 1248, 336], [0, 864, 336, 912, 384], [0, 1056, 336, 1104, 384]] }, { id: "outside_west_zone", label: [0, -720, -96], rects: [[0, -480, -480, -384, -432], [0, -528, -432, -336, -384], [0, -960, -384, -576, -336], [0, -528, -384, -288, -336], [0, -960, -336, -336, -288], [0, -960, -288, -384, -240], [0, -960, -240, -432, -144], [0, -1008, -144, -432, -48], [0, -1008, -48, -720, 0], [0, -672, -48, -480, 0], [0, -816, 0, -768, 48], [0, -672, 0, -432, 48], [0, -672, 48, -576, 96], [0, -528, 48, -480, 96]] }, { id: "outside_east_zone", label: [0, 624, 432], rects: [[0, 336, -288, 384, -240], [0, 240, -240, 384, -192], [0, 192, -192, 432, -144], [0, 240, -144, 432, -48], [0, 192, -48, 384, 0], [0, 192, 0, 528, 48], [0, 240, 48, 576, 144], [0, 336, 144, 576, 240], [0, 384, 240, 576, 384], [0, 672, 336, 864, 384], [0, 336, 384, 912, 480], [0, 336, 480, 960, 528], [0, 336, 528, 912, 576], [0, 384, 576, 432, 624], [0, 528, 576, 912, 624], [0, 576, 624, 912, 672], [0, 720, 672, 864, 720], [0, 768, 720, 816, 768]] }, { id: "receiver_zone", label: [0, -144, 504], rects: [[0, -192, -672, -144, -624], [0, -240, -624, -144, -576], [0, -192, -576, -144, -528], [0, -96, -672, 240, -528], [0, -192, -528, 48, -480], [0, 96, -528, 240, -480], [0, -240, -480, 144, -384], [0, -288, -384, 240, -336], [0, -336, -336, 48, -288], [0, 96, -336, 240, -288], [0, -384, -288, 192, -240], [0, -432, -240, 144, -192], [0, -432, -192, -192, -144], [0, -144, -192, 192, -144], [0, -432, -144, 240, -48], [0, -480, -48, 192, 0], [0, -432, 0, 192, 48], [0, -576, 48, -528, 96], [0, -480, 48, 240, 96], [0, -768, 96, 240, 144], [0, -768, 144, 336, 192], [0, -768, 192, -576, 240], [0, -528, 192, 336, 240], [0, -432, 240, 384, 336], [0, -384, 336, 384, 384], [0, -336, 384, 336, 432], [0, -624, 432, 336, 576], [0, -624, 576, -192, 624], [0, -96, 576, 0, 624], [0, 48, 576, 384, 624], [0, -576, 624, -528, 672], [0, -432, 624, -192, 672], [0, 144, 624, 384, 672], [0, -432, 672, -336, 720], [0, 192, 672, 240, 720]] }], doors: [{ kind: "door", cost: 1250, at: [0, 265, -1970], rooms: [1, 2] }, { kind: "power", cost: 1e4, at: [0, 315, -234], rooms: [10, 1] }, { kind: "door", cost: 750, at: [0, -443, -98], rooms: [11, 9] }, { kind: "door", cost: 750, at: [0, 359, 304], rooms: [11, 10] }, { kind: "door", cost: 750, at: [0, -790, -364], rooms: [9, 6] }, { kind: "door", cost: 750, at: [0, 756, 348], rooms: [8, 10] }, { kind: "door", cost: 1250, at: [0, 1145, 326], rooms: [8, 3] }, { kind: "door", cost: 750, at: [0, -877, -1200], rooms: [5, 0] }, { kind: "power", cost: 1e4, at: [0, -353, -412], rooms: [9, 1] }, { kind: "door", cost: 750, at: [0, 356, 304], rooms: [11, 10] }, { kind: "debris", cost: 1e3, at: [0, 1050, -1007], rooms: [8, 7] }, { kind: "debris", cost: 1e3, at: [0, -422, -1043], rooms: [5, 6] }], pois: [{ kind: "perk", id: "specialty_fastreload", at: [0, -364, -794] }, { kind: "perk", id: "specialty_quickrevive", at: [0, -485, -2067] }, { kind: "perk", id: "specialty_armorvest", at: [0, 673, -1421] }, { kind: "perk", id: "specialty_rof", at: [0, -365, -1076] }, { kind: "perk", id: "specialty_additionalprimaryweapon", at: [0, -1089, -1366] }, { kind: "pap", id: null, at: [0, -61, 577] }, { kind: "box", id: null, at: [0, -1233, -1542] }, { kind: "box", id: null, at: [0, 657, -365] }, { kind: "box", id: null, at: [0, -1030, -1422] }, { kind: "box", id: null, at: [0, 11, -2450] }, { kind: "box", id: null, at: [0, 572, -1553] }, { kind: "box", id: null, at: [0, 1177, 957] }] };
+
+  // src/map/plans/shangrila.json
+  var shangrila_default = { v: 1, slug: "shangrila", sig: "z13d13", floors: [{ name: "Caves", below: -260 }, { name: "Temple", below: null }], rooms: [{ id: "caves_water_zone", label: [0, -312, -1104], rects: [[0, -672, -1584, -624, -1536], [0, -720, -1536, -576, -1488], [0, -768, -1488, -432, -1440], [0, -1008, -1440, -384, -1392], [0, -1056, -1392, -288, -1296], [0, -1152, -1296, -144, -1248], [0, -1488, -1248, -1392, -1200], [0, -1296, -1248, 0, -1200], [0, -1488, -1200, -768, -1152], [0, -720, -1200, 48, -1152], [0, -1536, -1152, -864, -1104], [0, -1488, -1104, -864, -1056], [0, -720, -1152, 96, -1056], [0, -1440, -1056, -1248, -1008], [0, -1104, -1056, -912, -1008], [0, -720, -1056, -240, -1008], [0, -192, -1056, -144, -1008], [0, -96, -1056, 48, -1008], [0, -1104, -1008, -960, -912], [0, -1152, -912, -960, -864], [0, -1104, -864, -1008, -816]] }, { id: "power_room_zone", label: [0, 504, -312], rects: [[0, -672, -1008, -480, -912], [0, -672, -912, -432, -864], [0, -672, -864, -384, -816], [0, -672, -816, -240, -768], [0, -672, -768, -192, -720], [0, -672, -720, -240, -672], [0, -480, -672, -240, -624], [0, -384, -624, -192, -576], [0, -384, -576, 96, -528], [0, 144, -576, 384, -528], [0, -480, -528, 432, -480], [0, -528, -480, 432, -432], [0, -576, -432, 96, -384], [0, 144, -432, 240, -384], [0, -576, -384, -192, -336], [0, -576, -336, -240, -288], [0, 288, -432, 720, -192], [0, 384, -192, 528, -144], [0, -576, -288, -336, -48], [0, 336, -144, 576, -48], [0, -528, -48, -336, 0], [0, -96, -384, 96, 0], [0, 336, -48, 528, 0], [0, -576, 0, 144, 48], [0, 336, 0, 576, 48], [0, -528, 48, 144, 96], [0, 336, 48, 528, 96], [0, -576, 96, 576, 144], [0, -528, 144, 96, 192], [0, 144, 144, 576, 192], [0, -288, 192, 528, 240], [0, -96, 240, 96, 288], [0, 336, 240, 432, 288]] }, { id: "caves3_zone", label: [0, 720, -792], rects: [[0, 576, -1056, 624, -1008], [0, 480, -1008, 624, -960], [0, 480, -960, 720, -912], [0, 432, -912, 768, -864], [0, 816, -912, 960, -864], [0, 432, -864, 1008, -720], [0, 480, -720, 528, -672], [0, 576, -720, 720, -672], [0, 864, -720, 1008, -672], [0, 576, -672, 1008, -624], [0, 528, -624, 912, -528], [0, 480, -528, 912, -480], [0, 480, -480, 864, -432]] }, { id: "caves2_zone", label: [0, 576, -1320], rects: [[0, 288, -1824, 384, -1776], [0, 240, -1776, 432, -1632], [0, 192, -1632, 480, -1584], [0, 528, -1632, 576, -1584], [0, 624, -1632, 672, -1584], [0, 192, -1584, 720, -1536], [0, 144, -1536, 720, -1488], [0, 96, -1488, 720, -1440], [0, 144, -1440, 720, -1392], [0, 96, -1392, 720, -1344], [0, 768, -1392, 816, -1344], [0, 144, -1344, 1008, -1296], [0, 192, -1296, 336, -1248], [0, 480, -1296, 1008, -1248], [0, 240, -1248, 336, -1200], [0, 528, -1248, 1008, -1200], [0, 432, -1200, 1008, -1152], [0, 432, -1152, 672, -1104], [0, 384, -1104, 576, -1008], [0, 384, -1008, 480, -960]] }, { id: "waterfall_upper_zone", label: [1, -528, -2040], rects: [[1, -2064, -2256, -2016, -2208], [1, -720, -2208, 0, -2160], [1, -2112, -2208, -1968, -2112], [1, -912, -2160, 0, -2112], [1, -2112, -2112, -1824, -2064], [1, -960, -2112, 0, -2064], [1, -2112, -2064, -1776, -2016], [1, -1584, -2064, -1440, -2016], [1, -1056, -2064, 0, -2016], [1, -2160, -2016, -1440, -1968], [1, -1104, -2016, -720, -1968], [1, -2448, -1968, -2400, -1920], [1, -2208, -1968, -1392, -1920], [1, -1104, -1968, -816, -1920], [1, -2496, -1920, -2352, -1872], [1, -2208, -1920, -1344, -1872], [1, -1968, -1872, -1920, -1824], [1, -1872, -1872, -1776, -1824], [1, -1728, -1872, -1296, -1824], [1, -1152, -1920, -912, -1824], [1, -2496, -1872, -2304, -1776], [1, -2256, -1872, -2016, -1776], [1, -1632, -1824, -1296, -1776], [1, -2544, -1776, -2352, -1728], [1, -2304, -1776, -2064, -1728], [1, -1488, -1776, -1200, -1728], [1, -1152, -1824, -960, -1728], [1, -912, -1776, -864, -1728], [1, -2544, -1728, -2400, -1680], [1, -2352, -1728, -2064, -1680], [1, -1440, -1728, -1200, -1680], [1, -2496, -1680, -2064, -1632], [1, -1344, -1680, -1200, -1632], [1, -1152, -1728, -816, -1632], [1, -2496, -1632, -1968, -1584], [1, -1344, -1632, -864, -1584], [1, -2496, -1584, -2208, -1536], [1, -2160, -1584, -1968, -1536], [1, -1296, -1584, -864, -1536], [1, -2160, -1536, -1920, -1488], [1, -1248, -1536, -1008, -1488], [1, -2544, -1536, -2256, -1440], [1, -2160, -1488, -1872, -1440], [1, -2496, -1440, -2256, -1392], [1, -2112, -1440, -1824, -1392], [1, -1248, -1488, -960, -1392], [1, -2352, -1392, -2304, -1344], [1, -2064, -1392, -1776, -1344], [1, -1248, -1392, -912, -1344], [1, -2016, -1344, -1728, -1296], [1, -1968, -1296, -1680, -1248], [1, -1920, -1248, -1632, -1200], [1, -1872, -1200, -1536, -1152], [1, -1824, -1152, -1440, -1104], [1, -1776, -1104, -1392, -1056], [1, -1728, -1056, -1392, -1008], [1, -1680, -1008, -1392, -960], [1, -1680, -960, -1200, -912], [1, -1680, -912, -1248, -816], [1, -1680, -816, -1200, -768], [1, -1680, -768, -1248, -720], [1, -1632, -720, -1584, -672], [1, -1536, -720, -1392, -672], [1, -1344, -720, -1248, -672], [1, -1584, -672, -1200, -624], [1, -1584, -624, -1248, -576], [1, -1536, -576, -1392, -528], [1, -1344, -576, -1248, -528], [1, -1632, -528, -1392, -432], [1, -1680, -432, -1392, -384], [1, -1632, -384, -1536, -336], [0, -96, -2208, 192, -2112], [0, -96, -2112, 144, -2064], [0, -48, -2064, 144, -2016], [0, -2496, -2016, -2352, -1968], [0, -2496, -1968, -2304, -1920], [0, -2448, -1920, -2304, -1872], [0, -2400, -1872, -2304, -1824]] }, { id: "waterfall_tunnel_a_zone", label: [0, -2136, -2088], rects: [[0, -1968, -2304, -1824, -2256], [0, -2256, -2256, -2064, -2208], [0, -2016, -2256, -1776, -2208], [0, -2304, -2208, -1824, -2160], [0, -2400, -2160, -2304, -2112], [0, -2256, -2160, -1824, -2112], [0, -2448, -2112, -1824, -2064], [0, -2448, -2064, -2160, -2016], [0, -2352, -2016, -2256, -1968]] }, { id: "waterfall_tunnel_zone", label: [0, -1632, -2112], rects: [[0, -1776, -2256, -1728, -2208], [0, -1824, -2208, -1488, -2160], [0, -1824, -2160, -1440, -2064], [0, -1776, -2064, -1440, -2016], [0, -1632, -2016, -1440, -1968], [0, -1536, -1968, -1344, -1872]] }, { id: "waterfall_lower_zone", label: [0, -1656, -1728], rects: [[0, -1536, -1872, -1344, -1824], [0, -1728, -1824, -1344, -1776], [0, -1968, -1776, -1344, -1680], [0, -1968, -1680, -1488, -1632], [0, -1440, -1680, -1392, -1632], [0, -1920, -1632, -1872, -1584], [0, -1824, -1632, -1776, -1584], [0, -1536, -1632, -1392, -1584], [0, -1968, -1584, -1728, -1488], [0, -1680, -1536, -1632, -1488], [0, -1584, -1584, -1344, -1488], [0, -1968, -1488, -1392, -1440], [0, -2016, -1440, -1392, -1392], [0, -1968, -1392, -1872, -1344], [0, -1824, -1392, -1776, -1344], [0, -1728, -1392, -1392, -1344], [0, -1872, -1344, -1392, -1296], [0, -1872, -1296, -1728, -1248], [0, -1680, -1296, -1392, -1248], [0, -1872, -1248, -1488, -1200], [0, -1728, -1200, -1488, -1152], [0, -1728, -1152, -1584, -1104]] }, { id: "caves1_zone", label: [0, 1296, -1080], rects: [[0, 192, -2208, 1104, -2160], [0, 192, -2160, 1200, -2112], [0, 144, -2112, 1248, -2064], [0, 144, -2064, 1296, -2016], [0, 1056, -2016, 1296, -1968], [0, 1104, -1968, 1344, -1920], [0, 1152, -1920, 1344, -1824], [0, 1152, -1824, 1392, -1776], [0, 1200, -1776, 1392, -1584], [0, 1440, -1632, 1488, -1584], [0, 1056, -1584, 1536, -1440], [0, 1008, -1440, 1632, -1392], [0, 1392, -1392, 1632, -1344], [0, 1008, -1392, 1344, -1200], [0, 1392, -1344, 1584, -1200], [0, 1008, -1200, 1632, -1152], [0, 960, -1152, 1632, -1008], [0, 1008, -1008, 1200, -960], [0, 1296, -1008, 1344, -960], [0, 1392, -1008, 1440, -960], [0, 1056, -960, 1152, -912]] }, { id: "cave_tunnel_zone", label: [0, 1944, -1248], rects: [[1, 1680, -1632, 1872, -1584], [1, 1680, -1584, 1968, -1536], [1, 1680, -1536, 2016, -1488], [1, 1680, -1488, 2064, -1440], [1, 1776, -1440, 2064, -1392], [1, 1872, -1392, 2064, -1344], [0, 2016, -1440, 2208, -1392], [0, 1872, -1392, 2208, -1344], [0, 1824, -1344, 2208, -1296], [0, 1728, -1248, 1776, -1200], [0, 1824, -1296, 2064, -1200], [0, 1872, -1200, 2016, -1152], [0, 1632, -1200, 1824, -1104], [0, 1632, -1104, 1776, -1008]] }, { id: "waterfall_upper1_zone", label: [1, -816, -864], rects: [[1, -1248, -1344, -912, -1248], [1, -1296, -1248, -816, -1152], [1, -1248, -1152, -816, -1104], [1, -1200, -1104, -1104, -1056], [1, -1056, -1104, -960, -1056], [1, -912, -1104, -816, -1056], [1, -1248, -1056, -768, -1008], [1, -1248, -1008, -960, -960], [1, -1200, -960, -1104, -912], [1, -1056, -960, -960, -912], [1, -912, -1008, -816, -912], [1, -1248, -912, -384, -816], [1, -1200, -816, -1104, -768], [1, -1056, -816, -960, -768], [1, -912, -816, -384, -768], [1, -1248, -768, -384, -720], [1, -1248, -720, -576, -672], [1, -528, -720, -480, -672], [1, -432, -720, -384, -672], [1, -1200, -672, -1104, -624], [1, -1056, -672, -576, -624], [1, -1248, -624, -576, -576], [1, -1248, -576, -672, -528], [1, -1200, -528, -1104, -480], [1, -1056, -528, -672, -480], [1, -1248, -480, -768, -432], [1, -1248, -432, -816, -384], [1, -1056, -384, -912, -336], [1, -1008, -336, -960, -288]] }, { id: "pressure_plate_zone", label: [1, 1176, -816], rects: [[1, 1056, -2160, 1104, -2112], [1, 1008, -2112, 1152, -2064], [1, 720, -2064, 1152, -2016], [1, 672, -2016, 1200, -1968], [1, 624, -1968, 1296, -1920], [1, 624, -1920, 1344, -1872], [1, 624, -1872, 1392, -1824], [1, 672, -1824, 720, -1776], [1, 1104, -1824, 1392, -1776], [1, 768, -1824, 960, -1728], [1, 1152, -1776, 1440, -1728], [1, 1200, -1728, 1440, -1632], [1, 720, -1728, 960, -1584], [1, 1200, -1632, 1680, -1584], [1, 720, -1584, 912, -1536], [1, 1248, -1584, 1680, -1536], [1, 720, -1536, 960, -1488], [1, 1200, -1536, 1680, -1488], [1, 720, -1488, 1008, -1440], [1, 1056, -1488, 1104, -1440], [1, 1152, -1488, 1680, -1440], [1, 720, -1440, 1440, -1392], [1, 720, -1392, 1392, -1344], [1, 768, -1344, 1392, -1296], [1, 720, -1296, 1392, -1248], [1, 720, -1248, 1008, -1200], [1, 768, -1200, 912, -1152], [1, 1200, -1248, 1392, -1152], [1, 1248, -1152, 1440, -1104], [1, 1488, -1152, 1536, -1104], [1, 720, -1152, 960, -1056], [1, 1248, -1104, 1584, -1056], [1, 480, -1056, 720, -1008], [1, 768, -1056, 912, -1008], [1, 1248, -1056, 1632, -1008], [1, 432, -1008, 960, -960], [1, 1008, -1008, 1152, -960], [1, 1200, -1008, 1632, -960], [1, 432, -960, 1200, -912], [1, 1248, -960, 1632, -912], [1, 480, -912, 1632, -864], [1, 720, -864, 1632, -768], [1, 720, -768, 1392, -720], [1, 672, -720, 1392, -672], [1, 624, -672, 960, -624], [1, 1488, -768, 1632, -624], [1, 624, -624, 1056, -576], [1, 672, -576, 1104, -528], [1, 1152, -672, 1392, -528], [1, 720, -528, 1392, -480], [1, 816, -480, 1392, -432], [1, 816, -432, 1296, -384], [1, 912, -384, 1296, -336], [1, 960, -336, 1152, -288], [1, 1200, -336, 1248, -288], [1, 1008, -288, 1200, -240], [1, 1056, -240, 1152, -192]] }, { id: "temple_start_zone", label: [1, 0, 168], rects: [[1, 96, -1440, 240, -1296], [1, -192, -1296, 240, -1248], [1, -288, -1248, 288, -1200], [1, -384, -1200, 384, -1056], [1, -432, -1056, -144, -1008], [1, -48, -1056, 0, -1008], [1, -384, -1008, -192, -960], [1, -384, -960, -144, -912], [1, 192, -1056, 384, -912], [1, -384, -912, 384, -720], [1, -336, -720, -288, -672], [1, -240, -720, 192, -672], [1, 240, -720, 336, -672], [1, -96, -672, 96, -576], [1, 192, -672, 384, -576], [1, -432, -672, -240, -480], [1, -96, -576, 384, -480], [1, -432, -480, 384, -384], [1, -384, -384, 384, -336], [1, -384, -336, 192, -288], [1, 240, -336, 384, -288], [1, -384, -288, 432, -240], [1, -432, -240, 144, -192], [1, 192, -240, 384, -192], [1, 240, -192, 432, -144], [1, -432, -192, -192, -96], [1, 288, -144, 384, -96], [1, -144, -192, 144, 528], [1, -96, 528, 96, 624]] }], doors: [{ kind: "door", cost: 1e3, at: [0, 975, -1258], rooms: [3, 8] }, { kind: "door", cost: 1e3, at: [0, -1420, -1836], rooms: [7, 6] }, { kind: "door", cost: 1e3, at: [1, -2352, -1998], rooms: [4, 5] }, { kind: "door", cost: 1e3, at: [0, 1622, -1100], rooms: [9, 8] }, { kind: "door", cost: 1e3, at: [1, 1676, -1538], rooms: [11, 9] }, { kind: "debris", cost: 750, at: [1, -388, -806], rooms: [10, 12] }, { kind: "debris", cost: 750, at: [1, -542, -802], rooms: [10, 12] }, { kind: "debris", cost: 1250, at: [0, -532, -838], rooms: [1, 0] }, { kind: "debris", cost: 1e3, at: [0, -1185, -1156], rooms: [0, 7] }, { kind: "debris", cost: 1e3, at: [0, -1509, -1216], rooms: [7, 0] }, { kind: "debris", cost: 750, at: [1, 589, -957], rooms: [11, 12] }, { kind: "debris", cost: 750, at: [1, 415, -952], rooms: [12, 11] }, { kind: "debris", cost: 1250, at: [0, 600, -326], rooms: [1, 2] }], pois: [{ kind: "perk", id: "specialty_longersprint", at: [0, -332, -1043] }, { kind: "perk", id: "specialty_flakjacket", at: [0, 429, -846] }, { kind: "perk", id: "specialty_deadshot", at: [0, -535, 46] }, { kind: "perk", id: "specialty_rof", at: [0, 175, -1583] }, { kind: "perk", id: "specialty_quickrevive", at: [1, -9, -942] }, { kind: "perk", id: "specialty_fastreload", at: [1, -1284, -933] }, { kind: "perk", id: "specialty_armorvest", at: [1, 1384, -1146] }, { kind: "perk", id: "specialty_additionalprimaryweapon", at: [0, -1352, -1437] }, { kind: "pap", id: null, at: [1, 0, 472] }, { kind: "box", id: null, at: [0, -1794, -1768] }, { kind: "box", id: null, at: [1, -3, -1255] }, { kind: "box", id: null, at: [0, 1216, -993] }, { kind: "box", id: null, at: [0, -32, -574] }] };
+
+  // src/map/plans/shinonuma.json
+  var shinonuma_default = { v: 1, slug: "shinonuma", sig: "z11d11", floors: [{ name: "Ground", below: -570 }, { name: "Upstairs", below: null }], rooms: [{ id: "southwest_building", label: [0, 7656, -1272], rects: [[0, 7632, -1728, 7680, -1680], [0, 7728, -1728, 7776, -1680], [0, 7536, -1680, 7872, -1632], [0, 7440, -1632, 7920, -1584], [0, 7392, -1584, 7968, -1536], [0, 7392, -1536, 8016, -1488], [0, 7296, -1488, 8016, -1440], [0, 7248, -1440, 7728, -1392], [0, 7872, -1440, 8016, -1392], [0, 7200, -1392, 8064, -1344], [0, 7152, -1344, 8112, -1296], [0, 7152, -1296, 8160, -1248], [0, 7152, -1248, 8112, -1200], [0, 7152, -1200, 7728, -1152], [0, 7776, -1200, 8064, -1152], [0, 7200, -1152, 8064, -1104], [0, 7248, -1104, 8016, -1056], [0, 7296, -1056, 7968, -1008], [0, 7344, -1008, 7920, -960], [0, 7392, -960, 7824, -912], [0, 7440, -912, 7776, -864], [0, 7488, -864, 7728, -816], [0, 7536, -816, 7680, -768]] }, { id: "southeast_building", label: [0, 12504, -1320], rects: [[0, 12192, -1632, 12336, -1584], [0, 12528, -1632, 12624, -1584], [0, 12528, -1584, 12720, -1536], [0, 12192, -1584, 12384, -1488], [0, 12432, -1536, 12768, -1488], [0, 12192, -1488, 12816, -1440], [0, 12144, -1440, 12864, -1200], [0, 12192, -1200, 12816, -1152], [0, 12240, -1152, 12816, -1104], [0, 12240, -1104, 12768, -1056], [0, 12288, -1056, 12480, -1008], [0, 12528, -1056, 12624, -1008], [0, 12288, -1008, 12432, -960], [0, 12336, -960, 12432, -912]] }, { id: "northwest_building", label: [0, 8472, 3288], rects: [[0, 8448, 2880, 8544, 2928], [0, 8400, 2928, 8592, 2976], [0, 8352, 2976, 8544, 3024], [0, 8304, 3024, 8640, 3072], [0, 8256, 3072, 8736, 3120], [0, 8208, 3120, 8736, 3168], [0, 8160, 3168, 8784, 3216], [0, 8112, 3216, 8832, 3360], [0, 8064, 3360, 8112, 3408], [0, 8160, 3360, 8832, 3408], [0, 8688, 3408, 8784, 3456], [0, 8016, 3408, 8640, 3552], [0, 8064, 3552, 8592, 3648], [0, 8064, 3648, 8400, 3696], [0, 8160, 3696, 8352, 3744], [0, 8208, 3744, 8304, 3792]] }, { id: "northeast_building", label: [0, 11448, 3480], rects: [[0, 11616, 2976, 11760, 3024], [0, 11568, 3024, 11808, 3072], [0, 11520, 3072, 11856, 3120], [0, 11472, 3120, 11856, 3168], [0, 11424, 3168, 11808, 3216], [0, 11424, 3216, 11712, 3264], [0, 11328, 3264, 11472, 3312], [0, 11520, 3264, 11712, 3312], [0, 11280, 3312, 11760, 3360], [0, 11280, 3360, 11808, 3408], [0, 11232, 3408, 11808, 3456], [0, 11088, 3456, 11808, 3504], [0, 11136, 3504, 11760, 3552], [0, 11184, 3552, 11424, 3600], [0, 11472, 3552, 11760, 3600], [0, 11184, 3600, 11712, 3648], [0, 11280, 3648, 11712, 3696], [0, 11328, 3696, 11664, 3744], [0, 11376, 3744, 11616, 3792], [0, 11424, 3792, 11568, 3840]] }, { id: "southwest_outside", label: [0, 9e3, -384], rects: [[0, 8064, -1584, 8400, -1536], [0, 8448, -1584, 8496, -1536], [0, 8016, -1536, 8544, -1440], [0, 8880, -1488, 9024, -1440], [0, 8016, -1440, 8496, -1392], [0, 8544, -1440, 8592, -1392], [0, 8640, -1440, 8688, -1392], [0, 8064, -1392, 8448, -1344], [0, 8496, -1392, 8736, -1344], [0, 8832, -1440, 9072, -1344], [0, 8112, -1344, 8784, -1296], [0, 8880, -1344, 9120, -1296], [0, 8160, -1296, 8784, -1248], [0, 8832, -1296, 9120, -1248], [0, 8112, -1248, 8784, -1200], [0, 8832, -1248, 9168, -1200], [0, 8064, -1200, 8784, -1152], [0, 8832, -1200, 9216, -1152], [0, 8064, -1152, 9216, -1104], [0, 8016, -1104, 9264, -1056], [0, 7968, -1056, 9312, -1008], [0, 7920, -1008, 9312, -960], [0, 7824, -960, 9360, -912], [0, 7776, -912, 9360, -864], [0, 7728, -864, 8592, -816], [0, 8640, -864, 9408, -816], [0, 7680, -816, 8352, -768], [0, 7536, -768, 8352, -720], [0, 8736, -816, 9408, -720], [0, 7488, -720, 7776, -672], [0, 7824, -720, 8352, -672], [0, 8688, -720, 9024, -672], [0, 9072, -720, 9408, -672], [0, 7440, -672, 8256, -624], [0, 8448, -672, 8544, -624], [0, 8592, -672, 9456, -624], [0, 8352, -624, 9408, -576], [0, 7392, -624, 8160, -528], [0, 8304, -576, 8688, -528], [0, 8784, -576, 9456, -528], [0, 7440, -528, 8160, -480], [0, 8304, -528, 9456, -480], [0, 7440, -480, 8064, -432], [0, 8256, -480, 9456, -432], [0, 7776, -432, 8064, -384], [0, 8256, -432, 8448, -384], [0, 7776, -384, 8112, -336], [0, 8496, -432, 9504, -336], [0, 7824, -336, 8160, -288], [0, 8208, -384, 8352, -288], [0, 8208, -288, 8304, -240], [0, 8688, -336, 9504, -240], [0, 7872, -288, 8160, -192], [0, 8736, -240, 9456, -192], [0, 7680, -192, 7776, -144], [0, 7824, -192, 8112, -144], [0, 8160, -192, 8352, -144], [0, 7632, -144, 8352, -96], [0, 8736, -192, 9504, -96], [0, 7632, -96, 8400, -48], [0, 8592, -96, 9504, -48], [0, 7632, -48, 9504, 0], [0, 7632, 0, 9072, 48], [0, 9120, 0, 9552, 48], [0, 7632, 48, 8688, 96], [0, 8784, 48, 9552, 96], [0, 7680, 96, 8640, 144], [0, 8928, 96, 9600, 144], [0, 7776, 144, 8448, 192], [0, 9024, 144, 9600, 192], [0, 9024, 192, 9552, 240], [0, 9072, 240, 9504, 288], [0, 9120, 288, 9456, 336], [0, 9216, 336, 9360, 384], [1, 9456, 144, 9600, 240], [1, 9360, 240, 9552, 288], [1, 9360, 288, 9504, 336], [1, 9408, 336, 9504, 384]] }, { id: "southeast_outside", label: [0, 11616, -1296], rects: [[0, 11952, -1584, 12192, -1536], [0, 11568, -1536, 12192, -1488], [0, 11328, -1488, 12192, -1440], [0, 11232, -1440, 12144, -1392], [0, 11088, -1392, 12144, -1200], [0, 11088, -1200, 12192, -1152], [0, 11040, -1152, 12240, -1056], [0, 10992, -1056, 12288, -960], [0, 10944, -960, 12336, -912], [0, 10944, -912, 12384, -864], [0, 10896, -864, 12384, -768], [0, 10848, -768, 11376, -720], [0, 11616, -768, 12384, -720], [0, 10848, -720, 11328, -672], [0, 10800, -672, 11328, -624], [0, 11520, -720, 12336, -624], [0, 11424, -624, 12288, -576], [0, 10800, -624, 11280, -528], [0, 11424, -576, 11952, -528], [0, 12e3, -576, 12144, -528], [0, 10752, -528, 11280, -480], [0, 11376, -528, 11952, -480], [0, 10800, -480, 11232, -432], [0, 11328, -480, 11856, -432], [0, 10848, -432, 11232, -384], [0, 11328, -432, 11712, -384], [0, 10752, -384, 11232, -336], [0, 11280, -384, 11616, -336], [0, 10704, -336, 11184, -288], [0, 11232, -336, 11568, -288], [0, 10656, -288, 11184, -240], [0, 10656, -240, 11136, -192], [0, 11232, -288, 11520, -192], [0, 10704, -192, 11472, -144], [0, 10704, -144, 11424, -96], [0, 10704, -96, 11376, 0], [0, 10704, 0, 11328, 96], [0, 10752, 96, 11280, 240], [0, 10752, 240, 11232, 288], [0, 10752, 288, 11184, 336], [0, 10752, 336, 10944, 384], [0, 10704, 384, 10944, 432], [0, 10752, 432, 10944, 480]] }, { id: "northwest_outside", label: [0, 8784, 2376], rects: [[0, 9024, 1056, 9072, 1104], [0, 8976, 1104, 9552, 1248], [0, 8928, 1248, 9504, 1296], [0, 8928, 1296, 9552, 1344], [0, 8880, 1344, 9504, 1392], [0, 8880, 1392, 9552, 1488], [0, 8784, 1488, 9552, 1536], [0, 8736, 1536, 9456, 1584], [0, 8688, 1584, 9504, 1632], [0, 8688, 1632, 9600, 1680], [0, 8640, 1680, 9600, 1728], [0, 8592, 1728, 9600, 1776], [0, 8544, 1776, 9600, 1824], [0, 8496, 1824, 8928, 1872], [0, 9120, 1824, 9552, 1872], [0, 9120, 1872, 9600, 1920], [0, 8448, 1872, 8784, 1968], [0, 8352, 1968, 8832, 2016], [0, 9120, 1920, 9552, 2016], [0, 8352, 2016, 8880, 2064], [0, 9072, 2016, 9552, 2064], [0, 8256, 2064, 9552, 2112], [0, 8208, 2112, 9552, 2160], [0, 8064, 2160, 9552, 2208], [0, 8016, 2208, 9504, 2256], [0, 8016, 2256, 9456, 2304], [0, 8064, 2304, 9504, 2448], [0, 8112, 2448, 9024, 2496], [0, 9072, 2448, 9504, 2496], [0, 8112, 2496, 9504, 2544], [0, 8112, 2544, 9456, 2592], [0, 8256, 2592, 9456, 2736], [0, 8304, 2736, 9456, 2784], [0, 8256, 2784, 9456, 2832], [0, 8256, 2832, 9408, 2880], [0, 8256, 2880, 8448, 2928], [0, 8544, 2880, 9360, 2928], [0, 8160, 2928, 8400, 2976], [0, 8592, 2928, 9408, 2976], [0, 8160, 2976, 8352, 3024], [0, 8592, 2976, 9360, 3024], [0, 8160, 3024, 8304, 3072], [0, 8640, 3024, 9312, 3072], [0, 8736, 3072, 9264, 3168], [0, 8832, 3168, 9072, 3216], [0, 8832, 3216, 9024, 3264], [0, 8832, 3264, 8928, 3312]] }, { id: "northeast_outside", label: [0, 11064, 1920], rects: [[0, 10752, 1248, 10896, 1296], [0, 10752, 1296, 11040, 1344], [0, 10704, 1344, 11136, 1392], [0, 10656, 1392, 11232, 1440], [0, 10656, 1440, 11376, 1488], [0, 10656, 1488, 11424, 1536], [0, 10656, 1536, 11520, 1584], [0, 10608, 1584, 11568, 1632], [0, 10560, 1632, 11616, 1680], [0, 10512, 1680, 11664, 1728], [0, 10416, 1728, 11664, 1824], [0, 10416, 1824, 11712, 2016], [0, 10368, 2016, 11712, 2064], [0, 10416, 2064, 11664, 2112], [0, 10464, 2112, 10848, 2160], [0, 10896, 2112, 11664, 2160], [0, 10464, 2160, 11664, 2208], [0, 10512, 2208, 11664, 2256], [0, 10512, 2256, 11616, 2400], [0, 10560, 2400, 11568, 2448], [0, 10512, 2448, 11568, 2496], [0, 10560, 2496, 11568, 2592], [0, 10560, 2592, 11520, 2736], [0, 10608, 2736, 11472, 2832], [0, 10656, 2832, 11424, 2880], [0, 10608, 2880, 11424, 2976], [0, 10608, 2976, 11472, 3024], [0, 10656, 3024, 11472, 3072], [0, 10656, 3072, 11520, 3120], [0, 10656, 3120, 11472, 3168], [0, 10704, 3168, 11424, 3264], [0, 10704, 3264, 11328, 3312], [0, 10752, 3312, 11280, 3360], [0, 10800, 3360, 11280, 3408], [0, 10800, 3408, 11232, 3456], [0, 10800, 3456, 11088, 3504], [0, 10848, 3504, 10992, 3552]] }, { id: "center_building_combined", label: [0, 10152, 1032], rects: [[0, 9600, 144, 9984, 192], [0, 10224, 144, 10752, 192], [0, 9552, 192, 9984, 240], [0, 10128, 192, 10752, 240], [0, 9504, 240, 9984, 288], [0, 10080, 240, 10752, 288], [0, 9456, 288, 10752, 384], [0, 9456, 384, 10704, 432], [0, 9408, 432, 10752, 480], [0, 9408, 480, 10800, 576], [0, 9456, 576, 10800, 624], [0, 9408, 624, 10800, 672], [0, 9456, 672, 10800, 720], [0, 9408, 720, 10800, 816], [0, 9456, 816, 10800, 864], [0, 9504, 864, 10080, 912], [0, 9504, 912, 10032, 960], [0, 10128, 864, 10800, 960], [0, 9504, 960, 10800, 1104], [0, 9552, 1104, 10272, 1152], [0, 10368, 1104, 10800, 1152], [0, 9552, 1152, 10800, 1248], [0, 9504, 1248, 10752, 1296], [0, 9552, 1296, 10752, 1344], [0, 9504, 1344, 10704, 1392], [0, 9552, 1392, 9792, 1440], [0, 9984, 1392, 10032, 1440], [0, 10128, 1392, 10656, 1440]] }, { id: "center_building_upstairs_buy", label: [1, 10464, 1368], rects: [[1, 10176, 816, 10272, 864], [1, 10320, 816, 10368, 864], [1, 10608, 816, 10704, 864], [1, 10080, 864, 10704, 912], [1, 10032, 912, 10800, 960], [1, 10080, 960, 10800, 1056], [1, 10032, 1056, 10848, 1248], [1, 10080, 1248, 10848, 1488], [1, 10464, 1488, 10512, 1536], [1, 10656, 1488, 10896, 1536], [1, 10080, 1488, 10368, 1584], [1, 10656, 1536, 10848, 1584], [1, 10080, 1584, 10320, 1632], [1, 10656, 1584, 10896, 1680], [1, 10704, 1680, 10848, 1728], [0, 9792, 1392, 9984, 1440], [0, 9744, 1440, 10176, 1584], [0, 9792, 1584, 9984, 1632], [0, 10032, 1584, 10128, 1632]] }, { id: "center_building_upstairs", label: [1, 10104, 600], rects: [[1, 10224, 192, 10272, 240], [1, 9552, 240, 9840, 288], [1, 10176, 240, 10704, 288], [1, 9504, 288, 9888, 336], [1, 9504, 336, 9936, 384], [1, 9504, 384, 9888, 432], [1, 9936, 384, 10032, 432], [1, 10080, 288, 10704, 432], [1, 9504, 432, 10704, 480], [1, 9504, 480, 10368, 528], [1, 10416, 480, 10704, 528], [1, 9504, 528, 10704, 672], [1, 9504, 672, 10032, 720], [1, 10080, 672, 10704, 720], [1, 9504, 720, 10656, 768], [1, 9504, 768, 9600, 816], [1, 9648, 768, 9840, 816], [1, 9936, 768, 10032, 816], [1, 10080, 768, 10608, 816], [1, 10368, 816, 10608, 864]] }], doors: [{ kind: "door", cost: 1e3, at: [0, 9530, 259], rooms: [8, 4] }, { kind: "door", cost: 1e3, at: [0, 9556, 1270], rooms: [8, 6] }, { kind: "door", cost: 1e3, at: [0, 10704, 1359], rooms: [8, 7] }, { kind: "door", cost: 1e3, at: [0, 10741, 271], rooms: [5, 8] }, { kind: "door", cost: 1e3, at: [1, 10448, 851], rooms: [9, 10] }, { kind: "door", cost: 750, at: [0, 7966, -1046], rooms: [0, 4] }, { kind: "door", cost: 750, at: [0, 11321, 3301], rooms: [7, 3] }, { kind: "door", cost: 750, at: [0, 8316, 3030], rooms: [6, 2] }, { kind: "door", cost: 750, at: [0, 12238, -1087], rooms: [5, 1] }, { kind: "debris", cost: 1e3, at: [1, 10124, 373], rooms: [10, 8] }, { kind: "debris", cost: 1e3, at: [0, 9952, 372], rooms: [8, 10] }], pois: [{ kind: "perk", id: "specialty_rof", at: [0, 7846, -1191] }, { kind: "perk", id: "specialty_fastreload", at: [0, 12363, -1194] }, { kind: "perk", id: "specialty_armorvest", at: [0, 8523, 3200] }, { kind: "perk", id: "specialty_quickrevive", at: [0, 11678, 3606] }, { kind: "perk", id: "specialty_additionalprimaryweapon", at: [1, 9565, 327] }, { kind: "box", id: null, at: [0, 11759, 3339] }, { kind: "box", id: null, at: [0, 8170, 3384] }, { kind: "box", id: null, at: [0, 9657, 519] }, { kind: "box", id: null, at: [0, 12781, -1419] }, { kind: "box", id: null, at: [0, 7688, -1683] }, { kind: "box", id: null, at: [1, 10378, 1047] }] };
+
+  // src/map/plans/verruckt.json
+  var verruckt_default = { v: 1, slug: "verruckt", sig: "z9d13", floors: [{ name: "Downstairs", below: 150 }, { name: "Upstairs", below: null }], rooms: [{ id: "south2_upstairs_zone", label: [1, -336, -552], rects: [[1, -624, -960, -432, -912], [1, 48, -960, 192, -912], [1, -672, -912, -384, -864], [1, -144, -912, 192, -864], [1, -672, -864, 240, -720], [1, -624, -720, 240, -672], [1, -624, -672, -48, -432], [1, -624, -432, -480, -384]] }, { id: "south_upstairs_zone", label: [1, 408, -360], rects: [[1, 0, -672, 240, -624], [1, 816, -720, 1008, -624], [1, 0, -624, 1008, -576], [1, 0, -576, 1104, -432], [1, -288, -432, 1104, -288], [1, -288, -288, 1056, -240], [1, 624, -240, 864, -144], [0, 864, -816, 960, -768], [0, 816, -768, 960, -672]] }, { id: "power_upstairs_zone", label: [1, -456, -288], rects: [[1, -480, -432, -288, -384], [1, -576, -384, -288, -336], [1, -624, -336, -288, -240], [1, -576, -240, -240, -144], [1, -576, -144, -288, -48], [1, -576, -48, -384, 0], [0, -768, -240, -672, -192], [0, -816, -192, -528, -144], [0, -768, -144, -480, -48], [0, -768, -48, -528, 0]] }, { id: "kitchen_upstairs_zone", label: [1, -720, 192], rects: [[1, -960, -48, -768, 0], [1, -624, -48, -576, 0], [1, -384, -48, -288, 0], [1, -1008, 0, -240, 96], [1, -384, 96, -288, 144], [1, -1008, 96, -432, 288], [1, -960, 288, -432, 432], [1, -912, 432, -864, 480], [1, -720, 432, -624, 480], [1, -576, 432, -432, 480]] }, { id: "north2_upstairs_zone", label: [1, -600, 624], rects: [[1, -864, 432, -720, 480], [1, -912, 480, -288, 528], [1, -960, 528, -288, 576], [1, -912, 576, -288, 672], [1, -960, 672, -288, 720], [1, -912, 720, -816, 768], [1, -720, 720, -336, 768], [1, -768, 768, -288, 864], [1, -768, 864, -384, 912], [1, -768, 912, -336, 960], [1, -768, 960, -384, 1008], [1, -720, 1008, -624, 1056]] }, { id: "north_upstairs_zone", label: [1, 216, 840], rects: [[0, -144, 576, -48, 672], [0, -144, 672, 48, 816], [1, 672, 240, 864, 288], [1, 624, 288, 864, 336], [1, -192, 432, -144, 480], [1, -96, 336, 864, 480], [1, -240, 480, 432, 528], [1, 672, 480, 816, 528], [1, -288, 528, 528, 624], [1, 96, 624, 528, 672], [1, 576, 624, 672, 672], [1, -288, 624, -96, 720], [1, -336, 720, -96, 768], [1, 0, 672, 720, 768], [1, -288, 768, 720, 912], [1, 432, 912, 672, 960], [1, 432, 960, 576, 1008]] }, { id: "north_downstairs_zone", label: [0, 576, 624], rects: [[0, 192, 432, 288, 480], [0, 528, 432, 624, 480], [0, -96, 480, 1056, 528], [0, -96, 528, 1152, 576], [0, -48, 576, 1200, 672], [0, 48, 672, 1152, 720], [0, 192, 720, 1104, 816], [0, 240, 816, 1056, 864], [0, 288, 864, 336, 912], [0, 384, 864, 432, 912], [0, 480, 864, 960, 912]] }, { id: "west2_downstairs_zone", label: [0, 1128, 168], rects: [[0, 720, -240, 864, -192], [0, 672, -192, 864, -144], [0, 624, -144, 864, 0], [0, 672, 0, 864, 96], [0, 1200, 48, 1296, 96], [0, 1344, 48, 1536, 96], [0, 672, 96, 1584, 240], [0, 672, 240, 1536, 336], [0, 672, 336, 1344, 384], [0, 816, 384, 1392, 480], [0, 1056, 480, 1392, 528], [0, 1152, 528, 1392, 576], [0, 1200, 576, 1392, 672], [0, 1248, 672, 1344, 720]] }, { id: "west_downstairs_zone", label: [0, 1008, -456], rects: [[0, 960, -816, 1104, -768], [0, 1152, -816, 1296, -768], [0, 960, -768, 1296, -720], [0, 960, -720, 1344, -672], [0, 720, -672, 1344, -624], [0, 672, -624, 1344, -576], [0, 624, -576, 1344, -528], [0, 624, -528, 1392, -384], [0, 816, -384, 1392, -288], [0, 864, -288, 1488, -240], [0, 864, -240, 1536, -192], [0, 864, -192, 1584, -144], [0, 864, -144, 1296, -96], [0, 1392, -144, 1584, -96], [0, 864, -96, 1584, 48], [0, 864, 48, 1152, 96]] }], doors: [{ kind: "door", cost: 750, at: [0, 1012, 487], rooms: [7, 6] }, { kind: "door", cost: 750, at: [0, 1257, 349], rooms: [7, 6] }, { kind: "door", cost: 750, at: [1, 144, -678], rooms: [0, 1] }, { kind: "door", cost: 750, at: [1, -437, -409], rooms: [2, 0] }, { kind: "door", cost: 750, at: [1, -293, 639], rooms: [4, 5] }, { kind: "door", cost: 1e3, at: [1, -773, 480], rooms: [4, 3] }, { kind: "door", cost: 750, at: [1, -346, -33], rooms: [2, 3] }, { kind: "door", cost: 750, at: [1, -438, -416], rooms: [2, 0] }, { kind: "power", cost: 750, at: [0, 1010, 73], rooms: [8, 7] }, { kind: "debris", cost: 1e3, at: [1, 8, 636], rooms: [6, 5] }, { kind: "debris", cost: 1e3, at: [1, 1017, -678], rooms: [8, 1] }, { kind: "debris", cost: 1e3, at: [1, -5, 740], rooms: [5, 6] }, { kind: "debris", cost: 1e3, at: [1, 955, -731], rooms: [1, 8] }], pois: [{ kind: "perk", id: "specialty_armorvest", at: [0, 1324, -415] }, { kind: "perk", id: "specialty_quickrevive", at: [0, 1148, 402] }, { kind: "perk", id: "specialty_fastreload", at: [1, -573, 709] }, { kind: "perk", id: "specialty_rof", at: [1, 433, -586] }, { kind: "perk", id: "specialty_additionalprimaryweapon", at: [0, -91, 540] }, { kind: "box", id: null, at: [1, 967, -288] }, { kind: "box", id: null, at: [0, 968, 827] }, { kind: "box", id: null, at: [1, -204, -466] }, { kind: "box", id: null, at: [1, -594, -206] }, { kind: "box", id: null, at: [0, 1115, -718] }] };
+
+  // src/map/plans/index.js
+  var PLANS = { ascension: ascension_default, cotd: cotd_default, five: five_default, kino: kino_default, moon: moon_default, nacht: nacht_default, riese: riese_default, shangrila: shangrila_default, shinonuma: shinonuma_default, verruckt: verruckt_default };
+  function planFor(slug) {
+    const plan = PLANS[slug];
+    return plan && validPlan(plan) ? plan : null;
+  }
+
+  // src/map/live.js
+  var LIVE_EVERY_MS = 250;
+  var BITS = /^[01]*$/;
+  function parseLive(value) {
+    const match = String(value).match(/^v=(\d+) p=(.*)$/);
+    if (!match) return null;
+    const players = [];
+    for (const entry of match[2].split(";")) {
+      const n = entry.split(",").map(Number);
+      if (n.length !== 7 || !n.every(Number.isInteger)) continue;
+      const [ent, x, y, z, yaw, room, s] = n;
+      players.push({ ent, x, y, z, yaw, room, s });
+    }
+    return { v: Number(match[1]), players };
+  }
+  function parseMapState(value) {
+    const raw = Object.fromEntries(
+      String(value).split(" ").filter((pair) => pair.includes("=")).map((pair) => [pair.slice(0, pair.indexOf("=")), pair.slice(pair.indexOf("=") + 1)])
+    );
+    if (!raw.sig || !BITS.test(raw.doors ?? "x") || !BITS.test(raw.rooms ?? "x")) return null;
+    const bits2 = (text2) => [...text2].map((c) => c === "1");
+    const box = (raw.box ?? "").split(",").filter(Boolean).map(Number).filter(Number.isInteger);
+    return { sig: raw.sig, doors: bits2(raw.doors), rooms: bits2(raw.rooms), box, power: raw.power === "1" };
+  }
+  function onMapLine(session, name, value) {
+    const map = session.map;
+    if (!map) return;
+    const now = Date.now();
+    if (name === "cheats_map_live") {
+      const live = parseLive(value);
+      if (!live) return;
+      const numbers2 = new Map(funPlayers(session).map((p) => [p.slot, p.n]));
+      map.liveReads += 1;
+      for (const p of live.players) {
+        const n = numbers2.get(p.ent);
+        if (!n) continue;
+        map.live.set(n, { x: p.x, y: p.y, z: p.z, yaw: p.yaw, room: p.room, s: p.s, floor: map.plan ? floorOf(map.plan, p.z, p.x, p.y) : 0, at: now, read: map.liveReads });
+        if (!map.tracks.has(n)) map.tracks.set(n, []);
+        pushSample(map.tracks.get(n), now, p.x, p.y, p.yaw);
+      }
+      map.liveV = live.v;
+      if (map.state?.v !== live.v) askDvar(session, "cheats_map_state");
+    } else if (name === "cheats_map_state") {
+      const state = parseMapState(value);
+      if (!state) return;
+      map.state = { ...state, v: map.liveV, at: now };
+      map.planOk = Boolean(map.plan) && state.sig === map.plan.sig;
+    }
+  }
+  function mapTick(session, now, { playing = screen() === "playing", slug = currentSlugOf(session) } = {}) {
+    const map = session.map;
+    if (!map) return;
+    if (slug !== map.slug) {
+      Object.assign(map, { slug, plan: planFor(slug), state: null, planOk: false, liveV: null });
+      map.live.clear();
+      map.tracks.clear();
+    }
+    if (session.mode === "guest" || !session.cheats?.ok || !playing) return;
+    if (now - map.lastAskAt >= LIVE_EVERY_MS) {
+      map.lastAskAt = now;
+      askDvar(session, "cheats_map_live");
+    }
+    if (session.mode === "host") sendMap(session, now);
+  }
+  var currentSlugOf = (session) => session.mode === "guest" ? session.hostInfo?.slug ?? null : MAP_SLUGS[session.zone ?? currentZone()] ?? null;
+
   // src/cheats/bridge.js
   var STATE_EVERY_MS = 1e3;
   var STATE_BUSY_MS = 250;
@@ -1555,7 +2506,7 @@
     cheats.outbox.push([cheats.seq, cheatCommand(cheats.seq, action, target2, arg)]);
     cheats.sent.set(cheats.seq, { action, target: target2, arg, until: Infinity });
   }
-  function ask(session, name) {
+  function askDvar(session, name) {
     if (!session.fun.queue.includes(name)) session.fun.queue.push(name);
   }
   function cheatsTick(session, now, playing) {
@@ -1564,16 +2515,16 @@
     const busy = cheats.outbox.length > 0 || cheats.scriptSeq < cheats.lastSeq;
     if (now - cheats.lastStateAt >= (busy ? STATE_BUSY_MS : STATE_EVERY_MS)) {
       cheats.lastStateAt = now;
-      ask(session, "cheats_state");
+      askDvar(session, "cheats_state");
     }
     if (cheats.scriptLists > cheats.listsLoaded) {
       cheats.listsLoaded = cheats.scriptLists;
-      for (const name of ["cheats_weapons_count", "cheats_perks", "cheats_powerups"]) ask(session, name);
+      for (const name of ["cheats_weapons_count", "cheats_perks", "cheats_powerups"]) askDvar(session, name);
     }
     if (cheats.outbox.length && cheats.scriptSeq >= cheats.lastSeq && now - cheats.lastSendAt >= SEND_EVERY_MS) {
       cheats.lastSendAt = now;
-      const [seq, text] = cheats.outbox.shift();
-      session.fun.queue.push(text);
+      const [seq, text2] = cheats.outbox.shift();
+      session.fun.queue.push(text2);
       cheats.lastSeq = seq;
       const sent = cheats.sent.get(seq);
       if (sent) sent.until = now + RESULT_WAIT_MS;
@@ -1582,11 +2533,12 @@
     const waiting = [...cheats.sent.keys()].some((seq) => seq <= cheats.lastSeq);
     if (waiting && now - cheats.lastResultAt >= RESULT_EVERY_MS) {
       cheats.lastResultAt = now;
-      ask(session, "cheats_results");
+      askDvar(session, "cheats_results");
     }
   }
   function onCheatsLine(session, line) {
     const print = parseDvarPrint(line);
+    if (print?.name.startsWith("cheats_map_")) return onMapLine(session, print.name, print.value);
     const cheats = session.cheats;
     if (!print || !cheats) return;
     const { name, value } = print;
@@ -1599,7 +2551,7 @@
     } else if (name === "cheats_weapons_count") {
       const count = Number(value) || 0;
       cheats.weaponChunks = new Array(count).fill(null);
-      for (let i = 0; i < count; i += 1) ask(session, `cheats_weapons_${i}`);
+      for (let i = 0; i < count; i += 1) askDvar(session, `cheats_weapons_${i}`);
     } else if (name.startsWith("cheats_weapons_")) {
       const i = Number(name.slice("cheats_weapons_".length));
       if (!cheats.weaponChunks || !(i >= 0 && i < cheats.weaponChunks.length)) return;
@@ -1658,6 +2610,7 @@ main_end()
 	SetDvar( "cheats_results", "" );
 	level thread cheats_round_tracker();
 	level thread cheats_main();
+	level thread maps\\cheats\\_map::map_main();
 }
 
 cheats_main()
@@ -1825,6 +2778,9 @@ cheats_handle( cmd )
 		break;
 	case "clear":
 		result = cheats_clear();
+		break;
+	case "mapdoor":
+		result = maps\\cheats\\_map::map_open_door( int( target ) );
 		break;
 	default:
 		result = cheats_for_players( action, target, arg );
@@ -2249,6 +3205,347 @@ cheats_freeze_loop()
 }
 `;
 
+  // src/cheats/gsc/_map.gsc
+  var map_default = `#include maps\\_utility;
+#include common_scripts\\utility;
+#include maps\\_zombiemode_utility;
+
+// IN-GAME MAP - the game side of the map panel (src/map/). Rooms, doors and box spots are captured once, in one order,
+// when the cheat menu publishes its lists; the live data and the dump both use that order, so their indices agree with
+// the bundled plan (src/map/plans/<map>.json). Published:
+//   cheats_map_live        every 0.25 s: v=<state counter> p=<ent>,<x>,<y>,<z>,<yaw>,<room>,<s>;...
+//                          (room: index into the rooms or -1; s: 0 alive, 1 downed, 2 spectating)
+//   cheats_map_state       when it changes (the counter goes up): sig=z<rooms>d<doors> doors=<0/1 per door, 1 = open>
+//                          rooms=<0/1 per room, 1 = enabled> box=<chest indices> power=<0|1>
+//   cheats_map_dump_count  after the console sets cheats_map_dump 1: the number of cheats_map_dump_<i> chunks, each
+//                          ";"-separated records of ","-separated fields (scripts/plan-build.mjs reads them):
+//                            Z,<zone name>,<x>,<y>,<z>                     every room, in order (its first volume)
+//                            D,<door|debris|power>,<x>,<y>,<z>,<cost>,<target>   every door trigger, in order
+//                            P,<perk|pap|power|box>,<id or ->,<x>,<y>,<z>   boxes in chest order
+//                            N,<x>,<y>,<z>,<room>                          every path node inside a room
+// Findings behind this (which fields exist, hidden boxes 10,000 units down): docs/superpowers/specs/2026-10-20-in-game-map-spike.md
+
+map_main()
+{
+	level.map_v = 0;
+	level.map_state = "";
+	level.map_zones = [];
+	level.map_doors = [];
+	SetDvar( "cheats_map_dump", "0" );
+	flag_wait( "all_players_spawned" );
+	wait( 2 );
+	map_capture();
+	level thread map_state_loop();
+	level thread map_live_loop();
+	level thread map_dump_loop();
+}
+
+map_capture()
+{
+	if ( IsDefined( level.zones ) )
+	{
+		level.map_zones = GetArrayKeys( level.zones );
+	}
+	level.map_doors = [];
+	level.map_door_kind = [];
+	level.map_door_target = [];
+	names = [];
+	names[0] = "zombie_door";
+	names[1] = "zombie_debris";
+	names[2] = "zombie_airlock_buy";
+	for ( k = 0; k < names.size; k++ )
+	{
+		ents = GetEntArray( names[k], "targetname" );
+		for ( i = 0; i < ents.size; i++ )
+		{
+			n = level.map_doors.size;
+			level.map_doors[n] = ents[i];
+			kind = "door";
+			if ( k == 1 )
+			{
+				kind = "debris";
+			}
+			if ( IsDefined( ents[i].script_noteworthy ) && ( ents[i].script_noteworthy == "electric_door" || ents[i].script_noteworthy == "electric_buyable_door" ) )
+			{
+				kind = "power";
+			}
+			level.map_door_kind[n] = kind;
+			level.map_door_target[n] = "#" + n;
+			if ( IsDefined( ents[i].target ) )
+			{
+				level.map_door_target[n] = ents[i].target;
+			}
+		}
+	}
+	level.map_chests = [];
+	if ( IsDefined( level.chests ) )
+	{
+		level.map_chests = level.chests;
+	}
+}
+
+map_xyz( v )
+{
+	z = int( v[2] );
+	// hidden boxes and some perk triggers (Moon's) are parked 10,000 units down
+	if ( z < -5000 )
+	{
+		z = z + 10000;
+	}
+	return int( v[0] ) + "," + int( v[1] ) + "," + z;
+}
+
+map_room_of( ent )
+{
+	for ( i = 0; i < level.map_zones.size; i++ )
+	{
+		zone = level.zones[level.map_zones[i]];
+		if ( !IsDefined( zone.volumes ) )
+		{
+			continue;
+		}
+		for ( v = 0; v < zone.volumes.size; v++ )
+		{
+			if ( ent IsTouching( zone.volumes[v] ) )
+			{
+				return i;
+			}
+		}
+	}
+	return -1;
+}
+
+// a door is open once any of its triggers (they share a target) was bought or is gone
+map_door_open( i )
+{
+	for ( j = 0; j < level.map_doors.size; j++ )
+	{
+		if ( level.map_door_target[j] != level.map_door_target[i] )
+		{
+			continue;
+		}
+		door = level.map_doors[j];
+		if ( !IsDefined( door ) || is_true( door._door_open ) )
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+map_state_text()
+{
+	doors = "";
+	for ( i = 0; i < level.map_doors.size; i++ )
+	{
+		doors = doors + maps\\cheats\\_cheats::cheats_bit( map_door_open( i ) );
+	}
+	rooms = "";
+	for ( i = 0; i < level.map_zones.size; i++ )
+	{
+		rooms = rooms + maps\\cheats\\_cheats::cheats_bit( level.zones[level.map_zones[i]].is_enabled );
+	}
+	box = "";
+	fire_sale = IsDefined( level.zombie_vars ) && is_true( level.zombie_vars["zombie_powerup_fire_sale_on"] );
+	if ( fire_sale )
+	{
+		for ( i = 0; i < level.map_chests.size; i++ )
+		{
+			if ( box != "" )
+			{
+				box = box + ",";
+			}
+			box = box + i;
+		}
+	}
+	else if ( IsDefined( level.chest_index ) && level.map_chests.size > 0 )
+	{
+		box = "" + level.chest_index;
+	}
+	return "sig=z" + level.map_zones.size + "d" + level.map_doors.size + " doors=" + doors + " rooms=" + rooms + " box=" + box + " power=" + maps\\cheats\\_cheats::cheats_bit( maps\\cheats\\_cheats::cheats_flag( "power_on" ) );
+}
+
+map_state_loop()
+{
+	for ( ;; )
+	{
+		text = map_state_text();
+		if ( text != level.map_state )
+		{
+			level.map_state = text;
+			level.map_v++;
+			SetDvar( "cheats_map_state", text );
+		}
+		wait( .25 );
+	}
+}
+
+map_live_loop()
+{
+	for ( ;; )
+	{
+		entries = "";
+		players = get_players();
+		for ( i = 0; i < players.size; i++ )
+		{
+			player = players[i];
+			s = 0;
+			if ( IsDefined( player.sessionstate ) && player.sessionstate == "spectator" )
+			{
+				s = 2;
+			}
+			else if ( player maps\\_laststand::player_is_in_laststand() )
+			{
+				s = 1;
+			}
+			angles = player GetPlayerAngles();
+			if ( entries != "" )
+			{
+				entries = entries + ";";
+			}
+			entries = entries + player GetEntityNumber() + "," + int( player.origin[0] ) + "," + int( player.origin[1] ) + "," + int( player.origin[2] ) + "," + int( angles[1] ) + "," + map_room_of( player ) + "," + s;
+		}
+		SetDvar( "cheats_map_live", "v=" + level.map_v + " p=" + entries );
+		wait( .25 );
+	}
+}
+
+map_dump_loop()
+{
+	for ( ;; )
+	{
+		if ( GetDvar( #"cheats_map_dump" ) == "1" )
+		{
+			SetDvar( "cheats_map_dump", "0" );
+			map_dump();
+		}
+		wait( .5 );
+	}
+}
+
+map_dump()
+{
+	SetDvar( "cheats_map_dump_count", 0 );
+	records = [];
+	for ( i = 0; i < level.map_zones.size; i++ )
+	{
+		zone = level.zones[level.map_zones[i]];
+		at = "0,0,0";
+		if ( IsDefined( zone.volumes ) && zone.volumes.size > 0 )
+		{
+			at = map_xyz( zone.volumes[0].origin );
+		}
+		records[records.size] = "Z," + level.map_zones[i] + "," + at;
+	}
+	for ( i = 0; i < level.map_doors.size; i++ )
+	{
+		door = level.map_doors[i];
+		if ( !IsDefined( door ) )
+		{
+			records[records.size] = "D," + level.map_door_kind[i] + ",0,0,0,0," + level.map_door_target[i];
+			continue;
+		}
+		cost = 0;
+		if ( IsDefined( door.zombie_cost ) )
+		{
+			cost = door.zombie_cost;
+		}
+		records[records.size] = "D," + level.map_door_kind[i] + "," + map_xyz( door.origin ) + "," + cost + "," + level.map_door_target[i];
+	}
+	vending = GetEntArray( "zombie_vending", "targetname" );
+	for ( i = 0; i < vending.size; i++ )
+	{
+		perk = "-";
+		if ( IsDefined( vending[i].script_noteworthy ) )
+		{
+			perk = vending[i].script_noteworthy;
+		}
+		records[records.size] = "P,perk," + perk + "," + map_xyz( vending[i].origin );
+	}
+	pap = GetEntArray( "zombie_vending_upgrade", "targetname" );
+	for ( i = 0; i < pap.size; i++ )
+	{
+		records[records.size] = "P,pap,-," + map_xyz( pap[i].origin );
+	}
+	power = GetEntArray( "use_elec_switch", "targetname" );
+	for ( i = 0; i < power.size; i++ )
+	{
+		records[records.size] = "P,power,-," + map_xyz( power[i].origin );
+	}
+	for ( i = 0; i < level.map_chests.size; i++ )
+	{
+		chest = level.map_chests[i];
+		at = chest.origin;
+		if ( IsDefined( chest.orig_origin ) )
+		{
+			at = chest.orig_origin;
+		}
+		else if ( IsDefined( chest.chest_lid ) )
+		{
+			at = chest.chest_lid.origin;
+		}
+		records[records.size] = "P,box,-," + map_xyz( at );
+	}
+	nodes = GetAllNodes();
+	probe = Spawn( "script_origin", ( 0, 0, 0 ) );
+	for ( i = 0; i < nodes.size; i++ )
+	{
+		probe.origin = nodes[i].origin + ( 0, 0, 16 );
+		room = map_room_of( probe );
+		if ( room >= 0 )
+		{
+			records[records.size] = "N," + int( nodes[i].origin[0] ) + "," + int( nodes[i].origin[1] ) + "," + int( nodes[i].origin[2] ) + "," + room;
+		}
+		if ( i % 40 == 39 )
+		{
+			wait( .05 );
+		}
+	}
+	probe Delete();
+	chunk = "";
+	count = 0;
+	for ( i = 0; i < records.size; i++ )
+	{
+		if ( chunk != "" && chunk.size + records[i].size + 1 > 380 )
+		{
+			SetDvar( "cheats_map_dump_" + count, chunk );
+			count++;
+			chunk = "";
+		}
+		if ( chunk != "" )
+		{
+			chunk = chunk + ";";
+		}
+		chunk = chunk + records[i];
+	}
+	if ( chunk != "" )
+	{
+		SetDvar( "cheats_map_dump_" + count, chunk );
+		count++;
+	}
+	SetDvar( "cheats_map_dump_count", count );
+}
+
+// test hook (test/cheats-e2e.mjs map-script): opens door i the retail devgui way, free of charge
+map_open_door( i )
+{
+	if ( i < 0 || i >= level.map_doors.size || !IsDefined( level.map_doors[i] ) )
+	{
+		return "no_door " + i;
+	}
+	SetDvar( "zombie_unlock_all", 1 );
+	level.map_doors[i] notify( "trigger", get_players()[0], true );
+	level thread map_unlock_all_off();
+	return "";
+}
+
+map_unlock_all_off()
+{
+	wait( 1 );
+	SetDvar( "zombie_unlock_all", 0 );
+}
+`;
+
   // src/cheats/gsc/_stack/_modstack.gsc
   var modstack_default = `// bo1-coop-cheats: copied from github.com/MisaDev4/bo1-zombies-decompiled mods/_stack/maps/_modstack.gsc; written only where vel.gg ships none.
 // FS_MODS BASE - not part of the original game. mods/_stack goes on top of the search path only with +set fs_mods
@@ -2439,6 +3736,7 @@ nazizombies_checking_for_cheats()\r
   var MOD_FILES = [
     { path: "mods/cheats/maps/cheats/_hooks.gsc", text: hooks_default },
     { path: "mods/cheats/maps/cheats/_cheats.gsc", text: cheats_default },
+    { path: "mods/cheats/maps/cheats/_map.gsc", text: map_default },
     { path: "mods/_stack/maps/_modstack.gsc", text: modstack_default },
     { path: "mods/_stack/maps/_zombiemode_ffotd.gsc", text: zombiemode_ffotd_default }
   ];
@@ -2446,17 +3744,17 @@ nazizombies_checking_for_cheats()\r
   // src/cheats/mod.js
   var MOD_NAME = "cheats";
   function modBase(args) {
-    const i = args.findIndex((arg, at) => arg === "fs_b" && args[at - 1] === "+set");
+    const i = args.findIndex((arg, at2) => arg === "fs_b" && args[at2 - 1] === "+set");
     const value = i < 0 ? "" : args[i + 1] ?? "";
     return value.startsWith("/opfs/") ? value.slice("/opfs/".length) : null;
   }
   function addCheatsMod(args, { horde }) {
-    const i = args.findIndex((arg, at) => arg === "fs_mods" && args[at - 1] === "+set");
+    const i = args.findIndex((arg, at2) => arg === "fs_mods" && args[at2 - 1] === "+set");
     if (i < 0) {
       insertBeforeDevmap(args, ["+set", "fs_mods", MOD_NAME]);
     } else {
-      const names = args[i + 1].split(/[\s,;]+/).filter(Boolean);
-      if (!names.includes(MOD_NAME)) args[i + 1] = [...names, MOD_NAME].join(" ");
+      const names2 = args[i + 1].split(/[\s,;]+/).filter(Boolean);
+      if (!names2.includes(MOD_NAME)) args[i + 1] = [...names2, MOD_NAME].join(" ");
     }
     if (horde && !args.includes("cheats_horde")) insertBeforeDevmap(args, ["+set", "cheats_horde", "1"]);
   }
@@ -2478,7 +3776,7 @@ nazizombies_checking_for_cheats()\r
   async function writeModFiles(base, files) {
     try {
       const root = await navigator.storage.getDirectory();
-      for (const { path, text } of files) {
+      for (const { path, text: text2 } of files) {
         const parts2 = `${base}/${path}`.split("/").filter(Boolean);
         const name = parts2.pop();
         const folder = await dir(root, parts2);
@@ -2487,7 +3785,7 @@ nazizombies_checking_for_cheats()\r
           if (old != null && !old.startsWith(MARKER)) continue;
         }
         const writable = await (await folder.getFileHandle(name, { create: true })).createWritable();
-        await writable.write(text);
+        await writable.write(text2);
         await writable.close();
       }
       return true;
@@ -2495,54 +3793,6 @@ nazizombies_checking_for_cheats()\r
       return false;
     }
   }
-
-  // src/cheats/strings.js
-  var C = {
-    setting: "Cheat menu",
-    on: "On",
-    off: "Off",
-    turnOn: "Turn on",
-    turnOff: "Turn off",
-    reload: "Reload the page to apply.",
-    note: "Weapons, perks, power-ups and rounds in Fun mode. Only the host needs it. In a game, press M to open it without pausing; click the game to go back.",
-    keyTip: "Tip: press M in game to open this card without pausing; click the game to go back.",
-    failed: "The cheat menu could not load in this game, so Fun mode works as before. Reload the page to try again.",
-    everyone: "Everyone",
-    player: "that player",
-    giveTo: "Give to",
-    weapons: "Weapons on this map",
-    pap: "Pack-a-Punch the weapon in hand",
-    perks: "Perks (free)",
-    noPerks: "This map has no perk machines.",
-    powerNote: "Giving a perk turns the power on.",
-    powerups: "Power-ups",
-    noPowerups: "This map has no power-ups.",
-    rounds: "Rounds",
-    roundNow: (n) => `now round ${n}`,
-    roundPlaceholder: "Go to round (1-255)",
-    go: "Go",
-    nextRound: "Next round",
-    freeze: "Freeze round",
-    giving: (thing, name) => `Giving ${thing} to ${name}…`,
-    packing: (name) => `Pack-a-Punching ${name}'s weapon…`,
-    given: (thing, name) => `${thing} given to ${name}.`,
-    packed: (name) => `Pack-a-Punched for ${name}.`,
-    dropped: (thing, name) => `${thing} dropped in front of ${name}.`,
-    goingTo: (n) => `Going to round ${n}.`,
-    frozenOn: "Round frozen: it will not end until you unfreeze it.",
-    frozenOff: "Round unfrozen.",
-    errNoPlayer: "That player is no longer in the game.",
-    errNotSpawned: "That player is still waiting to spawn (until the next round). Try again then.",
-    errNoWeapon: (w) => `${w} is not on this map.`,
-    errNoUpgrade: (w) => `${w} can't be Pack-a-Punched.`,
-    errHasUpgrade: "That weapon is already Pack-a-Punched.",
-    errNoPerk: (p) => `This map has no ${p} machine.`,
-    errPerkFailed: (p) => `Could not give ${p} on this map right now.`,
-    errNoPowerup: (p) => `${p} is not on this map.`,
-    errBadRound: (max) => `Pick a round from 1 to ${max}.`,
-    errHorde: "Round controls are not available in Hell mode.",
-    errOther: (code) => `That did not work (${code}).`
-  };
 
   // src/cheats/setup.js
   var WRITE_TIMEOUT_MS = 5e3;
@@ -2610,28 +3860,28 @@ nazizombies_checking_for_cheats()\r
       if (last) return out;
     }
   }
-  function readU32(bytes, at) {
+  function readU32(bytes, at2) {
     let value = 0;
     let shift = 0;
     let byte;
     do {
-      byte = bytes[at++];
+      byte = bytes[at2++];
       value |= (byte & 127) << shift;
       shift += 7;
     } while (byte & 128);
-    return [value >>> 0, at];
+    return [value >>> 0, at2];
   }
-  function readI32(bytes, at) {
+  function readI32(bytes, at2) {
     let value = 0;
     let shift = 0;
     let byte;
     do {
-      byte = bytes[at++];
+      byte = bytes[at2++];
       value |= (byte & 127) << shift;
       shift += 7;
     } while (byte & 128);
     if (shift < 32 && byte & 64) value |= -1 << shift;
-    return [value, at];
+    return [value, at2];
   }
   var op = {
     unreachable: 0,
@@ -2655,8 +3905,8 @@ nazizombies_checking_for_cheats()\r
     tee: (local) => [34, ...encodeU32(local)]
   };
   var SECTION = { custom: 0, import: 2, code: 10 };
-  function countFunctionImports(bytes, at) {
-    let [count, p] = readU32(bytes, at);
+  function countFunctionImports(bytes, at2) {
+    let [count, p] = readU32(bytes, at2);
     let functions = 0;
     const skipName = () => {
       const [length, next] = readU32(bytes, p);
@@ -2694,30 +3944,30 @@ nazizombies_checking_for_cheats()\r
     if (bytes[0] !== 0 || bytes[1] !== 97 || bytes[2] !== 115 || bytes[3] !== 109) throw new Error("not a wasm module");
     const sections = [];
     let importedFunctions = 0;
-    let names = null;
-    for (let at = 8; at < bytes.length; ) {
-      const id = bytes[at];
-      const [size, body] = readU32(bytes, at + 1);
-      const section = { id, start: at, body, end: body + size };
+    let names2 = null;
+    for (let at2 = 8; at2 < bytes.length; ) {
+      const id = bytes[at2];
+      const [size, body] = readU32(bytes, at2 + 1);
+      const section = { id, start: at2, body, end: body + size };
       sections.push(section);
       if (id === SECTION.import) importedFunctions = countFunctionImports(bytes, body);
       if (id === SECTION.custom) {
         const [length, nameAt] = readU32(bytes, body);
-        if (new TextDecoder().decode(bytes.subarray(nameAt, nameAt + length)) === "name") names = { at: nameAt + length, end: section.end };
+        if (new TextDecoder().decode(bytes.subarray(nameAt, nameAt + length)) === "name") names2 = { at: nameAt + length, end: section.end };
       }
-      at = section.end;
+      at2 = section.end;
     }
     const code = sections.find((s) => s.id === SECTION.code);
     if (!code) throw new Error("no code section");
-    return { sections, code, importedFunctions, names };
+    return { sections, code, importedFunctions, names: names2 };
   }
   function functionNames(bytes, module, wanted) {
     const result = /* @__PURE__ */ new Map();
     if (!module.names) return result;
     const want = new Set(wanted);
-    for (let at = module.names.at; at < module.names.end; ) {
-      const kind = bytes[at++];
-      const [size, body] = readU32(bytes, at);
+    for (let at2 = module.names.at; at2 < module.names.end; ) {
+      const kind = bytes[at2++];
+      const [size, body] = readU32(bytes, at2);
       if (kind === 1) {
         let [count, p] = readU32(bytes, body);
         for (let i = 0; i < count && result.size < want.size; i += 1) {
@@ -2728,7 +3978,7 @@ nazizombies_checking_for_cheats()\r
           p += length;
         }
       }
-      at = body + size;
+      at2 = body + size;
     }
     return result;
   }
@@ -2747,11 +3997,11 @@ nazizombies_checking_for_cheats()\r
   }
   function rewriteFunctions(bytes, module, edits) {
     const { code } = module;
-    let [count, at] = readU32(bytes, code.body);
+    let [count, at2] = readU32(bytes, code.body);
     const parts2 = [Uint8Array.from(encodeU32(count))];
     let applied = 0;
     for (let i = 0; i < count; i += 1) {
-      const [size, start2] = readU32(bytes, at);
+      const [size, start2] = readU32(bytes, at2);
       const end = start2 + size;
       const edit = edits.get(i);
       if (edit) {
@@ -2759,9 +4009,9 @@ nazizombies_checking_for_cheats()\r
         parts2.push(Uint8Array.from(encodeU32(body.length)), body);
         applied += 1;
       } else {
-        parts2.push(bytes.subarray(at, end));
+        parts2.push(bytes.subarray(at2, end));
       }
-      at = end;
+      at2 = end;
     }
     if (applied !== edits.size) throw new Error(`patched ${applied} of ${edits.size} functions`);
     const length = parts2.reduce((sum, part) => sum + part.length, 0);
@@ -2778,7 +4028,7 @@ nazizombies_checking_for_cheats()\r
     out.set(bytes.subarray(code.end), o);
     return out;
   }
-  var hex = (text) => text.trim().split(/\s+/).map((byte) => parseInt(byte, 16));
+  var hex = (text2) => text2.trim().split(/\s+/).map((byte) => parseInt(byte, 16));
   async function sha256(bytes) {
     const digest = await crypto.subtle.digest("SHA-256", bytes);
     return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
@@ -2836,12 +4086,12 @@ nazizombies_checking_for_cheats()\r
     ];
   }
   var prepend = (code, params, scratch) => (body) => {
-    const { at, type } = localsEnd(body, params, scratch);
+    const { at: at2, type } = localsEnd(body, params, scratch);
     if (type !== 127) throw new Error(`local ${scratch} is not an i32`);
     const out = new Uint8Array(body.length + code.length);
-    out.set(body.subarray(0, at), 0);
-    out.set(code, at);
-    out.set(body.subarray(at), at + code.length);
+    out.set(body.subarray(0, at2), 0);
+    out.set(code, at2);
+    out.set(body.subarray(at2), at2 + code.length);
     return out;
   };
   var assertsContinue = (params) => (body) => {
@@ -2884,26 +4134,26 @@ nazizombies_checking_for_cheats()\r
     const from = hex(find);
     const to = hex(replace);
     if (from.length !== to.length) throw new Error(`${fn}: replacement changes the length`);
-    let at = -1;
+    let at2 = -1;
     let found = 0;
     for (let i = 0; i + from.length <= body.length; i += 1) {
       if (from.every((byte, k) => body[i + k] === byte)) {
-        at = i;
+        at2 = i;
         found += 1;
       }
     }
     if (found !== 1) throw new Error(`${fn}: pattern found ${found} times, expected once`);
     const out = Uint8Array.from(body);
-    out.set(to, at);
+    out.set(to, at2);
     return out;
   };
   function patchEngine(input, build, role = null) {
     const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
     const module = readModule(bytes);
     const { functions } = build;
-    const names = functionNames(bytes, module, Object.values(functions).map(([index]) => index));
+    const names2 = functionNames(bytes, module, Object.values(functions).map(([index]) => index));
     for (const [index, name] of Object.values(functions)) {
-      if (names.get(index) !== name) throw new Error(`function ${index} is ${names.get(index)}, expected ${name}`);
+      if (names2.get(index) !== name) throw new Error(`function ${index} is ${names2.get(index)}, expected ${name}`);
     }
     const slot = (key) => functions[key][0] - module.importedFunctions;
     const edits = /* @__PURE__ */ new Map([
@@ -2982,7 +4232,7 @@ nazizombies_checking_for_cheats()\r
   var HOST_QPORT = 7;
   var CONNECTING = ["freezing", "connect", "challenging", "joining"];
   var JOIN_TURN_MS = 6e4;
-  var STATE_REPEAT_MS2 = 2e3;
+  var STATE_REPEAT_MS3 = 2e3;
   var KICK_AFTER_LEFT_MS = 15e3;
   var KICK_SPACING_MS = 15e3;
   var MAX_KICKS = 4;
@@ -3061,10 +4311,10 @@ nazizombies_checking_for_cheats()\r
     session.note(mask ? "level start held for the host's click" : "level start released");
   }
   function updateJoinTurn(session, present, ready, now) {
-    const turn = session.joinTurn ? session.guests.get(session.joinTurn) : null;
-    const phase = turn?.state?.phase;
-    if (turn && (!turn.present || ["connected", "ended", "failed"].includes(phase) || now - session.joinTurnAt > JOIN_TURN_MS)) {
-      session.note(`player ${turn.seat + 1}'s turn is over (${turn.present ? phase : "left"})`);
+    const turn2 = session.joinTurn ? session.guests.get(session.joinTurn) : null;
+    const phase = turn2?.state?.phase;
+    if (turn2 && (!turn2.present || ["connected", "ended", "failed"].includes(phase) || now - session.joinTurnAt > JOIN_TURN_MS)) {
+      session.note(`player ${turn2.seat + 1}'s turn is over (${turn2.present ? phase : "left"})`);
       session.joinTurn = null;
     }
     if (session.joinTurn || !ready) return;
@@ -3078,7 +4328,7 @@ nazizombies_checking_for_cheats()\r
   function sendWhenChanged(session, g, kind, message, now) {
     const key = JSON.stringify(message);
     const last = g.sent[kind];
-    if (last?.key === key && now - last.at <= STATE_REPEAT_MS2) return;
+    if (last?.key === key && now - last.at <= STATE_REPEAT_MS3) return;
     g.sent[kind] = { key, at: now };
     send(session, message);
   }
@@ -3413,10 +4663,10 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       const value = document.createElement("span");
       value.className = "sval";
       value.textContent = s.value;
-      const make = (b, text) => {
+      const make = (b, text2) => {
         const e = document.createElement("button");
         e.className = "sbtn";
-        e.textContent = text;
+        e.textContent = text2;
         e.dataset.act = b.act;
         e.dataset.arg = b.arg;
         return e;
@@ -3433,17 +4683,17 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
         d.style.color = PLAYER_COLORS[p.n - 1];
         parts2.push(d);
       }
-      for (const text of pill.texts ?? []) {
+      for (const text2 of pill.texts ?? []) {
         if (parts2.length) parts2.push(Object.assign(document.createElement("span"), { className: "sep" }));
-        parts2.push(document.createTextNode(text));
+        parts2.push(document.createTextNode(text2));
       }
       return parts2;
     }
     block(block) {
-      const el = (tag, cls, text) => {
+      const el = (tag, cls, text2) => {
         const e = document.createElement(tag);
         if (cls) e.className = cls;
-        if (text != null) e.textContent = text;
+        if (text2 != null) e.textContent = text2;
         return e;
       };
       const button = (b) => {
@@ -3514,20 +4764,20 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
         }
         case "steps": {
           const box = el("div", "steps");
-          block.steps.forEach((text, i) => {
+          block.steps.forEach((text2, i) => {
             const state = i < block.current ? "done" : i === block.current ? `now ${block.fail ? "fail" : ""}` : "";
             const step2 = el("div", `step ${state}`);
-            step2.append(el("i"), el("span", "", text));
+            step2.append(el("i"), el("span", "", text2));
             box.append(step2);
           });
           return box;
         }
         case "callout": {
           const box = el("div", `call ${block.tone ?? ""}`);
-          const text = el("div");
-          if (block.title) text.append(el("b", "", `${block.title} `));
-          text.append(document.createTextNode(block.text ?? ""));
-          box.append(text);
+          const text2 = el("div");
+          if (block.title) text2.append(el("b", "", `${block.title} `));
+          text2.append(document.createTextNode(block.text ?? ""));
+          box.append(text2);
           if (block.buttons?.length) {
             const row = el("div", "row");
             for (const b of block.buttons) row.append(button(b));
@@ -3615,673 +4865,6 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     }
   };
 
-  // src/cheats/names.js
-  var WEAPONS = {
-    m1911_zm: "M1911",
-    python_zm: "Python",
-    cz75_zm: "CZ75",
-    cz75dw_zm: "CZ75 Dual Wield",
-    ak74u_zm: "AK-74u",
-    mp5k_zm: "MP5K",
-    mp40_zm: "MP40",
-    mpl_zm: "MPL",
-    pm63_zm: "PM63",
-    spectre_zm: "Spectre",
-    ithaca_zm: "Stakeout",
-    spas_zm: "SPAS-12",
-    hs10_zm: "HS10",
-    rottweil72_zm: "Olympia",
-    m14_zm: "M14",
-    m16_zm: "M16",
-    g11_lps_zm: "G11",
-    famas_zm: "FAMAS",
-    aug_acog_zm: "AUG",
-    galil_zm: "Galil",
-    commando_zm: "Commando",
-    fnfal_zm: "FN FAL",
-    dragunov_zm: "Dragunov",
-    l96a1_zm: "L96A1",
-    rpk_zm: "RPK",
-    hk21_zm: "HK21",
-    m72_law_zm: "M72 LAW",
-    china_lake_zm: "China Lake",
-    crossbow_explosive_zm: "Crossbow",
-    knife_ballistic_zm: "Ballistic Knife",
-    knife_ballistic_bowie_zm: "Ballistic Knife (Bowie)",
-    knife_ballistic_sickle_zm: "Ballistic Knife (Sickle)",
-    ray_gun_zm: "Ray Gun",
-    thundergun_zm: "Thundergun",
-    tesla_gun_zm: "Wunderwaffe DG-2",
-    freezegun_zm: "Winter's Howl",
-    sniper_explosive_zm: "Scavenger",
-    humangun_zm: "V-R11",
-    shrink_ray_zm: "31-79 JGb215",
-    microwavegun_zm: "Wave Gun",
-    microwavegundw_zm: "Zap Guns",
-    zombie_cymbal_monkey: "Monkey Bombs",
-    zombie_black_hole_bomb: "Gersh Device",
-    zombie_quantum_bomb: "QED",
-    zombie_nesting_dolls: "Matryoshka Dolls",
-    claymore_zm: "Claymores",
-    spikemore_zm: "Spikemores",
-    frag_grenade_zm: "Frag Grenades",
-    sticky_grenade_zm: "Semtex",
-    stielhandgranate: "Stielhandgranate",
-    bowie_knife_zm: "Bowie Knife",
-    sickle_knife_zm: "Sickle",
-    m2_flamethrower_zm: "M2 Flamethrower",
-    zombie_kar98k: "Kar98k",
-    kar98k_scoped_zombie: "Scoped Kar98k",
-    mine_bouncing_betty: "Bouncing Betties",
-    zombie_type99_rifle: "Arisaka",
-    zombie_gewehr43: "Gewehr 43",
-    zombie_m1carbine: "M1 Carbine",
-    zombie_m1garand: "M1 Garand",
-    zombie_thompson: "Thompson",
-    zombie_type100_smg: "Type 100",
-    zombie_stg44: "STG-44",
-    zombie_shotgun: "Trench Gun",
-    zombie_doublebarrel: "Double-Barreled Shotgun",
-    zombie_doublebarrel_sawed: "Sawed-Off Shotgun",
-    zombie_bar: "BAR",
-    zombie_bar_bipod: "BAR (Bipod)",
-    zombie_fg42: "FG42",
-    zombie_mg42: "MG42",
-    zombie_30cal: "Browning M1919",
-    zombie_ppsh: "PPSh-41",
-    zombie_ptrs41: "PTRS-41",
-    zombie_sw_357: ".357 Magnum"
-  };
-  var PERKS = {
-    specialty_armorvest: "Juggernog",
-    specialty_quickrevive: "Quick Revive",
-    specialty_fastreload: "Speed Cola",
-    specialty_rof: "Double Tap",
-    specialty_longersprint: "Stamin-Up",
-    specialty_flakjacket: "PhD Flopper",
-    specialty_deadshot: "Deadshot Daiquiri",
-    specialty_additionalprimaryweapon: "Mule Kick"
-  };
-  var POWERUPS = {
-    full_ammo: "Max Ammo",
-    insta_kill: "Insta-Kill",
-    double_points: "Double Points",
-    nuke: "Nuke",
-    carpenter: "Carpenter",
-    fire_sale: "Fire Sale",
-    minigun: "Death Machine",
-    bonfire_sale: "Bonfire Sale",
-    tesla: "Wunderwaffe",
-    random_weapon: "Random Weapon",
-    bonus_points_player: "Bonus Points",
-    bonus_points_team: "Bonus Points (Team)",
-    lose_points_team: "Lose Points",
-    lose_perk: "Lose Perk",
-    empty_clip: "Empty Clip",
-    free_perk: "Free Perk"
-  };
-  function readable(id) {
-    const words = String(id).replace(/_zm$/, "").replace(/^(zombie|specialty)_/, "").split("_").filter(Boolean);
-    return words.map((w) => w[0].toUpperCase() + w.slice(1)).join(" ") || String(id);
-  }
-  var weaponName = (id) => WEAPONS[id] ?? readable(id);
-  var perkName = (id) => PERKS[id] ?? readable(id);
-  var powerupName = (id) => POWERUPS[id] ?? readable(id);
-
-  // src/cheats/section.js
-  var MAX_ROUND = 255;
-  var byName = (name) => (a, b) => name(a).localeCompare(name(b));
-  var AREA = { give: "weapons", pap: "weapons", perk: "perks", powerup: "powerups", round: "rounds", next: "rounds", freeze: "rounds" };
-  function say(session, text, action) {
-    session.fun.notice = text;
-    session.fun.noticeAt = Date.now();
-    session.cheats.noticeArea = AREA[action] ?? "rounds";
-  }
-  function noticeAfter(session, area, blocks) {
-    if (session.fun.notice && session.cheats.noticeArea === area) blocks.push({ kind: "callout", tone: "info", text: session.fun.notice });
-  }
-  function target(session, players) {
-    const chosen = session.cheats.target ?? 0;
-    return chosen === "all" || players.some((p) => p.slot === chosen) ? chosen : 0;
-  }
-  function who(session, players, slot) {
-    if (slot === "all") return C.everyone;
-    return players.find((p) => p.slot === slot)?.name ?? C.player;
-  }
-  var ERRORS = {
-    no_player: () => C.errNoPlayer,
-    not_spawned: () => C.errNotSpawned,
-    no_weapon: (d) => C.errNoWeapon(weaponName(d)),
-    no_upgrade: (d) => C.errNoUpgrade(weaponName(d)),
-    has_upgrade: () => C.errHasUpgrade,
-    no_perk: (d) => C.errNoPerk(perkName(d)),
-    perk_failed: (d) => C.errPerkFailed(perkName(d)),
-    no_powerup: (d) => C.errNoPowerup(powerupName(d)),
-    bad_round: () => C.errBadRound(MAX_ROUND),
-    horde: () => C.errHorde
-  };
-  function resultText(result, sent, name) {
-    if (!result.ok) return (ERRORS[result.code] ?? (() => C.errOther(result.code)))(result.detail);
-    switch (sent.action) {
-      case "give":
-        return C.given(weaponName(sent.arg), name);
-      case "pap":
-        return C.packed(name);
-      case "perk":
-        return C.given(perkName(sent.arg), name);
-      case "powerup":
-        return C.dropped(powerupName(sent.arg), name);
-      case "round":
-        return C.goingTo(sent.target);
-      case "next":
-        return C.nextRound;
-      case "freeze":
-        return sent.target === 1 ? C.frozenOn : C.frozenOff;
-    }
-    return "";
-  }
-  function cheatBlocks(session, players) {
-    const cheats = session.cheats;
-    const chosen = target(session, players);
-    const blocks = [];
-    if (players.length > 1) {
-      blocks.push({ kind: "label", text: C.giveTo });
-      const chips = players.map((p) => ({ act: "cheatTarget", arg: String(p.slot), label: p.name, on: chosen === p.slot }));
-      chips.push({ act: "cheatTarget", arg: "all", label: C.everyone, on: chosen === "all" });
-      blocks.push({ kind: "chips", chips });
-    }
-    blocks.push({ kind: "label", text: C.weapons });
-    blocks.push({ kind: "buttons", buttons: [{ act: "cheatPap", label: C.pap }] });
-    noticeAfter(session, "weapons", blocks);
-    blocks.push({ kind: "grid", buttons: [...cheats.weapons].sort(byName(weaponName)).map((w) => ({ act: "cheatGive", arg: w, label: weaponName(w) })) });
-    blocks.push({ kind: "label", text: C.perks });
-    if (!cheats.perks.length) blocks.push({ kind: "text", cls: "muted small", text: C.noPerks });
-    else {
-      if (!cheats.power) blocks.push({ kind: "text", cls: "muted small", text: C.powerNote });
-      blocks.push({ kind: "grid", buttons: [...cheats.perks].sort(byName(perkName)).map((p) => ({ act: "cheatPerk", arg: p, label: perkName(p) })) });
-    }
-    noticeAfter(session, "perks", blocks);
-    blocks.push({ kind: "label", text: C.powerups });
-    if (!cheats.powerups.length) blocks.push({ kind: "text", cls: "muted small", text: C.noPowerups });
-    else blocks.push({ kind: "grid", buttons: [...cheats.powerups].sort(byName(powerupName)).map((p) => ({ act: "cheatPowerup", arg: p, label: powerupName(p) })) });
-    noticeAfter(session, "powerups", blocks);
-    blocks.push({ kind: "label", text: C.rounds, aside: cheats.round ? C.roundNow(cheats.round) : "" });
-    if (cheats.horde) {
-      blocks.push({ kind: "text", cls: "muted small", text: C.errHorde });
-    } else {
-      blocks.push({ kind: "input", field: "cheatRound", placeholder: C.roundPlaceholder, act: "cheatRound", button: C.go, maxLength: 3 });
-      blocks.push({
-        kind: "chips",
-        chips: [
-          { act: "cheatNext", label: C.nextRound, on: false, plain: true },
-          { act: "cheatFreeze", label: C.freeze, on: cheats.frozen }
-        ]
-      });
-    }
-    noticeAfter(session, "rounds", blocks);
-    return blocks;
-  }
-  var cheatsFailedBlock = () => ({ kind: "callout", tone: "wait", text: C.failed });
-  function cheatActions(session, funPlayers2) {
-    const cheats = session.cheats;
-    cheats.onResult = (result, sent) => {
-      const players = funPlayers2(session);
-      say(session, resultText(result, sent, who(session, players, sent.target)), sent.action);
-    };
-    const toChosen = (action, arg, pending) => {
-      const players = funPlayers2(session);
-      const slot = target(session, players);
-      sendCheat(session, action, slot, arg);
-      say(session, pending(who(session, players, slot)), action);
-    };
-    return {
-      cheatTarget: (arg) => cheats.target = arg === "all" ? "all" : Number(arg),
-      cheatGive: (weapon) => toChosen("give", weapon, (name) => C.giving(weaponName(weapon), name)),
-      cheatPap: () => toChosen("pap", void 0, (name) => C.packing(name)),
-      cheatPerk: (perk) => toChosen("perk", perk, (name) => C.giving(perkName(perk), name)),
-      cheatPowerup: (powerup) => toChosen("powerup", powerup, (name) => C.giving(powerupName(powerup), name)),
-      cheatRound: (text) => {
-        const round = Number(String(text ?? "").trim());
-        if (!Number.isInteger(round) || round < 1 || round > MAX_ROUND) return say(session, C.errBadRound(MAX_ROUND), "round");
-        sendCheat(session, "round", round);
-        say(session, C.goingTo(round), "round");
-      },
-      cheatNext: () => sendCheat(session, "next"),
-      cheatFreeze: () => {
-        cheats.frozen = !cheats.frozen;
-        sendCheat(session, "freeze", cheats.frozen ? 1 : 0);
-      }
-    };
-  }
-
-  // src/fun/fun.js
-  var TEXT = {
-    en: {
-      title: "Fun mode",
-      note: "Host only. Changes apply to everyone in your game.",
-      pause: "Tip: press Esc in game to open this card.",
-      flyHint: "Fly and Noclip go through walls: switch them off standing on the floor, or you fall out of the map.",
-      players: "Players",
-      all: "Everyone",
-      god: "God",
-      demigod: "Can't die",
-      notarget: "Invisible",
-      noclip: "Noclip",
-      ufo: "Fly",
-      speed: "Speed",
-      money: "Points",
-      ammo: "Ammo",
-      infiniteClip: "Infinite clip",
-      infiniteStock: "Infinite reserve",
-      refill: "Refill everyone",
-      zombies: "Zombies",
-      oneHit: "Die in one hit",
-      passive: "Ignore players",
-      clear: "Clear zombies",
-      world: "World",
-      timescale: "Game speed",
-      jump: "Jump height",
-      gravity: "Gravity",
-      weapons: "Weapons (for you)",
-      weaponMissing: (w) => `${w} is not on this map.`,
-      weaponGiven: (w) => `${w} given.`,
-      reset: "Reset everything",
-      notLoaded: "Start a map to use this.",
-      cheatsOff: "This map has cheats off: the commands won't work."
-    },
-    pt: {
-      title: "Modo diversão",
-      note: "Só o host. Vale para todo mundo na sua partida.",
-      pause: "Dica: aperte Esc no jogo para abrir este cartão.",
-      flyHint: "Voa e Atravessa passam por paredes: desligue com os pés no chão, senão o jogador cai para fora do mapa.",
-      players: "Jogadores",
-      all: "Todos",
-      god: "Imortal",
-      demigod: "Não morre",
-      notarget: "Invisível",
-      noclip: "Atravessa",
-      ufo: "Voa",
-      speed: "Velocidade",
-      money: "Pontos",
-      ammo: "Munição",
-      infiniteClip: "Pente infinito",
-      infiniteStock: "Reserva infinita",
-      refill: "Encher a de todos",
-      zombies: "Zumbis",
-      oneHit: "Morrem com 1 tiro",
-      passive: "Ignoram vocês",
-      clear: "Limpar zumbis",
-      world: "Mundo",
-      timescale: "Velocidade do jogo",
-      jump: "Altura do pulo",
-      gravity: "Gravidade",
-      weapons: "Armas (para você)",
-      weaponMissing: (w) => `${w} não existe neste mapa.`,
-      weaponGiven: (w) => `${w} entregue.`,
-      reset: "Resetar tudo",
-      notLoaded: "Abra um mapa para usar.",
-      cheatsOff: "Este mapa está com cheats desligados: os comandos não vão funcionar."
-    }
-  };
-  var F = TEXT[LANG];
-  var PLAYER_TOGGLES = ["god", "demigod", "notarget", "noclip", "ufo"];
-  var SPEEDS = [0.5, 0.75, 1, 1.5, 2, 3];
-  var TIMESCALES = [0.25, 0.5, 0.75, 1, 1.5, 2];
-  var JUMPS = [39, 80, 150, 300, 600];
-  var GRAVITIES = [800, 600, 400, 200, 100];
-  var STOCK = 999;
-  var WEAPONS2 = [
-    ["ray_gun_zm", "Ray Gun"],
-    ["ray_gun_upgraded_zm", "Ray Gun (PaP)"],
-    ["thundergun_zm", "Thundergun"],
-    ["thundergun_upgraded_zm", "Thundergun (PaP)"],
-    ["tesla_gun_zm", "Wunderwaffe"],
-    ["freezegun_zm", "Winter's Howl"],
-    ["microwavegun_zm", "Wave Gun"],
-    ["sniper_explosive_zm", "Scavenger"],
-    ["crossbow_explosive_zm", "Crossbow"],
-    ["knife_ballistic_zm", "Ballistic Knife"],
-    ["hk21_zm", "HK21"],
-    ["rpk_zm", "RPK"],
-    ["galil_zm", "Galil"],
-    ["commando_zm", "Commando"],
-    ["famas_zm", "FAMAS"],
-    ["aug_acog_zm", "AUG"],
-    ["spas_zm", "SPAS-12"],
-    ["china_lake_zm", "China Lake"],
-    ["python_zm", "Python"],
-    ["cz75dw_zm", "CZ75 Dual"],
-    ["zombie_cymbal_monkey", "Monkey Bomb"],
-    ["zombie_black_hole_bomb", "Gersh Device"],
-    ["bowie_knife_zm", "Bowie Knife"],
-    ["claymore_zm", "Claymores"]
-  ];
-  function createFun() {
-    return {
-      open: false,
-      players: {},
-      // slot -> { god, demigod, notarget, noclip, ufo, speed }
-      infiniteClip: false,
-      infiniteStock: false,
-      oneHit: false,
-      passive: false,
-      timescale: 1,
-      jump: 39,
-      gravity: 800,
-      queue: [],
-      // console commands waiting for the engine's mailbox
-      notice: null,
-      noticeAt: 0,
-      lastStockAt: 0,
-      lastZombiesAt: 0
-    };
-  }
-  var playerState = (fun, slot) => fun.players[slot] ??= { god: false, demigod: false, notarget: false, noclip: false, ufo: false, speed: 1 };
-  function funPlayers(session) {
-    const players = [{ slot: 0, n: 1, name: session.name || (LANG === "pt" ? "Você" : "You") }];
-    if (session.mode === "host") {
-      for (const g of session.guests.values()) {
-        if (g.present && g.slot?.state === SLOT.active) players.push({ slot: g.slot.slot, n: g.seat + 1, name: g.state?.name || `${LANG === "pt" ? "Jogador" : "Player"} ${g.seat + 1}` });
-      }
-    }
-    return players;
-  }
-  var funAvailable = (session) => session.mode !== "guest";
-  function addresses(session) {
-    const f = session.build?.fun;
-    const engine = session.engine;
-    if (!f || !engine) return null;
-    return {
-      f,
-      engine,
-      ent: (slot) => f.entities + slot * f.entitySize,
-      client: (slot) => engine.int(f.entities + slot * f.entitySize + f.ent.client)
-    };
-  }
-  function setBit(engine, address, bit, on) {
-    if (on) Atomics.or(engine.i32, address >> 2, bit);
-    else Atomics.and(engine.i32, address >> 2, ~bit);
-  }
-  function say2(fun, text) {
-    fun.notice = text;
-    fun.noticeAt = Date.now();
-  }
-  function funTick(session) {
-    const fun = session.fun;
-    if (fun.notice && Date.now() - fun.noticeAt > 6e3) fun.notice = null;
-    if (session.cheats) cheatsTick(session, Date.now(), funAvailable(session) && screen() === "playing");
-    const a = addresses(session);
-    if (!a || !funAvailable(session) || screen() !== "playing") {
-      flushQueue(session);
-      return;
-    }
-    const { f, engine } = a;
-    const now = Date.now();
-    for (const { slot } of funPlayers(session)) {
-      const p = fun.players[slot];
-      if (!p) continue;
-      const ent = a.ent(slot);
-      const client = a.client(slot);
-      if (!client) continue;
-      if (p.god || p.demigod || p.notarget) {
-        if (p.god) setBit(engine, ent + f.ent.flags, f.entFlags.god, true);
-        if (p.demigod) setBit(engine, ent + f.ent.flags, f.entFlags.demigod, true);
-        if (p.notarget) setBit(engine, ent + f.ent.flags, f.entFlags.notarget, true);
-      }
-      if (p.noclip) setBit(engine, client + f.client.flags, f.clientFlags.noclip, true);
-      if (p.ufo) setBit(engine, client + f.client.flags, f.clientFlags.ufo, true);
-      if (p.speed !== 1) new Float32Array(engine.buffer)[client + f.client.speedScale >> 2] = p.speed;
-    }
-    if (fun.infiniteStock && now - fun.lastStockAt > 500) {
-      fun.lastStockAt = now;
-      refillStock(session, a);
-    }
-    if ((fun.oneHit || fun.passive) && now - fun.lastZombiesAt > 1500) {
-      fun.lastZombiesAt = now;
-      if (!fun.queue.length) {
-        if (fun.oneHit) fun.queue.push("ai axis health 1");
-        if (fun.passive) fun.queue.push("ai axis ignoreall 1");
-      }
-    }
-    flushQueue(session);
-  }
-  function flushQueue(session) {
-    const fun = session.fun;
-    if (!fun.queue.length || !session.engine) return;
-    if (session.engine.command(fun.queue[0])) fun.queue.shift();
-  }
-  function refillStock(session, a, slots = funPlayers(session).map((p) => p.slot)) {
-    const { f, engine } = a;
-    for (const slot of slots) {
-      const client = a.client(slot);
-      if (!client) continue;
-      for (let i = 0; i < f.client.ammoSlots; i += 1) {
-        const pool = client + f.client.ammoPools + 8 * i;
-        if (engine.int(pool) && engine.int(pool + 4) < STOCK) engine.setInt(pool + 4, STOCK);
-      }
-    }
-  }
-  function watchConsole(session) {
-    for (const level of ["log", "warn", "error"]) {
-      const original = console[level];
-      console[level] = function(...args) {
-        const text = typeof args[0] === "string" ? args[0] : "";
-        onCheatsLine(session, text);
-        const missing = text.match(/Could not load weapon "([^"]+)"/);
-        if (missing && session.fun?.pendingWeapon === missing[1]) {
-          const label = WEAPONS2.find(([w]) => w === missing[1])?.[1] ?? missing[1];
-          say2(session.fun, F.weaponMissing(label));
-          session.fun.pendingWeapon = null;
-        }
-        return original.apply(this, args);
-      };
-    }
-  }
-  function step(list, value, direction) {
-    const i = list.indexOf(value);
-    const at = i < 0 ? list.indexOf(list.reduce((best, v) => Math.abs(v - value) < Math.abs(best - value) ? v : best, list[0])) : i;
-    return list[Math.max(0, Math.min(list.length - 1, at + direction))];
-  }
-  function funActions(session) {
-    const fun = session.fun;
-    const engineReady = () => Boolean(addresses(session));
-    const togglePlayer = (key, slot) => {
-      const a = addresses(session);
-      const p = playerState(fun, slot);
-      p[key] = !p[key];
-      if (!p[key] && a) {
-        const client = a.client(slot);
-        if (key === "noclip" || key === "ufo") {
-          if (client) setBit(a.engine, client + a.f.client.flags, a.f.clientFlags[key], false);
-        } else {
-          setBit(a.engine, a.ent(slot) + a.f.ent.flags, a.f.entFlags[key], false);
-        }
-      }
-    };
-    const setSpeed = (slot, value) => {
-      const a = addresses(session);
-      playerState(fun, slot).speed = value;
-      const client = a?.client(slot);
-      if (client) new Float32Array(a.engine.buffer)[client + a.f.client.speedScale >> 2] = value;
-    };
-    const addPoints = (slot, amount) => {
-      const a = addresses(session);
-      const client = a?.client(slot);
-      if (!client) return;
-      const score = client + a.f.client.score;
-      a.engine.setInt(score, amount === "max" ? 9999990 : amount === "zero" ? 0 : Math.min(9999990, a.engine.int(score) + amount));
-    };
-    const parse = (arg) => {
-      const [what, slot] = String(arg).split(":");
-      return { what, slot: slot === "all" ? "all" : Number(slot) };
-    };
-    const forSlots = (slot) => slot === "all" ? funPlayers(session).map((p) => p.slot) : [slot];
-    return {
-      ...session.cheats ? cheatActions(session, funPlayers) : {},
-      fun: () => fun.open = !fun.open,
-      funToggle: (arg) => {
-        if (!engineReady()) return;
-        const { what, slot } = parse(arg);
-        if (slot === "all") {
-          const slots = forSlots("all");
-          const turnOn = !slots.every((s) => playerState(fun, s)[what]);
-          for (const s of slots) if (playerState(fun, s)[what] !== turnOn) togglePlayer(what, s);
-        } else {
-          togglePlayer(what, slot);
-        }
-      },
-      funSpeed: (arg) => {
-        if (!engineReady()) return;
-        const { what, slot } = parse(arg);
-        for (const s of forSlots(slot)) setSpeed(s, step(SPEEDS, playerState(fun, s).speed, what === "up" ? 1 : -1));
-      },
-      funPoints: (arg) => {
-        if (!engineReady()) return;
-        const { what, slot } = parse(arg);
-        const amount = what === "max" || what === "zero" ? what : Number(what);
-        for (const s of forSlots(slot)) addPoints(s, amount);
-      },
-      funAmmo: (arg) => {
-        if (!engineReady()) return;
-        if (arg === "clip") {
-          fun.infiniteClip = !fun.infiniteClip;
-          fun.queue.push(`set player_sustainAmmo ${fun.infiniteClip ? 1 : 0}`);
-        } else if (arg === "stock") {
-          fun.infiniteStock = !fun.infiniteStock;
-        } else if (arg === "refill") {
-          refillStock(session, addresses(session));
-        }
-      },
-      funZombies: (arg) => {
-        if (!engineReady()) return;
-        if (arg === "onehit") fun.oneHit = !fun.oneHit;
-        else if (arg === "passive") {
-          fun.passive = !fun.passive;
-          if (!fun.passive) fun.queue.push("ai axis ignoreall 0");
-        } else if (arg === "clear") fun.queue.push("ai axis delete");
-        if (fun.oneHit && arg === "onehit") fun.queue.push("ai axis health 1");
-        if (fun.passive && arg === "passive") fun.queue.push("ai axis ignoreall 1");
-      },
-      funWorld: (arg) => {
-        if (!engineReady()) return;
-        const [what, dir2] = String(arg).split(":");
-        const direction = dir2 === "up" ? 1 : -1;
-        if (what === "timescale") {
-          fun.timescale = step(TIMESCALES, fun.timescale, direction);
-          fun.queue.push(`timescale ${fun.timescale}`);
-        } else if (what === "jump") {
-          fun.jump = step(JUMPS, fun.jump, direction);
-          fun.queue.push(`jump_height ${fun.jump}`);
-        } else if (what === "gravity") {
-          fun.gravity = step(GRAVITIES, fun.gravity, direction);
-          fun.queue.push(`bg_gravity ${fun.gravity}`);
-        }
-      },
-      funWeapon: (weapon) => {
-        if (!engineReady()) return;
-        fun.pendingWeapon = weapon;
-        fun.queue.push(`give ${weapon}`);
-        const label = WEAPONS2.find(([w]) => w === weapon)?.[1] ?? weapon;
-        say2(fun, F.weaponGiven(label));
-      },
-      funReset: () => {
-        const a = addresses(session);
-        for (const { slot } of funPlayers(session)) {
-          const p = playerState(fun, slot);
-          for (const key of PLAYER_TOGGLES) if (p[key]) togglePlayer(key, slot);
-          if (p.speed !== 1) setSpeed(slot, 1);
-        }
-        fun.infiniteStock = false;
-        fun.oneHit = false;
-        if (fun.passive) fun.queue.push("ai axis ignoreall 0");
-        fun.passive = false;
-        if (fun.infiniteClip) fun.queue.push("set player_sustainAmmo 0");
-        fun.infiniteClip = false;
-        if (fun.timescale !== 1) fun.queue.push("timescale 1");
-        if (fun.jump !== 39) fun.queue.push("jump_height 39");
-        if (fun.gravity !== 800) fun.queue.push("bg_gravity 800");
-        Object.assign(fun, { timescale: 1, jump: 39, gravity: 800 });
-        if (!a) fun.queue.length = 0;
-      }
-    };
-  }
-  var fmt = (v) => Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/0$/, "");
-  function funSection(session) {
-    const fun = session.fun;
-    const blocks = [];
-    const a = addresses(session);
-    if (!a || !["ready", "playing"].includes(screen())) {
-      blocks.push({ kind: "text", cls: "muted small", text: F.notLoaded });
-      return { kind: "section", title: F.title, act: "fun", open: fun.open, blocks };
-    }
-    const cheats = (() => {
-      const dvar = a.engine.int(a.f.cheatsDvar);
-      return dvar ? a.engine.byte(dvar + 24) === 1 : true;
-    })();
-    blocks.push({ kind: "text", cls: "muted small", text: `${F.note} ${session.cheats?.enabled ? C.keyTip : F.pause}` });
-    if (!cheats) blocks.push({ kind: "callout", tone: "wait", text: F.cheatsOff });
-    const cheating = session.cheats?.ok && session.cheats.ready;
-    if (fun.notice && !cheating) blocks.push({ kind: "callout", tone: "info", text: fun.notice });
-    const players = funPlayers(session);
-    blocks.push({ kind: "label", text: F.players });
-    const rows = players.length > 1 ? [...players, { slot: "all", n: 0, name: F.all }] : players;
-    for (const p of rows) {
-      const state = p.slot === "all" ? null : playerState(fun, p.slot);
-      const allOn = (key) => players.every((q) => playerState(fun, q.slot)[key]);
-      const on = (key) => state ? state[key] : allOn(key);
-      const speed = state ? state.speed : players.every((q) => playerState(fun, q.slot).speed === playerState(fun, players[0].slot).speed) ? playerState(fun, players[0].slot).speed : null;
-      const score = state ? a.engine.int((a.client(p.slot) || 0) + a.f.client.score) : null;
-      blocks.push({
-        kind: "funPlayer",
-        n: p.n,
-        name: p.name,
-        chips: PLAYER_TOGGLES.map((key) => ({ act: "funToggle", arg: `${key}:${p.slot}`, label: F[key], on: on(key) })),
-        speed: { label: F.speed, value: speed == null ? "–" : `${fmt(speed)}×`, dec: { act: "funSpeed", arg: `down:${p.slot}` }, inc: { act: "funSpeed", arg: `up:${p.slot}` } },
-        money: {
-          label: F.money,
-          value: score == null ? "" : score.toLocaleString(),
-          buttons: [
-            { act: "funPoints", arg: `5000:${p.slot}`, label: "+5k" },
-            { act: "funPoints", arg: `50000:${p.slot}`, label: "+50k" },
-            { act: "funPoints", arg: `max:${p.slot}`, label: "Max" },
-            { act: "funPoints", arg: `zero:${p.slot}`, label: "0" }
-          ]
-        }
-      });
-    }
-    if (players.some((p) => fun.players[p.slot]?.noclip || fun.players[p.slot]?.ufo)) blocks.push({ kind: "callout", tone: "wait", text: F.flyHint });
-    blocks.push({ kind: "label", text: F.ammo });
-    blocks.push({
-      kind: "chips",
-      chips: [
-        { act: "funAmmo", arg: "clip", label: F.infiniteClip, on: fun.infiniteClip },
-        { act: "funAmmo", arg: "stock", label: F.infiniteStock, on: fun.infiniteStock },
-        { act: "funAmmo", arg: "refill", label: F.refill, on: false, plain: true }
-      ]
-    });
-    blocks.push({ kind: "label", text: F.zombies });
-    blocks.push({
-      kind: "chips",
-      chips: [
-        { act: "funZombies", arg: "onehit", label: F.oneHit, on: fun.oneHit },
-        { act: "funZombies", arg: "passive", label: F.passive, on: fun.passive },
-        { act: "funZombies", arg: "clear", label: F.clear, on: false, plain: true }
-      ]
-    });
-    blocks.push({ kind: "label", text: F.world });
-    blocks.push({ kind: "stepper", label: F.timescale, value: `${fmt(fun.timescale)}×`, dec: { act: "funWorld", arg: "timescale:down" }, inc: { act: "funWorld", arg: "timescale:up" } });
-    blocks.push({ kind: "stepper", label: F.jump, value: String(fun.jump), dec: { act: "funWorld", arg: "jump:down" }, inc: { act: "funWorld", arg: "jump:up" } });
-    blocks.push({ kind: "stepper", label: F.gravity, value: String(fun.gravity), dec: { act: "funWorld", arg: "gravity:down" }, inc: { act: "funWorld", arg: "gravity:up" } });
-    if (cheating) blocks.push(...cheatBlocks(session, players));
-    else {
-      if (session.cheats?.ok === false) blocks.push(cheatsFailedBlock());
-      blocks.push({ kind: "label", text: F.weapons, aside: MAP_SLUGS[session.zone ?? currentZone()] ?? "" });
-      blocks.push({ kind: "grid", buttons: WEAPONS2.map(([w, label]) => ({ act: "funWeapon", arg: w, label })) });
-    }
-    blocks.push({ kind: "buttons", buttons: [{ act: "funReset", label: F.reset, style: "ghost" }] });
-    return { kind: "section", title: F.title, act: "fun", open: fun.open, blocks };
-  }
-
   // src/ui/view.js
   var COPIED_MS = 2e3;
   var CONNECTED = ["ingame", "ready", "lobby"];
@@ -4293,8 +4876,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     if (session.error) blocks.push({ kind: "callout", tone: "bad", text: session.error });
     if (session.notice) blocks.push({ kind: "callout", tone: "info", text: session.notice });
     if (session.overQuota) {
-      const at = session.overQuota.resetsAt ? new Date(session.overQuota.resetsAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
-      blocks.push({ kind: "callout", tone: "bad", text: T.relayOverQuota(at), buttons: [{ act: "openRelayGuide", label: T.relayGuide, style: "primary" }, { act: "editRelayNow", label: T.changeRelay }] });
+      const at2 = session.overQuota.resetsAt ? new Date(session.overQuota.resetsAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
+      blocks.push({ kind: "callout", tone: "bad", text: T.relayOverQuota(at2), buttons: [{ act: "openRelayGuide", label: T.relayGuide, style: "primary" }, { act: "editRelayNow", label: T.changeRelay }] });
     }
     if (session.update) blocks.push({ kind: "callout", tone: "ok", text: T.updateAvailable(session.update.version), buttons: [{ act: "openUpdate", label: T.updateHow, style: "primary" }] });
     if (!session.mode) return soloView(session, blocks, playing);
@@ -4373,8 +4956,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     if ((phase === "loading" || phase === "joining-room" && onHostMap) && screen2 === "landing") {
       blocks.push({ kind: "callout", tone: "wait", title: "⌨", text: T.pressKey });
     } else {
-      const text = guestMessage(session, phase, mapName, screen2);
-      if (text) blocks.push({ kind: "callout", tone: failed ? "bad" : phase === "connected" ? "ok" : "info", text, buttons: failed ? [{ act: "rejoin", label: T.rejoin, style: "primary" }] : [] });
+      const text2 = guestMessage(session, phase, mapName, screen2);
+      if (text2) blocks.push({ kind: "callout", tone: failed ? "bad" : phase === "connected" ? "ok" : "info", text: text2, buttons: failed ? [{ act: "rejoin", label: T.rejoin, style: "primary" }] : [] });
     }
     if (session.joinedLate && ["joining", "connected"].includes(phase)) blocks.push({ kind: "callout", tone: "info", text: T.lateJoin });
     if (phase === "connected" && session.paused) blocks.push({ kind: "callout", tone: "wait", text: session.menuOpen ? T.pausedYou : T.pausedBy });
@@ -4550,6 +5133,484 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     );
   }
 
+  // src/map/state.js
+  function createMap() {
+    return {
+      open: false,
+      openedAt: null,
+      // when the panel was last opened (the "no data" note waits a few seconds)
+      slug: null,
+      plan: null,
+      tracks: /* @__PURE__ */ new Map(),
+      // n -> track of recent positions, for gliding (src/map/track.js)
+      live: /* @__PURE__ */ new Map(),
+      // n -> { x, y, z, yaw, room, s, floor, at }: the latest sample per player number
+      liveV: null,
+      // the state counter of the latest live sample
+      state: null,
+      // { v, sig, doors, rooms, box, power, at }
+      planOk: false,
+      // the state's sig matches the plan: its doors and rooms can be shown
+      lastAskAt: -Infinity,
+      liveReads: 0,
+      // live readings so far (each is forwarded to guests once)
+      sentReads: 0,
+      sentStateAt: 0,
+      sentStateKey: null
+    };
+  }
+
+  // src/map/hotkey.js
+  var KEY3 = "KeyN";
+  function onMapKey(session, event, { playing }) {
+    if (event.code !== KEY3 || event.repeat || event.ctrlKey || event.altKey || event.metaKey) return false;
+    const target2 = event.composedPath?.()[0];
+    if (target2 && (/^(INPUT|TEXTAREA|SELECT)$/.test(target2.tagName ?? "") || target2.isContentEditable)) return false;
+    if (!playing) return false;
+    session.map.open = !session.map.open;
+    if (session.map.open) session.map.openedAt = Date.now();
+    return true;
+  }
+  function installMapKey(session, overlay) {
+    window.addEventListener(
+      "keydown",
+      (event) => {
+        if (!onMapKey(session, event, { playing: screen() === "playing" })) return;
+        if (session.map.open) overlay.show(session);
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      true
+    );
+    window.addEventListener(
+      "keyup",
+      (event) => {
+        if (event.code === KEY3 && screen() === "playing") event.stopImmediatePropagation();
+      },
+      true
+    );
+  }
+
+  // src/map/names.js
+  var ROOMS = {
+    nacht: { start_zone: "Main room", box_zone: "Back room", upstairs_zone: "Help room" },
+    verruckt: { kitchen_upstairs_zone: "Kitchen", power_upstairs_zone: "Power room" },
+    shinonuma: { center_building_combined: "Main hut", center_building_upstairs: "Main hut upstairs", center_building_upstairs_buy: "Main hut stairs" },
+    riese: {
+      receiver_zone: "Mainframe",
+      tp_west_zone: "West teleporter",
+      tp_south_zone: "South teleporter",
+      tp_east_zone: "East teleporter",
+      bridge_zone: "Bridge",
+      warehouse_top_zone: "Warehouse upstairs",
+      warehouse_bottom_zone: "Warehouse"
+    },
+    kino: {
+      foyer_zone: "Lobby",
+      foyer2_zone: "Upstairs lobby",
+      theater_zone: "Theater",
+      stage_zone: "Stage",
+      west_balcony_zone: "West balcony",
+      dressing_zone: "Dressing room",
+      alleyway_zone: "Alley",
+      dining_zone: "Dining room",
+      crematorium_zone: "Crematorium",
+      vip_zone: "VIP room"
+    },
+    five: {
+      labs_zone1: "Lab 1",
+      labs_zone2: "Lab 2",
+      labs_zone3: "Lab 3",
+      labs_hallway1: "Lab hallway",
+      labs_hallway2: "Lab hallway 2",
+      labs_elevator: "Lab elevator",
+      war_room_zone_elevator: "War room elevator",
+      war_room_zone_top: "War room, upper level",
+      war_room_zone_north: "War room north",
+      war_room_zone_south: "War room south",
+      conference_level1: "Conference room"
+    },
+    ascension: { centrifuge_zone: "Centrifuge", control_room_zone: "Control room", under_rocket_zone: "Under the rocket" },
+    cotd: { lighthouse1_zone: "Lighthouse", lighthouse2_zone: "Lighthouse, upper floor", catwalk_zone: "Lighthouse top", start_zone: "Start" },
+    shangrila: { temple_start_zone: "Temple" },
+    moon: { nml_zone: "No Man's Land" }
+  };
+  function roomName(slug, id) {
+    const known = ROOMS[slug]?.[id];
+    if (known) return known;
+    const words = String(id).replace(/zone/g, " ").replace(/_/g, " ").replace(/([a-z])(\d)/g, "$1 $2").trim().replace(/\s+/g, " ");
+    return words ? words[0].toUpperCase() + words.slice(1) : String(id);
+  }
+
+  // src/map/model.js
+  var GONE_MS = 2e3;
+  var NO_DATA_MS = 5e3;
+  function names(session) {
+    if (session.mode !== "guest") return new Map(funPlayers(session).map((p) => [p.n, p.name]));
+    const known = new Map((session.lobby?.players ?? []).map((p) => [p.n, p.name ?? ""]));
+    if (Number.isInteger(session.seat)) known.set(session.seat + 1, session.name ?? "");
+    return known;
+  }
+  var myNumber = (session) => session.mode === "guest" ? session.seat + 1 : 1;
+  function mapModel(session, now, { view: view2 = latestView() } = {}) {
+    const map = session.map;
+    const plan = map.plan;
+    if (!plan) return { status: "noPlan" };
+    const me = myNumber(session);
+    const known = names(session);
+    const players = [];
+    for (const [n, entry] of map.live) {
+      if (now - entry.at > GONE_MS) {
+        map.live.delete(n);
+        map.tracks.delete(n);
+        continue;
+      }
+      if (entry.s === 2) continue;
+      const name = known.get(n) || "";
+      let at2 = { x: entry.x, y: entry.y, yaw: entry.yaw };
+      if (n === me && view2) at2 = { x: view2.origin[0], y: view2.origin[1], yaw: view2.angles[1] };
+      else if (n !== me) at2 = sampleTrack(map.tracks.get(n) ?? [], now - RENDER_DELAY_MS) ?? at2;
+      players.push({ n, name, letter: (name.trim()[0] ?? String(n)).toUpperCase(), color: PLAYER_COLORS[n - 1] ?? PLAYER_COLORS[0], ...at2, floor: entry.floor, room: entry.room, downed: entry.s === 1, me: n === me });
+    }
+    players.sort((a, b) => a.n - b.n);
+    const mine = players.find((p) => p.me);
+    if (!players.length && !map.state) {
+      const waited = map.openedAt != null && now - map.openedAt > NO_DATA_MS;
+      return { status: waited ? "noData" : "waiting" };
+    }
+    const floor = mine?.floor ?? 0;
+    const room = mine && mine.room >= 0 && plan.rooms[mine.room] ? mine.room : -1;
+    const state = map.planOk ? map.state : null;
+    let boxIndex = -1;
+    return {
+      status: "ok",
+      room: room >= 0 ? roomName(plan.slug, plan.rooms[room].id) : null,
+      floor,
+      floors: plan.floors.map((f, i) => ({ name: f.name, current: i === floor, others: i === floor ? [] : players.filter((p) => !p.me && p.floor === i).map((p) => p.letter) })),
+      rooms: plan.rooms.map((r, i) => ({ index: i, name: roomName(plan.slug, r.id), open: state ? Boolean(state.rooms[i]) : null, current: i === room })),
+      doors: state ? plan.doors.flatMap((d, i) => state.doors[i] ? [] : [{ index: i, cost: d.cost, kind: d.kind, at: d.at }]) : [],
+      pois: plan.pois.map((p) => {
+        if (p.kind === "box") boxIndex += 1;
+        const active = p.kind === "box" ? Boolean(state?.box.includes(boxIndex)) : p.kind === "power" ? Boolean(state?.power) : false;
+        return { kind: p.kind, id: p.id, at: p.at, active };
+      }),
+      players: players.map(({ n, letter, color, x, y, yaw, floor: f, downed, me: isMe }) => ({ n, letter, color, x, y, yaw, floor: f, downed, me: isMe })),
+      legend: players.map((p) => ({ letter: p.letter, name: p.name, color: p.color })),
+      stale: Boolean(map.state && !map.planOk)
+    };
+  }
+
+  // src/map/strings.js
+  var M = {
+    noPlan: "There's no map for this level yet.",
+    waiting: "Waiting for the map…",
+    noData: "No map in this game. The host needs this version of the extension, with the cheat menu on.",
+    stale: "This level changed since its map was made, so doors aren't shown.",
+    close: "N to close",
+    youAreIn: "You are in"
+  };
+
+  // src/map/overlay.js
+  var C2 = {
+    panel: "rgba(18,17,16,.9)",
+    line: "#34302b",
+    fg: "#ece6dc",
+    muted: "#9d958a",
+    dim: "#6f685f",
+    accent: "#e2552f",
+    accent2: "#f07a4f",
+    gold: "#f4c542",
+    bad: "#ff6b5a",
+    roomOpen: "#2a2622",
+    roomOpenEdge: "#6f685f",
+    roomShut: "#1d1a17",
+    roomShutEdge: "#4a443d",
+    roomUnknown: "#24211e",
+    current: "#3a2a22"
+  };
+  var FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  var PERK_LABELS = {
+    specialty_armorvest: "Jug",
+    specialty_quickrevive: "QR",
+    specialty_fastreload: "Spd",
+    specialty_rof: "DT",
+    specialty_longersprint: "Stm",
+    specialty_deadshot: "DS",
+    specialty_additionalprimaryweapon: "MK",
+    specialty_flakjacket: "PhD"
+  };
+  var HEAD = 52;
+  var FOOT = 34;
+  var PAD = 18;
+  var panelBox = (width, height) => ({ x: Math.round(width * 0.12), y: Math.round(height * 0.08), w: Math.round(width * 0.76), h: Math.round(height * 0.84) });
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, r);
+  }
+  function text(ctx, value, x, y, { size = 13, weight = 600, color = C2.fg, align = "left", base = "middle" } = {}) {
+    ctx.font = `${weight} ${size}px ${FONT}`;
+    ctx.fillStyle = color;
+    ctx.textAlign = align;
+    ctx.textBaseline = base;
+    ctx.fillText(value, x, y);
+    return ctx.measureText(value).width;
+  }
+  function drawRooms(plan, model, view2, w, h, dpr) {
+    const canvas = new OffscreenCanvas(Math.max(1, Math.round(w * dpr)), Math.max(1, Math.round(h * dpr)));
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+    const s = view2.scale;
+    const rectOf = ([, x0, y0, x1, y1]) => {
+      const [ax, ay] = toScreen(view2, x0, y0);
+      const [bx, by] = toScreen(view2, x1, y1);
+      const left = Math.round(Math.min(ax, bx));
+      const top = Math.round(Math.min(ay, by));
+      return [left, top, Math.round(Math.max(ax, bx)) - left, Math.round(Math.max(ay, by)) - top];
+    };
+    const fill = (room, grow, color) => {
+      ctx.fillStyle = color;
+      for (const rect of room.rects) {
+        if (rect[0] !== model.floor) continue;
+        const [x, y, rw, rh] = rectOf(rect);
+        ctx.fillRect(x - grow, y - grow, rw + 2 * grow, rh + 2 * grow);
+      }
+    };
+    const look = (i) => {
+      const r = model.rooms[i];
+      if (r.current) return { edge: C2.accent, fill: C2.current, grow: 3, label: C2.accent2 };
+      if (r.open === true) return { edge: C2.roomOpenEdge, fill: C2.roomOpen, grow: 1.5, label: C2.muted };
+      if (r.open === false) return { edge: C2.roomShutEdge, fill: C2.roomShut, grow: 1.5, label: C2.dim };
+      return { edge: C2.roomShutEdge, fill: C2.roomUnknown, grow: 1.5, label: C2.muted };
+    };
+    const order = plan.rooms.map((_, i) => i).sort((a, b) => Number(model.rooms[a].current) - Number(model.rooms[b].current));
+    for (const i of order) {
+      fill(plan.rooms[i], look(i).grow, look(i).edge);
+      fill(plan.rooms[i], 0, look(i).fill);
+    }
+    const size = Math.max(10, Math.min(14, s * 160));
+    for (const i of order) {
+      const room = plan.rooms[i];
+      if (room.label[0] !== model.floor) continue;
+      const [lx, ly] = toScreen(view2, room.label[1], room.label[2]);
+      text(ctx, model.rooms[i].name, lx, ly, { size, weight: 700, color: look(i).label, align: "center" });
+    }
+    return canvas;
+  }
+  function drawLock(ctx, x, y, door) {
+    const label = door.kind === "power" ? "" : String(door.cost);
+    ctx.font = `800 11px ${FONT}`;
+    const w = 26 + (label ? ctx.measureText(label).width : 0);
+    roundRect(ctx, x - w / 2, y - 10, w, 20, 10);
+    ctx.fillStyle = "#121110";
+    ctx.fill();
+    ctx.strokeStyle = C2.gold;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    const ix = x - w / 2 + 8;
+    if (door.kind === "power") {
+      bolt(ctx, x, y, C2.gold);
+      return;
+    }
+    ctx.strokeStyle = C2.gold;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(ix, y - 1, 8, 6);
+    ctx.beginPath();
+    ctx.arc(ix + 4, y - 2, 2.6, Math.PI, 0);
+    ctx.stroke();
+    text(ctx, label, ix + 12, y + 0.5, { size: 11, weight: 800, color: C2.gold });
+  }
+  function bolt(ctx, x, y, color) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x + 1, y - 7);
+    ctx.lineTo(x - 4, y + 1);
+    ctx.lineTo(x, y + 1);
+    ctx.lineTo(x - 1, y + 7);
+    ctx.lineTo(x + 4, y - 1);
+    ctx.lineTo(x, y - 1);
+    ctx.closePath();
+    ctx.fill();
+  }
+  function drawPoi(ctx, x, y, poi) {
+    if (poi.kind === "power") {
+      ctx.beginPath();
+      ctx.arc(x, y, 11, 0, Math.PI * 2);
+      ctx.fillStyle = poi.active ? "#1a2a3a" : "#1b1917";
+      ctx.fill();
+      ctx.strokeStyle = poi.active ? "#5aa8ff" : C2.dim;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      bolt(ctx, x, y, poi.active ? "#5aa8ff" : C2.muted);
+      return;
+    }
+    if (poi.kind === "box") {
+      roundRect(ctx, x - 13, y - 9, 26, 18, 3);
+      ctx.fillStyle = poi.active ? "#3b2a12" : "rgba(0,0,0,0)";
+      ctx.fill();
+      ctx.strokeStyle = poi.active ? C2.gold : C2.dim;
+      ctx.lineWidth = poi.active ? 1.5 : 1;
+      ctx.setLineDash(poi.active ? [] : [3, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      text(ctx, "?", x, y + 0.5, { size: 12, weight: 900, color: poi.active ? C2.gold : C2.dim, align: "center" });
+      return;
+    }
+    const pap = poi.kind === "pap";
+    const label = pap ? "PaP" : PERK_LABELS[poi.id] ?? "Perk";
+    roundRect(ctx, x - 14, y - 11, 28, 22, 5);
+    ctx.fillStyle = pap ? "#2b1f3a" : "#3a1a17";
+    ctx.fill();
+    ctx.strokeStyle = pap ? "#b48cff" : C2.bad;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    text(ctx, label, x, y + 0.5, { size: 10, weight: 800, color: pap ? "#d7c2ff" : "#fff", align: "center" });
+  }
+  function drawPlayer(ctx, view2, p) {
+    const [x, y] = toScreen(view2, p.x, p.y);
+    const rad = p.yaw * Math.PI / 180;
+    const [fx, fy] = toScreen(view2, p.x + Math.cos(rad) * 100, p.y + Math.sin(rad) * 100);
+    const len = Math.hypot(fx - x, fy - y) || 1;
+    ctx.strokeStyle = p.color;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + (fx - x) / len * 22, y + (fy - y) / len * 22);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x, y, 11, 0, Math.PI * 2);
+    ctx.fillStyle = p.color;
+    ctx.fill();
+    ctx.lineWidth = p.downed ? 3 : 2;
+    ctx.strokeStyle = p.downed ? C2.bad : "#000";
+    ctx.stroke();
+    text(ctx, p.letter, x, y + 0.5, { size: 12, weight: 900, color: "#121110", align: "center" });
+  }
+  function drawMap(ctx, width, height, model, plan, cache) {
+    ctx.clearRect(0, 0, width, height);
+    const box = panelBox(width, height);
+    roundRect(ctx, box.x, box.y, box.w, box.h, 10);
+    ctx.fillStyle = C2.panel;
+    ctx.fill();
+    ctx.strokeStyle = C2.line;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    const left = box.x + PAD;
+    const right = box.x + box.w - PAD;
+    if (model.status !== "ok") {
+      const message = { noPlan: M.noPlan, waiting: M.waiting, noData: M.noData }[model.status];
+      text(ctx, message, box.x + box.w / 2, box.y + box.h / 2, { size: 15, color: C2.muted, align: "center" });
+      text(ctx, M.close, right, box.y + box.h - FOOT / 2, { size: 12, color: C2.dim, align: "right" });
+      return;
+    }
+    text(ctx, M.youAreIn.toUpperCase(), left, box.y + 18, { size: 10, weight: 700, color: C2.muted });
+    text(ctx, model.room ?? "—", left, box.y + 36, { size: 17, weight: 800 });
+    if (model.floors.length > 1) {
+      let x2 = right;
+      for (const floor of [...model.floors].reverse()) {
+        ctx.font = `700 12px ${FONT}`;
+        const others = floor.others.join(" ");
+        const w = ctx.measureText(floor.name).width + (others ? ctx.measureText(others).width + 8 : 0) + 22;
+        x2 -= w;
+        roundRect(ctx, x2, box.y + 16, w, 24, 12);
+        ctx.fillStyle = floor.current ? C2.accent : "rgba(0,0,0,0)";
+        ctx.fill();
+        ctx.strokeStyle = floor.current ? C2.accent : C2.line;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        const tw = text(ctx, floor.name, x2 + 11, box.y + 28.5, { size: 12, weight: 700, color: floor.current ? "#fff" : C2.muted });
+        if (others) text(ctx, others, x2 + 19 + tw, box.y + 28.5, { size: 12, weight: 900, color: C2.gold });
+        x2 -= 6;
+      }
+    }
+    if (model.stale) text(ctx, M.stale, box.x + box.w / 2, box.y + HEAD + 4, { size: 12, color: C2.gold, align: "center" });
+    const area = { x: box.x + PAD, y: box.y + HEAD + (model.stale ? 14 : 0), w: box.w - 2 * PAD, h: box.h - HEAD - FOOT - (model.stale ? 14 : 0) };
+    const view2 = fitView(plan, model.floor, area.w, area.h, 12);
+    const dpr = globalThis.devicePixelRatio || 1;
+    const key = JSON.stringify([plan.slug, model.floor, area.w, area.h, dpr, model.rooms.map((r) => [r.open, r.current])]);
+    if (cache.key !== key) {
+      cache.key = key;
+      cache.rooms = drawRooms(plan, model, view2, area.w, area.h, dpr);
+    }
+    ctx.drawImage(cache.rooms, area.x, area.y, area.w, area.h);
+    ctx.save();
+    ctx.translate(area.x, area.y);
+    ctx.beginPath();
+    ctx.rect(0, 0, area.w, area.h);
+    ctx.clip();
+    const placed = [];
+    const free = (x2, y, half) => !placed.some(([px, py, ph]) => Math.abs(px - x2) < ph + half && Math.abs(py - y) < 21);
+    for (const poi of model.pois) {
+      if (poi.at[0] !== model.floor) continue;
+      let [x2, y] = toScreen(view2, poi.at[1], poi.at[2]);
+      while (!free(x2, y, 14)) x2 += 30;
+      placed.push([x2, y, 14]);
+      drawPoi(ctx, x2, y, poi);
+    }
+    for (const door of model.doors) {
+      if (door.at[0] !== model.floor) continue;
+      let [x2, y] = toScreen(view2, door.at[1], door.at[2]);
+      for (let tries = 0; tries < 6 && !free(x2, y, 28); tries += 1) y += 22;
+      placed.push([x2, y, 28]);
+      drawLock(ctx, x2, y, door);
+    }
+    const here = model.players.filter((p) => p.floor === model.floor);
+    for (const p of [...here.filter((q) => !q.me), ...here.filter((q) => q.me)]) drawPlayer(ctx, view2, p);
+    ctx.restore();
+    let x = left;
+    for (const entry of model.legend) {
+      x += text(ctx, entry.letter, x, box.y + box.h - FOOT / 2, { size: 12, weight: 900, color: entry.color }) + 5;
+      x += text(ctx, entry.name, x, box.y + box.h - FOOT / 2, { size: 12, color: C2.muted }) + 16;
+    }
+    text(ctx, M.close, right, box.y + box.h - FOOT / 2, { size: 12, color: C2.dim, align: "right" });
+  }
+  var MapOverlay = class {
+    constructor() {
+      this.host = document.createElement("bo1-coop-map");
+      const root = this.host.attachShadow({ mode: "closed" });
+      root.innerHTML = `<style>:host { all: initial; position: fixed; inset: 0; z-index: 2147483646; pointer-events: none; display: none; } canvas { width: 100%; height: 100%; display: block; }</style><canvas></canvas>`;
+      this.canvas = root.querySelector("canvas");
+      this.cache = {};
+      this.running = false;
+    }
+    mount() {
+      const attach = () => {
+        if (!this.host.isConnected) document.documentElement.append(this.host);
+      };
+      if (document.documentElement) attach();
+      else document.addEventListener("DOMContentLoaded", attach, { once: true });
+    }
+    show(session) {
+      if (this.running) return;
+      this.running = true;
+      this.host.style.display = "block";
+      const frame = () => {
+        if (!session.map.open || screen() !== "playing") {
+          session.map.open = false;
+          this.running = false;
+          this.host.style.display = "none";
+          return;
+        }
+        this.draw(session);
+        requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    }
+    draw(session) {
+      const dpr = window.devicePixelRatio || 1;
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      if (this.canvas.width !== Math.round(width * dpr) || this.canvas.height !== Math.round(height * dpr)) {
+        this.canvas.width = Math.round(width * dpr);
+        this.canvas.height = Math.round(height * dpr);
+      }
+      const ctx = this.canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this.model = mapModel(session, Date.now());
+      drawMap(ctx, width, height, this.model, session.map.plan, this.cache);
+    }
+  };
+
   // src/cheats/version.js
   var FORK_VERSION = "2.2.2.1";
 
@@ -4598,7 +5659,11 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     window.__bo1Coop = session;
     session.fun = createFun();
     session.cheats = createCheats();
+    session.map = createMap();
     installCheatsKey(session);
+    session.mapOverlay = new MapOverlay();
+    session.mapOverlay.mount();
+    installMapKey(session, session.mapOverlay);
     watchConsole(session);
     if (session.mode) keepSinglePlayer(session.room);
     hookWasm(session);
@@ -4611,7 +5676,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
         // Only while our player is in a game: then the engine takes commands and the menus own the cursor.
         engine: () => {
           const engine = session.engine;
-          return engine && session.patched && engine.connectionState() === CONNECTION.active ? { Module: engine.Module, command: (text) => engine.command(text) } : null;
+          return engine && session.patched && engine.connectionState() === CONNECTION.active ? { Module: engine.Module, command: (text2) => engine.command(text2) } : null;
         },
         canvasSize: () => {
           const canvas = document.getElementById("game");
@@ -4639,6 +5704,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       else if (session.mode === "guest") guestTick(session);
       if (session.mode) reportHidden(session);
       funTick(session);
+      mapTick(session, Date.now());
     } catch (error) {
       session.error = error.message;
       session.note(`tick failed: ${error.stack ?? error}`);
@@ -4651,9 +5717,9 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     input(8, Number(document.hidden), 0);
     session.reportedHidden = document.hidden;
   }
-  var copy = (session, text, stamp) => navigator.clipboard?.writeText(text).then(
+  var copy = (session, text2, stamp) => navigator.clipboard?.writeText(text2).then(
     () => session[stamp] = Date.now(),
-    () => session.notice = text
+    () => session.notice = text2
   );
   var reloadWithRelay = (relay) => {
     saveSetting("relay", relay);
@@ -4662,8 +5728,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
   function actions(session) {
     return {
       host: () => go(landingUrl(`coop=host&coopRoom=${createRoomCode()}${session.relayParam}`)),
-      join: (text) => {
-        const code = normalizeRoomCode(text);
+      join: (text2) => {
+        const code = normalizeRoomCode(text2);
         if (code) go(landingUrl(`coop=join&coopRoom=${code}${session.relayParam}`));
         else session.notice = T.notRoomCode;
       },
@@ -4679,8 +5745,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       openRelayGuide: () => window.open(`${RELAY_GUIDE.replace("#", LANG_QUERY)}`, "_blank", "noopener"),
       goToHost: () => moveToHost(session, "button"),
       settings: () => session.showSettings = !session.showSettings,
-      saveName: (text) => {
-        session.name = cleanName(text);
+      saveName: (text2) => {
+        session.name = cleanName(text2);
         saveSetting("name", session.name);
         session.sentPhaseAt = 0;
       },
@@ -4690,8 +5756,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
         session.showSettings = true;
         session.editRelay = true;
       },
-      saveRelay: (text) => {
-        const url = normalizeRelay(text ?? "");
+      saveRelay: (text2) => {
+        const url = normalizeRelay(text2 ?? "");
         if (url) reloadWithRelay(url === DEFAULT_RELAY ? "" : url);
         else session.notice = T.notRelay;
       },
