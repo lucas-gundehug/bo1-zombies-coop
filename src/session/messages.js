@@ -3,6 +3,7 @@ import { MAX_GUESTS } from "../../relay/src/protocol.js";
 import { currentGuns, currentHorde, currentZone, MAP_SLUGS } from "../game/page.js";
 import { send } from "../net/pump.js";
 import { followHostMap } from "./guest.js";
+import { onMapMessage } from "../map/net.js";
 import { validSeat, VERSION } from "./session.js";
 
 export function onControl(session, message) {
@@ -64,6 +65,10 @@ function onGuestMessage(session, message) {
       break;
     case "lobby":
       if (Array.isArray(message.players)) session.lobby = message;
+      break;
+    case "mapp":
+    case "maps":
+      onMapMessage(session, message);
       break;
     case "pos":
       if (Array.isArray(message.o) && message.o.length === 3 && message.o.every(Number.isFinite)) {

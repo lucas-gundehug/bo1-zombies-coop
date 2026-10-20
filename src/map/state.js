@@ -13,6 +13,8 @@ export function createMap() {
     state: null, // { v, sig, doors, rooms, box, power, at }
     planOk: false, // the state's sig matches the plan: its doors and rooms can be shown
     lastAskAt: -Infinity,
+    liveReads: 0, // live readings so far (each is forwarded to guests once)
+    sentReads: 0,
     sentStateAt: 0,
     sentStateKey: null,
   };

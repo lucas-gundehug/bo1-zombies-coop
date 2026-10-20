@@ -10,6 +10,7 @@ import { currentZone, MAP_SLUGS, screen } from "../game/page.js";
 import { floorOf } from "./plan.js";
 import { planFor } from "./plans/index.js";
 import { pushSample } from "./track.js";
+import { sendMap } from "./net.js";
 
 const LIVE_EVERY_MS = 250;
 const BITS = /^[01]*$/;
@@ -49,10 +50,11 @@ export function onMapLine(session, name, value) {
     const live = parseLive(value);
     if (!live) return;
     const numbers = new Map(funPlayers(session).map((p) => [p.slot, p.n]));
+    map.liveReads += 1;
     for (const p of live.players) {
       const n = numbers.get(p.ent);
       if (!n) continue;
-      map.live.set(n, { x: p.x, y: p.y, z: p.z, yaw: p.yaw, room: p.room, s: p.s, floor: map.plan ? floorOf(map.plan, p.z, p.x, p.y) : 0, at: now });
+      map.live.set(n, { x: p.x, y: p.y, z: p.z, yaw: p.yaw, room: p.room, s: p.s, floor: map.plan ? floorOf(map.plan, p.z, p.x, p.y) : 0, at: now, read: map.liveReads });
       if (!map.tracks.has(n)) map.tracks.set(n, []);
       pushSample(map.tracks.get(n), now, p.x, p.y, p.yaw);
     }
@@ -81,6 +83,7 @@ export function mapTick(session, now, { playing = screen() === "playing", slug =
     map.lastAskAt = now;
     askDvar(session, "cheats_map_live");
   }
+  if (session.mode === "host") sendMap(session, now);
 }
 
 const currentSlugOf = (session) => (session.mode === "guest" ? (session.hostInfo?.slug ?? null) : (MAP_SLUGS[session.zone ?? currentZone()] ?? null));

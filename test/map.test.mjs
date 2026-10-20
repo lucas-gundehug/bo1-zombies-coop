@@ -10,6 +10,7 @@ import { pushSample, sampleTrack } from "../src/map/track.js";
 import { mapModel } from "../src/map/model.js";
 import { roomName } from "../src/map/names.js";
 import { PLAYER_COLORS } from "../src/ui/card.js";
+import { onMapMessage } from "../src/map/net.js";
 
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
@@ -416,6 +417,86 @@ test("roomName reads a technical name when the table has none", () => {
   assert.equal(roomName("nacht", "foyer_zone"), "Foyer");
   assert.equal(roomName("nacht", "west_balcony_zone"), "West balcony");
   assert.equal(roomName("nacht", "labs_zone3"), "Labs 3");
+});
+
+// ---- the map to guests (src/map/net.js) ----
+
+/** A host session with a guest in the room, collecting what it sends. */
+function sendingSession() {
+  const session = hostSession();
+  session.peer = true;
+  session.sent = [];
+  session.pump = { postMessage: (m) => m.type === "send" && session.sent.push(m.message) };
+  return session;
+}
+const sentOf = (session, t) => session.sent.filter((m) => m.t === t);
+
+test("the host sends positions per reading, and the state once until it changes", () => {
+  const session = sendingSession();
+  const tick = (now) => mapTick(session, now, { playing: true, slug: "kino" });
+  onMapLine(session, "cheats_map_live", "v=1 p=0,100,-200,64,90,2,0;1,5,6,7,-45,0,1");
+  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=01 rooms=110 box=1 power=0");
+  tick(1000);
+  tick(1100); // no new reading: nothing new
+  onMapLine(session, "cheats_map_live", "v=1 p=0,110,-200,64,90,2,0;1,5,6,7,-45,0,1");
+  tick(1250);
+  assert.equal(sentOf(session, "mapp").length, 2);
+  assert.deepEqual(sentOf(session, "mapp")[1].p, [
+    [1, 110, -200, 64, 90, 2, 0],
+    [2, 5, 6, 7, -45, 0, 1],
+  ]);
+  assert.deepEqual(sentOf(session, "maps"), [{ t: "maps", slug: "kino", sig: "z3d2", doors: "01", rooms: "110", box: [1], power: 0 }]);
+  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=11 rooms=111 box=1 power=0");
+  tick(1500);
+  assert.equal(sentOf(session, "maps").length, 2);
+  tick(6600);
+  assert.equal(sentOf(session, "maps").length, 3, "repeated after 5 s");
+});
+
+test("nothing is sent while no guest is in the room", () => {
+  const session = sendingSession();
+  session.peer = false;
+  onMapLine(session, "cheats_map_live", "v=1 p=0,100,-200,64,90,2,0");
+  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=01 rooms=110 box=1 power=0");
+  mapTick(session, 1000, { playing: true, slug: "kino" });
+  assert.deepEqual(session.sent, []);
+});
+
+/** A guest (seat 1) in the same map as the host. */
+function guestSession() {
+  const session = hostSession();
+  Object.assign(session, { mode: "guest", seat: 1, name: "jonas", cheats: { ok: null } });
+  return session;
+}
+
+test("a guest fills its map from the host's messages", () => {
+  const session = guestSession();
+  onMapMessage(session, { t: "mapp", p: [[1, 100, -200, 64, 90, 0, 0], [2, 5, 6, 200, -45, 2, 1]] });
+  assert.deepEqual([...session.map.tracks.keys()], [1, 2]);
+  assert.equal(session.map.live.get(2).floor, 1);
+  onMapMessage(session, { t: "maps", slug: "kino", sig: "z3d2", doors: "01", rooms: "110", box: [1], power: 1 });
+  assert.equal(session.map.planOk, true);
+  assert.deepEqual(session.map.state.doors, [false, true]);
+  assert.equal(session.map.state.power, true);
+});
+
+test("a guest ignores malformed map messages whole", () => {
+  const session = guestSession();
+  for (const p of [[[1, 2, 3, 4, 5]], [[1, NaN, 3, 4, 5, 6, 0]], [[7, 1, 2, 3, 4, 5, 0]], [[1, 1, 1, 1, 1, 1, 0], [1, 1, 1, 1, 1, 1, 0], [2, 1, 1, 1, 1, 1, 0], [3, 1, 1, 1, 1, 1, 0], [4, 1, 1, 1, 1, 1, 0]], "x"]) {
+    onMapMessage(session, { t: "mapp", p });
+  }
+  assert.equal(session.map.live.size, 0);
+  onMapMessage(session, { t: "maps", slug: "atlantis", sig: "z3d2", doors: "01", rooms: "110", box: [1], power: 0 });
+  onMapMessage(session, { t: "maps", slug: "kino", sig: "z3d2", doors: "0x", rooms: "110", box: [1], power: 0 });
+  onMapMessage(session, { t: "maps", slug: "kino", sig: "z3d2", doors: "01", rooms: "110", box: [1, 2, 3, 4, 5, 6, 7, 8, 9], power: 0 });
+  assert.equal(session.map.state, null);
+});
+
+test("map messages stay small", () => {
+  const p = [1, 2, 3, 4].map((n) => [n, -12345, 23456, -789, -179, 22, 1]);
+  assert.ok(JSON.stringify({ t: "mapp", p }).length < 1000);
+  const bits = "01".repeat(32);
+  assert.ok(JSON.stringify({ t: "maps", slug: "shangrila", sig: "z64d64", doors: bits, rooms: bits, box: [1, 2, 3, 4, 5, 6, 7, 8], power: 1 }).length < 1000);
 });
 
 let failed = 0;
