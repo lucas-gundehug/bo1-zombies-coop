@@ -3,7 +3,7 @@
   "name": "BO1 Zombies Co-op + Cheats for vel.gg",
   "short_name": "BO1 Zombies Co-op",
   "version": "2.2.2.4",
-  "description": "Play Black Ops 1 Zombies in the browser (vel.gg) with up to 4 players: direct co-op, a cheat menu (M), an in-game map (N) and controller support.",
+  "description": "Play Black Ops 1 Zombies in the browser (vel.gg) with up to 4 players: direct co-op, a cheat menu (N), an in-game map (M) and controller support.",
   "homepage_url": "https://github.com/lucas-gundehug/bo1-zombies-coop#readme",
   "icons": {
     "16": "icons/icon16.png",

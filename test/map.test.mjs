@@ -834,30 +834,30 @@ test("the minimap cuts a square around the player out of the floor drawing", () 
   assert.deepEqual(minimapWindow(layer, 1000, 2000, 200), { sx: 500, sy: 100, size: 200 });
 });
 
-// ---- the N key (src/map/hotkey.js) ----
+// ---- the M key (src/map/hotkey.js) ----
 
 const key = (code, extra = {}) => ({ code, repeat: false, ctrlKey: false, altKey: false, metaKey: false, composedPath: () => [{ tagName: "CANVAS" }], ...extra });
 
-test("N in a game toggles the map", () => {
+test("M in a game toggles the map", () => {
   const session = hostSession();
-  assert.equal(onMapKey(session, key("KeyN"), { playing: true }), true);
+  assert.equal(onMapKey(session, key("KeyM"), { playing: true }), true);
   assert.equal(session.map.open, true);
   assert.ok(session.map.openedAt > 0);
-  assert.equal(onMapKey(session, key("KeyN"), { playing: true }), true);
+  assert.equal(onMapKey(session, key("KeyM"), { playing: true }), true);
   assert.equal(session.map.open, false);
 });
 
-test("N is left alone outside a game, with modifiers, repeated, or typed into a field", () => {
+test("M is left alone outside a game, with modifiers, repeated, or typed into a field", () => {
   const session = hostSession();
   const cases = [
-    [key("KeyN"), false],
-    [key("KeyN", { ctrlKey: true }), true],
-    [key("KeyN", { altKey: true }), true],
-    [key("KeyN", { metaKey: true }), true],
-    [key("KeyN", { repeat: true }), true],
-    [key("KeyN", { composedPath: () => [{ tagName: "INPUT" }] }), true],
-    [key("KeyN", { composedPath: () => [{ tagName: "DIV", isContentEditable: true }] }), true],
-    [key("KeyM"), true],
+    [key("KeyM"), false],
+    [key("KeyM", { ctrlKey: true }), true],
+    [key("KeyM", { altKey: true }), true],
+    [key("KeyM", { metaKey: true }), true],
+    [key("KeyM", { repeat: true }), true],
+    [key("KeyM", { composedPath: () => [{ tagName: "INPUT" }] }), true],
+    [key("KeyM", { composedPath: () => [{ tagName: "DIV", isContentEditable: true }] }), true],
+    [key("KeyN"), true],
   ];
   for (const [event, playing] of cases) assert.equal(onMapKey(session, event, { playing }), false);
   assert.equal(session.map.open, false);

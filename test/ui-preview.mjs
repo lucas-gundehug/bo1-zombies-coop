@@ -88,7 +88,7 @@ const scenes = [
     stats: { rtt: 38, rtts: { 1: 38 } } } } },
 ];
 
-// Fork: the in-game map (N), staged from a bundled plan: three players in three open rooms, the rest closed.
+// Fork: the in-game map (M), staged from a bundled plan: three players in three open rooms, the rest closed.
 const stageMap = ({ plan, players, mini }) => {
   const c = window.__bo1Coop;
   const later = Date.now() + 3600e3; // samples "from the future" never go stale while the shot is taken
@@ -151,6 +151,10 @@ const readmeScenes = [
     clients: [1, 2].map((slot) => ({ slot, state: 5, loopback: true, port: 2405 + slot })), guests: friends.slice(0, 2),
     fun: { open: true, notice: "Health 200% for Jonas.", noticeAt: Date.now() + 3600e3, timescale: 1, jump: 39, gravity: 800, players: {} },
     stats: { rtt: 12, rtts: { 1: 12, 2: 18 } } } } },
+  { name: "readme-settings", from: "Cheat menu", run: { screen: "ready", coop: {
+    set: { zone: "zombie_theater", name: "Lucas", peer: true, showSettings: true, directSetting: true, relay: "https://bo1z-coop-4p-relay.allanlotta.workers.dev", cheats: { enabled: true, ok: true, ready: true, round: 12, frozen: false, power: true, horde: false, target: 0, ...cheatLists } },
+    clients: [1].map((slot) => ({ slot, state: 5, loopback: true, port: 2405 + slot })), guests: friends.slice(0, 1),
+    stats: { rtt: 12, rtts: { 1: 12 } } } } },
   { name: "readme-fun", from: "Players", to: "Give to", run: { screen: "ready", coop: {
     set: { zone: "zombie_theater", name: "Lucas", peer: true, cheats: { enabled: true, ok: true, ready: true, round: 12, frozen: false, power: true, horde: false, target: 1, ...cheatLists } },
     clients: [1, 2].map((slot) => ({ slot, state: 5, loopback: true, port: 2405 + slot })), guests: friends.slice(0, 2),

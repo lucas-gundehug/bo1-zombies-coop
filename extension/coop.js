@@ -1715,10 +1715,39 @@
     while (trail.length && pos.at - trail[0].at > TRAIL_MS) trail.shift();
   }
 
+  // src/net/direct-setting.js
+  var D = {
+    connection: "Connection",
+    direct: "Direct",
+    relayOnly: "Relay only",
+    useRelayOnly: "Use the relay only",
+    useDirect: "Use direct links",
+    note: "Direct links play smoother and spare the relay, but the players can see each other's IP address. With the relay only, just the relay sees it.",
+    reload: "Reload the page to apply."
+  };
+  var directAllowed = () => readSetting("direct", "1") !== "0";
+  function directSettingBlocks(session) {
+    const direct = session.directSetting !== false;
+    return [
+      { kind: "kv", items: [[D.connection, direct ? D.direct : D.relayOnly]] },
+      { kind: "text", cls: "muted small", text: D.note },
+      { kind: "buttons", buttons: [{ act: "directSetting", label: direct ? D.useRelayOnly : D.useDirect, style: "ghost" }] }
+    ];
+  }
+  function directSettingActions(session, save = saveSetting) {
+    return {
+      directSetting: () => {
+        session.directSetting = session.directSetting === false;
+        save("direct", session.directSetting ? "1" : "0");
+        session.notice = D.reload;
+      }
+    };
+  }
+
   // src/net/direct.js
   var ICE_SERVERS = Object.freeze([{ urls: "stun:stun.cloudflare.com:3478" }, { urls: "stun:stun.l.google.com:19302" }]);
-  function createDirect(session, { RTCPeerConnection = globalThis.RTCPeerConnection, now = Date.now } = {}) {
-    const enabled = globalThis.__bo1CoopDirect !== false && typeof RTCPeerConnection === "function";
+  function createDirect(session, { RTCPeerConnection = globalThis.RTCPeerConnection, now = Date.now, allowed = directAllowed() } = {}) {
+    const enabled = allowed && globalThis.__bo1CoopDirect !== false && typeof RTCPeerConnection === "function";
     const hosting = () => session.mode === "host";
     const links = /* @__PURE__ */ new Map();
     let attempt = 0;
@@ -1989,8 +2018,8 @@
     turnOn: "Turn on",
     turnOff: "Turn off",
     reload: "Reload the page to apply.",
-    note: "Weapons, perks, power-ups and rounds in Fun mode, and the map (press N in a game). The cheat menu needs only the host; to see the map, friends need this version too. Turning it off also turns off the map. In a game, press M to open the cheat menu without pausing; click the game to go back.",
-    keyTip: "Tip: press M in game to open this card without pausing; click the game to go back.",
+    note: "Weapons, perks, power-ups and rounds in Fun mode, and the map (press M in a game). The cheat menu needs only the host; to see the map, friends need this version too. Turning it off also turns off the map. In a game, press N to open the cheat menu without pausing; click the game to go back.",
+    keyTip: "Tip: press N in game to open this card without pausing; click the game to go back.",
     failed: "The cheat menu could not load in this game, so Fun mode works as before. Reload the page to try again.",
     everyone: "Everyone",
     player: "that player",
@@ -4982,10 +5011,10 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     waiting: "Waiting for the map…",
     noData: "No map in this game. The host needs this version of the extension, with the cheat menu on.",
     stale: "This level changed since its map was made, so doors aren't shown.",
-    close: "N to close",
+    close: "M to close",
     youAreIn: "You are in",
     minimap: "Minimap",
-    minimapNote: "A small map in the top left corner of the game, with the room you're in. N still opens the big map.",
+    minimapNote: "A small map in the top left corner of the game, with the room you're in. M still opens the big map.",
     on: "On",
     off: "Off",
     turnOn: "Turn on",
@@ -5518,7 +5547,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       { kind: "kv", items: [[C.setting, on ? C.on : C.off]] },
       { kind: "text", cls: "muted small", text: C.note },
       { kind: "buttons", buttons: [{ act: "cheatsSetting", label: on ? C.turnOff : C.turnOn, style: "ghost" }] },
-      ...minimapSettingBlocks(session)
+      ...minimapSettingBlocks(session),
+      ...directSettingBlocks(session)
     ];
   }
   function cheatsSettingActions(session) {
@@ -5528,7 +5558,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
         saveSetting("cheats", session.cheats.enabled ? "1" : "0");
         session.notice = C.reload;
       },
-      ...minimapActions(session)
+      ...minimapActions(session),
+      ...directSettingActions(session)
     };
   }
 
@@ -6378,7 +6409,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
   var relayButtons = () => [{ act: "openRelayGuide", label: T.relayGuide }, { act: "editRelayNow", label: T.relayHaveOne, style: "ghost" }];
 
   // src/cheats/hotkey.js
-  var KEY2 = "KeyM";
+  var KEY2 = "KeyN";
   function onCheatsKey(session, event, { playing, available, freeMouse, lockMouse }) {
     if (event.code !== KEY2 || event.repeat || event.ctrlKey || event.altKey || event.metaKey) return false;
     const target2 = event.composedPath?.()[0];
@@ -6475,7 +6506,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
   }
 
   // src/map/hotkey.js
-  var KEY3 = "KeyN";
+  var KEY3 = "KeyM";
   function onMapKey(session, event, { playing }) {
     if (event.code !== KEY3 || event.repeat || event.ctrlKey || event.altKey || event.metaKey) return false;
     const target2 = event.composedPath?.()[0];
@@ -6555,6 +6586,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     session.cheats = createCheats();
     session.map = createMap();
     session.map.minimap = minimapEnabled();
+    session.directSetting = directAllowed();
     installCheatsKey(session);
     session.mapOverlay = new MapOverlay();
     session.mapOverlay.mount();
