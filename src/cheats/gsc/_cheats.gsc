@@ -24,6 +24,7 @@ main_end()
 	SetDvar( "cheats_results", "" );
 	level thread cheats_round_tracker();
 	level thread cheats_main();
+	level thread maps\cheats\_map::map_main();
 }
 
 cheats_main()
@@ -191,6 +192,9 @@ cheats_handle( cmd )
 		break;
 	case "clear":
 		result = cheats_clear();
+		break;
+	case "mapdoor":
+		result = maps\cheats\_map::map_open_door( int( target ) );
 		break;
 	default:
 		result = cheats_for_players( action, target, arg );

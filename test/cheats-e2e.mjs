@@ -322,6 +322,65 @@ const scenarios = {
       await wait(4000);
     }
   },
+  // The map's side of the game script (src/cheats/gsc/_map.gsc): live data, door state, the one-off dump.
+  async "map-script"() {
+    await setCheats(true);
+    await startMap();
+    assert.ok(await waitReady(), "ready");
+    await until((s) => s.lists >= 1, 30000, "lists published");
+    const live = async () => {
+      const value = (await readDvar("cheats_map_live")) ?? "";
+      const v = Number(value.match(/^v=(\d+)/)?.[1] ?? NaN);
+      const players = (value.match(/ p=(.*)$/)?.[1] ?? "").split(";").filter(Boolean).map((e) => e.split(",").map(Number));
+      return { v, players };
+    };
+    const end = Date.now() + 10000;
+    let me = null;
+    while (Date.now() < end && !me) {
+      me = (await live()).players.find((p) => p[0] === 0 && p.length === 7 && p[5] >= 0 && p[6] === 0) ?? null;
+      if (!me) await wait(500);
+    }
+    log("live, player 0:", JSON.stringify(me));
+    assert.ok(me, "player 0 in cheats_map_live with a room, alive");
+    const mapState = async () => {
+      const value = (await readDvar("cheats_map_state")) ?? "";
+      return Object.fromEntries(value.split(" ").filter(Boolean).map((pair) => pair.split("=")));
+    };
+    const before = await mapState();
+    log("map state:", JSON.stringify(before));
+    const [, rooms, doors] = before.sig?.match(/^z(\d+)d(\d+)$/) ?? [];
+    assert.ok(Number(rooms) >= 1, `sig ${before.sig}`);
+    assert.equal(before.doors?.length ?? 0, Number(doors), "one door bit per door");
+    assert.equal(before.rooms?.length, Number(rooms), "one room bit per room");
+    // MAPDOOR=<i> opens another door than the first (a debris pile on Five: 8)
+    const door = Number(process.env.MAPDOOR ?? 0);
+    if (Number(doors) > door) {
+      const v0 = (await live()).v;
+      assert.equal((await run(`mapdoor ${door}`)).ok, true, `mapdoor ${door}`);
+      const doorEnd = Date.now() + 5000;
+      let after = null;
+      while (Date.now() < doorEnd) {
+        const { v } = await live();
+        after = await mapState();
+        if (v > v0 && after.doors[door] === "1") break;
+        await wait(300);
+      }
+      log(`after mapdoor ${door}:`, JSON.stringify(after));
+      assert.equal(after.doors[door], "1", `door ${door} open`);
+    }
+    await command("set cheats_map_dump 1");
+    let count = 0;
+    for (let i = 0; i < 20 && !count; i += 1) {
+      count = Number(await readDvar("cheats_map_dump_count", 2000)) || 0;
+      if (!count) await wait(1000);
+    }
+    assert.ok(count > 0, "dump chunks");
+    for (let i = 0; i < count; i += 1) {
+      const chunk = await readDvar(`cheats_map_dump_${i}`);
+      assert.ok(chunk && chunk.length < 400, `dump chunk ${i}: ${chunk?.length}`);
+    }
+    log("dump chunks:", count);
+  },
   async load() {
     await setCheats(true);
     await startMap();
