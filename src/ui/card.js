@@ -172,6 +172,7 @@ export class Card {
             const bars = el("span", `bars q${p.ping < 80 ? 3 : p.ping < 180 ? 2 : 1}`);
             bars.append(el("i"), el("i"), el("i"));
             ping.append(bars, el("span", "", `${p.ping} ms`));
+            if (p.path) ping.append(el("span", "path", p.path));
             row.append(ping);
           }
           list.append(row);

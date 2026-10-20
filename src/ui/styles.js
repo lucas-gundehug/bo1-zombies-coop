@@ -50,6 +50,7 @@ button.icon:hover { background: var(--bg3); color: var(--fg); }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex: none; }
 .dot.ok { background: var(--ok); } .dot.wait { background: var(--wait); animation: pulse 1.6s ease-in-out infinite; } .dot.bad { background: var(--bad); }
 .ping { flex: none; text-align: right; font: 600 11px ui-monospace, Menlo, monospace; color: var(--muted); display: grid; justify-items: end; gap: 2px; }
+.ping .path { font: 500 10px system-ui, sans-serif; color: var(--dim); }
 .bars { display: flex; gap: 2px; align-items: flex-end; height: 10px; }
 .bars i { width: 3px; border-radius: 1px; background: var(--line); }
 .bars i:nth-child(1) { height: 4px; } .bars i:nth-child(2) { height: 7px; } .bars i:nth-child(3) { height: 10px; }

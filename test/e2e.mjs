@@ -12,6 +12,12 @@
 // GUEST_EXT=<folder> gives the guests another build than the host (the public release while the host runs this fork).
 // CHEATS=1 (fork): once everyone is in, the host gives the first guest a Ray Gun and Juggernog through the cheat menu.
 //
+// Direct links (fork): guests connect to the host directly and the run checks that each guest is "direct" once
+// everyone is in. NODIRECT=<2,3|all> makes those players (by number, host = 1) skip direct links and use the relay only.
+// DROP_DIRECT_S=<s> drops the first guest's direct link that many seconds into the soak: it must go on over the relay
+// and be direct again by the end. RELAY_DOWN_S=<s> cuts every player off the relay that many seconds into the soak: a
+// game whose guests are direct must go on. The end of the run prints each player's relay traffic.
+//
 // LITE=1 is easy on the machine: one browser and one profile for everyone (the map pack is downloaded and stored once,
 // and later runs reuse it), small windows, vel.gg's low graphics quality at half resolution, no sound, and the game
 // capped at LITE_FPS (default 30) frames per second.
@@ -25,6 +31,8 @@ const PLAYERS = Number(process.argv[2] ?? 2);
 const MAP = process.argv[3] ?? "nacht";
 const RELAY = process.argv[4] ?? "http://127.0.0.1:8787";
 const OUT = process.env.OUT ?? "/tmp/bo1-e2e";
+// Browser profiles: <PROFILE>-lite, or <PROFILE>-<n> per player. A separate PROFILE keeps two test runs apart.
+const PROFILE = process.env.PROFILE ?? "/tmp/bo1-e2e-profile";
 const HOLD_MS = Number(process.env.HOLD_S ?? 0) * 1000;
 const GUEST_DELAY_MS = Number(process.env.GUEST_DELAY_S ?? 0) * 1000;
 const GUEST_FIRST_MS = process.env.GUEST_FIRST_S == null ? null : Number(process.env.GUEST_FIRST_S) * 1000;
@@ -34,6 +42,10 @@ const VIEWPORT = LITE ? { width: 400, height: 300 } : { width: 800, height: 450 
 // On the game, clear of the co-op card (top right; in the small LITE window it covers all but a strip on the left).
 const CLICK = LITE ? [30, 200] : [150, 300];
 const DEADLINE = Date.now() + Number(process.env.DEADLINE_MIN ?? 10) * 60000;
+const NODIRECT = (process.env.NODIRECT ?? "").split(",").map((v) => v.trim()).filter(Boolean);
+const relayOnly = (i) => NODIRECT.includes("all") || NODIRECT.includes(String(i + 1));
+const DROP_DIRECT_S = process.env.DROP_DIRECT_S == null ? null : Number(process.env.DROP_DIRECT_S);
+const RELAY_DOWN_S = process.env.RELAY_DOWN_S == null ? null : Number(process.env.RELAY_DOWN_S);
 
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(OUT, { recursive: true });
@@ -97,7 +109,7 @@ async function launch(i) {
   let context;
   let page;
   if (LITE) {
-    shared ??= await openContext("/tmp/bo1-e2e-profile-lite", i);
+    shared ??= await openContext(`${PROFILE}-lite`, i);
     context = shared;
     // A new page would be a background tab of the same window, which gets no input: each player is a popup window,
     // opened without an opener so it runs in its own renderer process (and thread) instead of sharing the host's.
@@ -109,9 +121,11 @@ async function launch(i) {
       await page.setViewportSize(VIEWPORT);
     }
   } else {
-    context = await openContext(`/tmp/bo1-e2e-profile-${i}`, i);
+    context = await openContext(`${PROFILE}-${i}`, i);
     page = context.pages()[0] ?? (await context.newPage());
   }
+  // src/net/direct.js reads this before the session starts.
+  if (relayOnly(i)) await page.addInitScript(() => (globalThis.__bo1CoopDirect = false));
   const logFile = `${OUT}/p${i + 1}.console.log`;
   page.on("console", (m) => fs.appendFileSync(logFile, `${m.text()}\n`));
   page.on("pageerror", (e) => fs.appendFileSync(logFile, `PAGEERROR ${e.message}\n`));
@@ -149,7 +163,9 @@ const snapshot = (player) =>
           return { avg: Math.round((1000 * f.intervals.length) / total), worstMs: Math.round(Math.max(...f.intervals)) };
         })(),
         pace: (() => { const v = (window.five?.views ?? []).filter((x) => x.ms > performance.now() - 3000); return v.length > 1 ? +((v.at(-1).engineMs - v[0].engineMs) / (v.at(-1).ms - v[0].ms)).toFixed(2) : null; })(),
+        path: s.mode === "host" ? [1, 2, 3].map((n) => `${n}:${s.direct?.state(n) ?? "-"}`).join(" ") : s.direct?.state(0) ?? null,
         stats: s.stats && { in: s.stats.packetsIn, out: s.stats.packetsOut, rtt: s.stats.rtt && Math.round(s.stats.rtt), lost: s.stats.lost },
+        relay: s.stats && { binOut: s.stats.framesOut, binIn: s.stats.framesIn, textOut: s.stats.textOut, textIn: s.stats.textIn },
       };
     })
     .catch((error) => ({ unreachable: String(error.message).slice(0, 80) }));
@@ -170,7 +186,7 @@ let allConnectedAt = 0;
 while (Date.now() < DEADLINE) {
   for (const p of players) {
     p.s = await snapshot(p);
-    const key = JSON.stringify({ ...p.s, stats: undefined });
+    const key = JSON.stringify({ ...p.s, stats: undefined, relay: undefined });
     if (key !== last[p.name]) log(p.name.padEnd(4), (last[p.name] = key));
     if (LITE && !p.capped && ["ready", "playing"].includes(p.s?.screen)) {
       p.capped = await p.page.evaluate((fps) => window.__bo1Coop.engine?.command(`com_maxfps ${fps}`) ?? false, LITE_FPS).catch(() => false);
@@ -244,8 +260,40 @@ async function walkCheck(when) {
   return !stuck.length && !overlapping.length;
 }
 
+/** Each guest's path against what this run expects of it. */
+async function pathCheck(when, expectDirect = (g) => !relayOnly(g.i)) {
+  let good = true;
+  for (const g of guests) {
+    const s = await snapshot(g);
+    const want = expectDirect(g) ? "direct" : "relay";
+    log(`${g.name} path ${when}: ${s?.path} (want ${want})`);
+    if (s?.path !== want) good = false;
+  }
+  return good;
+}
+
+/** Every guest still in the game and present for the host. */
+async function stillPlaying(when) {
+  const h = await snapshot(host);
+  const broken = [];
+  for (const g of guests) {
+    const s = await snapshot(g);
+    if (s?.error || s?.phase !== "connected" || s?.screen !== "playing") broken.push(`${g.name}:${s?.screen}/${s?.phase}/${s?.error ?? ""}`);
+    if (!(h?.guests ?? "").includes(`${g.s?.seat}:in`)) broken.push(`${g.name}:not present for the host`);
+  }
+  log(broken.length ? `FAIL ${when}: ${broken.join(" ")}` : `ok  ${when}: everyone still playing`);
+  return broken.length === 0;
+}
+
 let ok = allIn;
 if (allIn) {
+  // A direct link opens within seconds of the guest's introduction; give the slowest a moment.
+  for (let k = 0; k < 15 && guests.some((g) => !relayOnly(g.i)); k += 1) {
+    const paths = await Promise.all(guests.map(async (g) => (await snapshot(g))?.path));
+    if (guests.every((g, n) => paths[n] === (relayOnly(g.i) ? "relay" : "direct"))) break;
+    await wait(1000);
+  }
+  if (!(await pathCheck("once everyone is in"))) ok = false;
   await wait(4000);
   // The host walks a few steps: a guest that spawned far away is then sent to a spot the host walked over.
   await host.page.keyboard.down("s");
@@ -258,7 +306,7 @@ if (allIn) {
   await wait(3000);
   if (!(await walkCheck("after going to the host"))) ok = false;
   for (const g of guests) {
-    const lobby = await g.page.evaluate(() => window.__bo1Coop.lobby?.players?.map((p) => `${p.n}:${p.status}${p.ping != null ? `:${p.ping}ms` : ""}`));
+    const lobby = await g.page.evaluate(() => window.__bo1Coop.lobby?.players?.map((p) => `${p.n}:${p.status}${p.ping != null ? `:${p.ping}ms` : ""}${p.path ? `:${p.path}` : ""}`));
     log(`${g.name} sees the lobby`, JSON.stringify(lobby));
   }
   if (process.env.CHEATS && guests.length) {
@@ -343,12 +391,37 @@ if (allIn) {
       log("guests: set hud_missionFailed 0");
     }
     if (process.env.GAMEOVER && k === 75) await host.page.evaluate(() => window.__bo1Coop.engine.command("timescale 1"));
+    if (DROP_DIRECT_S != null && guests.length && k === DROP_DIRECT_S) {
+      await guests[0].page.evaluate(() => window.__bo1Coop.direct.drop(0));
+      log(`${guests[0].name}: direct link dropped`);
+    }
+    if (DROP_DIRECT_S != null && guests.length && k === DROP_DIRECT_S + 2) {
+      if (!(await pathCheck("2 s after the drop", (g) => g !== guests[0] && !relayOnly(g.i)))) ok = false;
+      if (!(await stillPlaying("2 s after the drop"))) ok = false;
+    }
+    if (RELAY_DOWN_S != null && k === RELAY_DOWN_S) {
+      for (const p of players) await p.page.evaluate(() => window.__bo1Coop.pump.postMessage({ type: "relay-down" }));
+      log("relay cut for every player");
+    }
     // DIAG="dvar dvar ...": every player prints these to its console log (pN.console.log) every few seconds.
     if (process.env.DIAG && k % every === 0) for (const p of players) await p.page.evaluate((d) => window.__bo1Coop.engine.command(d), process.env.DIAG.split(/\s+/).join(";")).catch(() => {});
     if (k % every === every - 1) {
       for (const p of players) log(p.name.padEnd(4), JSON.stringify(await snapshot(p)));
       if (process.env.GAMEOVER) for (const p of players) await p.page.screenshot({ path: `${OUT}/${p.name}-${k + 1}s.png` }).catch(() => {});
     }
+  }
+}
+
+if (allIn) {
+  if (!(await stillPlaying("at the end"))) ok = false;
+  if (DROP_DIRECT_S != null && !(await pathCheck("at the end"))) ok = false;
+  if (RELAY_DOWN_S != null) {
+    const h = await snapshot(host);
+    log(`relay after the cut: host socket ${await host.page.evaluate(() => window.__bo1Coop.socket)}, guests ${h?.guests}`);
+  }
+  for (const p of players) {
+    const s = await snapshot(p);
+    log(`${p.name.padEnd(4)} relay traffic: bin out/in ${s?.relay?.binOut}/${s?.relay?.binIn}, text out/in ${s?.relay?.textOut}/${s?.relay?.textIn}; packets out/in ${s?.stats?.out}/${s?.stats?.in}, ping ${s?.stats?.rtt} ms`);
   }
 }
 
