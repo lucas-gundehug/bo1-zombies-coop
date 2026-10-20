@@ -2,7 +2,7 @@
 // under them, north up, with the room they are in written along the top. It draws from the same model as the big map
 // (src/map/model.js): the rooms of the player's floor are drawn once into a cached canvas at a fixed scale, and each
 // frame the square around the player is copied out of it, with doors, icons and players on top. On in every game
-// unless turned off in the card's settings; hidden while the big map (N) is open.
+// unless turned off in the card's settings; hidden while the big map (M) is open.
 import { latestView, screen } from "../game/page.js";
 import { readSetting, saveSetting } from "../util/settings.js";
 import { mapModel } from "./model.js";

@@ -22,9 +22,9 @@ start (`src/session/hooks.js` → `src/cheats/setup.js`) the extension writes `m
 `mods/_stack` into the pack folder the engine's `fs_b` names (OPFS), and appends `cheats` to `fs_mods` (never for a
 guest, and after `prepareHost` captured the settings guests copy). `src/cheats/gsc/_cheats.gsc` polls the `cheats_cmd`
 dvar and publishes `cheats_*` dvars; `src/cheats/bridge.js` reads them by sending the dvar's name as a console command
-and catching the engine's `"name" is: "value^7"` print in `console.log`. M opens the card without pausing
-(`src/cheats/hotkey.js`): vel.gg presses Escape for the game whenever it sees the pointer lock lost, so the one unlock M
-causes is hidden from it. Health levels (100–500 %, `health <target> <pct>`) multiply the player's own `maxhealth`
+and catching the engine's `"name" is: "value^7"` print in `console.log`. N opens the card without pausing
+(`src/cheats/hotkey.js`): vel.gg presses Escape for the game whenever it sees the pointer lock lost, so the one unlock N
+causes is hidden from it. (The keys were swapped in 2.2.2.5 at Lucas's request: M was the cheat menu, N the map.) Health levels (100–500 %, `health <target> <pct>`) multiply the player's own `maxhealth`
 (100, or Juggernog's 250); `cheats_health_loop` notices when the game resets it (a perk, a revive, a respawn) and puts
 the level back on top.
 
@@ -46,7 +46,7 @@ says which seats are direct.
 
 ## The map in one paragraph
 
-N in a game opens the map panel (`src/map/`) without pausing and without taking the mouse (`src/map/hotkey.js`; a canvas
+M in a game opens the map panel (`src/map/`) without pausing and without taking the mouse (`src/map/hotkey.js`; a canvas
 in its own shadow root, `src/map/overlay.js`). The same mod's `src/cheats/gsc/_map.gsc` captures the rooms
 (`level.zones`), the door and debris triggers and the box spots once, in one order, when the lists are published, and
 publishes `cheats_map_live` (every player, every 0.25 s) and `cheats_map_state` (doors, rooms, box, power; its counter
@@ -72,7 +72,7 @@ square around the player out of a cached drawing of the floor each frame and hid
   mid-game; the end prints each player's relay traffic. Use your own `PROFILE=/tmp/<name>` and a relay on its own port
   (`npx wrangler dev --config relay/wrangler.jsonc --port <port>`) when another session may be testing too.
 - In the real game (Playwright, downloads the map once per profile): `node test/cheats-e2e.mjs kino actions` (every
-  command), `kino ui` (M and the card's buttons), `kino load` / `kino off`, `<map> sweep` (everything once on a map),
+  command), `kino ui` (N and the card's buttons), `kino load` / `kino off`, `<map> sweep` (everything once on a map),
   `HORDE=1` for Hell mode. `PROFILE=<dir>` reuses a browser profile with the packs already downloaded. The map:
   `<map> map-script` (the script's data; `MAPDOOR=8` on Five opens a debris pile), `<map> map` (N, a door opening,
   smoothness), `kino health` (levels and Juggernog stacking, read from entity memory), and in co-op `MAP=1 node test/e2e.mjs 2 kino` (the guest's map, the host's dot gliding).

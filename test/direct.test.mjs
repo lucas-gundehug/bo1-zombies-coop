@@ -172,6 +172,7 @@ test("fromDirect: the host stamps the link's seat over anything the peer claims"
 globalThis.document ??= { documentElement: { dataset: {} } };
 globalThis.location ??= { search: "", pathname: "/bsz/kino", href: "https://vel.gg/bsz/kino", origin: "https://vel.gg" };
 const { createDirect, ICE_SERVERS } = await import("../src/net/direct.js");
+const { directSettingActions, directSettingBlocks } = await import("../src/net/direct-setting.js");
 const { onControl, relayClosed } = await import("../src/session/messages.js");
 
 class FakePc {
@@ -368,6 +369,45 @@ test("guest: the host stays present over the direct link when the relay goes", a
   report(session, direct, 0, false);
   assert.equal(session.peer, false);
   assert.ok(session.hostLeftAt > 0);
+});
+
+test("guest who chose relay only: never offers, and reports the relay", async () => {
+  const session = fakeSession("guest");
+  FakePc.all = [];
+  const direct = createDirect(session, { RTCPeerConnection: FakePc, now: () => 1000, allowed: false });
+  direct.tick();
+  await settle();
+  direct.tick();
+  await settle();
+  assert.equal(FakePc.all.length, 0);
+  assert.deepEqual(sent(session, "rtc-offer"), []);
+  assert.equal(direct.state(0), "relay");
+});
+
+test("host who chose relay only: leaves offers unanswered, so its guests play over the relay", async () => {
+  const session = fakeSession("host");
+  FakePc.all = [];
+  const direct = createDirect(session, { RTCPeerConnection: FakePc, now: () => 1000, allowed: false });
+  direct.onSignal({ t: "rtc-offer", n: 1, sdp: "offer-sdp", from: 2 });
+  await settle();
+  assert.equal(FakePc.all.length, 0);
+  assert.deepEqual(sent(session, "rtc-answer"), []);
+  assert.equal(direct.state(2), "relay");
+});
+
+test("the Connection setting switches between direct and relay only, saved for the next page load", () => {
+  const saved = {};
+  const session = { directSetting: true, notice: null };
+  const actions = directSettingActions(session, (key, value) => (saved[key] = value));
+  const row = () => directSettingBlocks(session).find((b) => b.kind === "kv").items[0];
+  assert.deepEqual(row(), ["Connection", "Direct"]);
+  actions.directSetting();
+  assert.equal(saved.direct, "0");
+  assert.deepEqual(row(), ["Connection", "Relay only"]);
+  assert.match(session.notice, /reload/i);
+  actions.directSetting();
+  assert.equal(saved.direct, "1");
+  assert.deepEqual(row(), ["Connection", "Direct"]);
 });
 
 test("host: answers a guest's offer on that guest's own link", async () => {

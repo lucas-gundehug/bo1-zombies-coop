@@ -22,6 +22,7 @@ import { mapTick } from "./map/live.js";
 import { installMapKey } from "./map/hotkey.js";
 import { MapOverlay } from "./map/overlay.js";
 import { Minimap, minimapEnabled } from "./map/minimap.js";
+import { directAllowed } from "./net/direct-setting.js";
 import { cleanName, guestIdFor, saveSetting } from "./util/settings.js";
 import { checkForUpdate, RELAY_GUIDE } from "./util/updates.js";
 
@@ -40,6 +41,7 @@ function start() {
   session.cheats = createCheats();
   session.map = createMap();
   session.map.minimap = minimapEnabled();
+  session.directSetting = directAllowed();
   installCheatsKey(session);
   session.mapOverlay = new MapOverlay();
   session.mapOverlay.mount();

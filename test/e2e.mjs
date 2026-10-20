@@ -11,7 +11,7 @@
 // EXT=<folder> tests another build of the extension (an unzipped release, say) instead of ./extension.
 // GUEST_EXT=<folder> gives the guests another build than the host (the public release while the host runs this fork).
 // CHEATS=1 (fork): once everyone is in, the host gives the first guest a Ray Gun and Juggernog through the cheat menu.
-// MAP=1 (fork): the host and the first guest open the in-game map (N); the host walks and its dot must glide on the
+// MAP=1 (fork): the host and the first guest open the in-game map (M); the host walks and its dot must glide on the
 // guest's map.
 //
 // Direct links (fork): guests connect to the host directly and the run checks that each guest is "direct" once
@@ -45,7 +45,13 @@ const VIEWPORT = LITE ? { width: 400, height: 300 } : { width: 800, height: 450 
 const CLICK = LITE ? [30, 200] : [150, 300];
 const DEADLINE = Date.now() + Number(process.env.DEADLINE_MIN ?? 10) * 60000;
 const NODIRECT = (process.env.NODIRECT ?? "").split(",").map((v) => v.trim()).filter(Boolean);
-const relayOnly = (i) => NODIRECT.includes("all") || NODIRECT.includes(String(i + 1));
+// RELAYONLY=<2,3|all> (fork): those players have chosen "Relay only" in Settings → Connection (the saved setting is
+// reported as off on their page only, as their own browser would after the click).
+const RELAYONLY = (process.env.RELAYONLY ?? "").split(",").map((v) => v.trim()).filter(Boolean);
+const settingRelayOnly = (i) => RELAYONLY.includes("all") || RELAYONLY.includes(String(i + 1));
+const relayOnly = (i) => NODIRECT.includes("all") || NODIRECT.includes(String(i + 1)) || settingRelayOnly(i);
+// a guest plays over the relay when it or the host skips direct links (a host without them answers no offer)
+const onRelay = (i) => relayOnly(i) || relayOnly(0);
 const DROP_DIRECT_S = process.env.DROP_DIRECT_S == null ? null : Number(process.env.DROP_DIRECT_S);
 const RELAY_DOWN_S = process.env.RELAY_DOWN_S == null ? null : Number(process.env.RELAY_DOWN_S);
 
@@ -127,7 +133,15 @@ async function launch(i) {
     page = context.pages()[0] ?? (await context.newPage());
   }
   // src/net/direct.js reads this before the session starts.
-  if (relayOnly(i)) await page.addInitScript(() => (globalThis.__bo1CoopDirect = false));
+  if (relayOnly(i) && !settingRelayOnly(i)) await page.addInitScript(() => (globalThis.__bo1CoopDirect = false));
+  if (settingRelayOnly(i)) {
+    await page.addInitScript(() => {
+      const read = Storage.prototype.getItem;
+      Storage.prototype.getItem = function (key) {
+        return key === "bo1coop.direct" ? "0" : read.call(this, key);
+      };
+    });
+  }
   const logFile = `${OUT}/p${i + 1}.console.log`;
   page.on("console", (m) => fs.appendFileSync(logFile, `${m.text()}\n`));
   page.on("pageerror", (e) => fs.appendFileSync(logFile, `PAGEERROR ${e.message}\n`));
@@ -263,7 +277,7 @@ async function walkCheck(when) {
 }
 
 /** Each guest's path against what this run expects of it. */
-async function pathCheck(when, expectDirect = (g) => !relayOnly(g.i)) {
+async function pathCheck(when, expectDirect = (g) => !onRelay(g.i)) {
   let good = true;
   for (const g of guests) {
     const s = await snapshot(g);
@@ -290,9 +304,9 @@ async function stillPlaying(when) {
 let ok = allIn;
 if (allIn) {
   // A direct link opens within seconds of the guest's introduction; give the slowest a moment.
-  for (let k = 0; k < 15 && guests.some((g) => !relayOnly(g.i)); k += 1) {
+  for (let k = 0; k < 15 && guests.some((g) => !onRelay(g.i)); k += 1) {
     const paths = await Promise.all(guests.map(async (g) => (await snapshot(g))?.path));
-    if (guests.every((g, n) => paths[n] === (relayOnly(g.i) ? "relay" : "direct"))) break;
+    if (guests.every((g, n) => paths[n] === (onRelay(g.i) ? "relay" : "direct"))) break;
     await wait(1000);
   }
   if (!(await pathCheck("once everyone is in"))) ok = false;
@@ -333,7 +347,7 @@ if (allIn) {
     // must simply play on.
     const g = guests[0];
     const opened = async (p) => {
-      await p.page.keyboard.press("n");
+      await p.page.keyboard.press("m");
       return p.page
         .waitForFunction(() => window.__bo1Coop.mapOverlay?.model?.status === "ok", null, { timeout: 15000 })
         .then(() => true, () => false);
@@ -342,7 +356,7 @@ if (allIn) {
       log("map: FAILED on the host");
       ok = false;
     }
-    await host.page.keyboard.press("n");
+    await host.page.keyboard.press("m");
     if (!process.env.GUEST_EXT) {
       const fed = await g.page
         .waitForFunction(() => window.__bo1Coop.map?.live.size >= 2 && window.__bo1Coop.map.planOk, null, { timeout: 30000 })
@@ -368,7 +382,7 @@ if (allIn) {
       log(`map on ${g.name}: fed ${fed}, shown ${shown}, host dot at ${glide} different places in 2 s`);
       if (!fed || !shown || glide < 20) ok = false;
       // with the big map closed, the guest's corner minimap shows its room
-      await g.page.keyboard.press("n");
+      await g.page.keyboard.press("m");
       const mini = await g.page
         .waitForFunction(() => window.__bo1Coop.minimap?.shown && window.__bo1Coop.minimap.model?.room, null, { timeout: 5000 })
         .then((h) => h.jsonValue(), () => null);
@@ -446,7 +460,7 @@ if (allIn) {
       log(`${guests[0].name}: direct link dropped`);
     }
     if (DROP_DIRECT_S != null && guests.length && k === DROP_DIRECT_S + 2) {
-      if (!(await pathCheck("2 s after the drop", (g) => g !== guests[0] && !relayOnly(g.i)))) ok = false;
+      if (!(await pathCheck("2 s after the drop", (g) => g !== guests[0] && !onRelay(g.i)))) ok = false;
       if (!(await stillPlaying("2 s after the drop"))) ok = false;
     }
     if (RELAY_DOWN_S != null && k === RELAY_DOWN_S) {

@@ -5,14 +5,16 @@
 import { validSeat } from "../session/session.js";
 import { syncPresence } from "../session/messages.js";
 import { postToPump, send } from "./pump.js";
+import { directAllowed } from "./direct-setting.js";
 import { CANDIDATE_FLUSH_MS, CONNECT_TIMEOUT_MS, MAX_CANDIDATE, MAX_ICE_JSON, MAX_SDP, parseRtc, retryDelay } from "./rtc-messages.js";
 
 export const ICE_SERVERS = Object.freeze([{ urls: "stun:stun.cloudflare.com:3478" }, { urls: "stun:stun.l.google.com:19302" }]);
 
 /** session.direct: one link per guest seat on the host, one link (seat 0) to the host on a guest. */
-export function createDirect(session, { RTCPeerConnection = globalThis.RTCPeerConnection, now = Date.now } = {}) {
-  // test/e2e.mjs sets __bo1CoopDirect = false on a page to make that player use the relay only.
-  const enabled = globalThis.__bo1CoopDirect !== false && typeof RTCPeerConnection === "function";
+export function createDirect(session, { RTCPeerConnection = globalThis.RTCPeerConnection, now = Date.now, allowed = directAllowed() } = {}) {
+  // test/e2e.mjs sets __bo1CoopDirect = false on a page to make that player use the relay only; the Connection setting
+  // (src/net/direct-setting.js) does the same for a player who chose it
+  const enabled = allowed && globalThis.__bo1CoopDirect !== false && typeof RTCPeerConnection === "function";
   const hosting = () => session.mode === "host";
   const links = new Map(); // seat -> { n, pc, startedAt, open, remoteSet, waiting, gathered, flushedAt }
   let attempt = 0;

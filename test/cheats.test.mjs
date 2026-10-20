@@ -138,23 +138,23 @@ test("unknown ids get a readable fallback", () => {
   assert.equal(powerupName("free_stuff"), "Free Stuff");
 });
 
-test("M opens the cheat panel in game without pausing, and frees the mouse", () => {
+test("N opens the cheat panel in game without pausing, and frees the mouse", () => {
   const session = { cheats: { panel: false }, fun: { open: false } };
   let freed = 0;
   let locked = 0;
   const ctx = { playing: true, available: true, freeMouse: () => (freed += 1), lockMouse: () => (locked += 1) };
-  const event = { code: "KeyM", repeat: false, ctrlKey: false, altKey: false, metaKey: false };
+  const event = { code: "KeyN", repeat: false, ctrlKey: false, altKey: false, metaKey: false };
   assert.equal(onCheatsKey(session, event, ctx), true, "handled (the game must not see it)");
   assert.equal(session.cheats.panel, true);
   assert.equal(session.fun.open, true, "Fun mode section opens with it");
   assert.equal(freed, 1);
   assert.equal(onCheatsKey(session, event, ctx), true);
-  assert.equal(session.cheats.panel, false, "M again closes it");
+  assert.equal(session.cheats.panel, false, "N again closes it");
   assert.equal(locked, 1, "and gives the mouse back to the game");
 });
 
-test("M does nothing for a guest, outside a game, on key repeat or with a modifier", () => {
-  const event = { code: "KeyM", repeat: false, ctrlKey: false, altKey: false, metaKey: false };
+test("N does nothing for a guest, outside a game, on key repeat or with a modifier", () => {
+  const event = { code: "KeyN", repeat: false, ctrlKey: false, altKey: false, metaKey: false };
   const fresh = () => ({ cheats: { panel: false }, fun: { open: false } });
   const ctx = { playing: true, available: true, freeMouse: () => {}, lockMouse: () => {} };
   for (const [what, e, c] of [
@@ -162,7 +162,7 @@ test("M does nothing for a guest, outside a game, on key repeat or with a modifi
     ["menu", event, { ...ctx, playing: false }],
     ["repeat", { ...event, repeat: true }, ctx],
     ["ctrl", { ...event, ctrlKey: true }, ctx],
-    ["other key", { ...event, code: "KeyN" }, ctx],
+    ["other key", { ...event, code: "KeyM" }, ctx],
   ]) {
     const session = fresh();
     assert.equal(onCheatsKey(session, e, c), false, what);
@@ -219,11 +219,11 @@ test("review I2: results are asked for as long as a command is unanswered", () =
   assert.ok(session.fun.queue.includes("cheats_results"), "still asking 69 s later");
 });
 
-test("review I4: M typed into a text field is text, not the hotkey", () => {
+test("review I4: N typed into a text field is text, not the hotkey", () => {
   const session = { cheats: { panel: true }, fun: { open: true } };
   const ctx = { playing: true, available: true, freeMouse: () => {}, lockMouse: () => {} };
   const input = { tagName: "INPUT", isContentEditable: false };
-  const event = { code: "KeyM", repeat: false, ctrlKey: false, altKey: false, metaKey: false, composedPath: () => [input] };
+  const event = { code: "KeyN", repeat: false, ctrlKey: false, altKey: false, metaKey: false, composedPath: () => [input] };
   assert.equal(onCheatsKey(session, event, ctx), false);
   assert.equal(session.cheats.panel, true);
 });

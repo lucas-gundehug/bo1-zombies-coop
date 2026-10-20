@@ -1,5 +1,5 @@
-// M opens the card at Fun mode during a game without the pause menu: Esc pauses the game (for everyone, in co-op), and
-// unpausing makes players jump while they sync up again. M again, or a click on the game, takes the mouse back.
+// N opens the card at Fun mode during a game without the pause menu: Esc pauses the game (for everyone, in co-op), and
+// unpausing makes players jump while they sync up again. N again, or a click on the game, takes the mouse back.
 //
 // vel.gg answers a lost pointer lock by pressing Escape for the game (its input.js "pointerlockchange" handler) unless
 // it released the mouse itself. The one unlock this file causes is kept from it, so the game neither pauses nor learns
@@ -7,12 +7,12 @@
 import { screen } from "../game/page.js";
 import { funAvailable } from "../fun/fun.js";
 
-const KEY = "KeyM";
+const KEY = "KeyN";
 
 /** Returns true when the key was ours (the game must not get it). */
 export function onCheatsKey(session, event, { playing, available, freeMouse, lockMouse }) {
   if (event.code !== KEY || event.repeat || event.ctrlKey || event.altKey || event.metaKey) return false;
-  // typing an "m" (the card's name or relay field, a console) is text; the card's shadow DOM shows up in composedPath
+  // typing an "n" (the card's name or relay field, a console) is text; the card's shadow DOM shows up in composedPath
   const target = event.composedPath?.()[0];
   if (target && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName ?? "") || target.isContentEditable)) return false;
   if (!playing || !available) return false;

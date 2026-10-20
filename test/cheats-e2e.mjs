@@ -232,7 +232,7 @@ const scenarios = {
     if (process.env.SWEEP_OUT) fs.writeFileSync(process.env.SWEEP_OUT, JSON.stringify({ map: MAP, horde, ...found, results }, null, 2));
     for (const [what, r] of Object.entries(results)) log(r.ok ? "ok  " : "ERR ", what, r.ok ? "" : `${r.code} ${r.detail ?? ""}`);
   },
-  // Through the card as a player would: M opens it in game, a perk and a weapon button, the notices.
+  // Through the card as a player would: N opens it in game, a perk and a weapon button, the notices.
   async ui() {
     await setCheats(true);
     await startMap();
@@ -240,7 +240,7 @@ const scenarios = {
     await command("god");
     await page.waitForFunction(() => window.__bo1Coop.cheats.perks.length > 0 && window.__bo1Coop.cheats.weapons.length > 0, null, { timeout: 30000 });
     assert.equal(await compact(), true, "the card is hidden while playing");
-    await page.keyboard.press("m");
+    await page.keyboard.press("n");
     await page.waitForFunction(() => !window.__bo1Coop.card.host.classList.contains("compact"), null, { timeout: 5000 });
     assert.equal(await page.evaluate(() => window.__bo1Coop.engine.menuOpen()), false, "M must not open the pause menu");
     await clickCard('button[data-act="cheatPerk"][data-arg="specialty_armorvest"]');
@@ -384,7 +384,7 @@ const scenarios = {
     }
     log("dump chunks:", count);
   },
-  // The whole map in one browser: N opens it without pausing or taking the mouse, a bought door disappears from it, N
+  // The whole map in one browser: M opens it without pausing or taking the mouse, a bought door disappears from it, M
   // closes it, and the game runs as smoothly with it open.
   async map() {
     await setCheats(true);
@@ -433,7 +433,7 @@ const scenarios = {
     assert.ok(withMinimap.p95 <= closed.p95 * 1.2 + 2, `frame time with the minimap: p95 ${withMinimap.p95.toFixed(1)} ms vs ${closed.p95.toFixed(1)} ms without`);
     await page.evaluate(() => window.__bo1Coop.card.handlers.minimapSetting());
     await page.waitForFunction(() => window.__bo1Coop.minimap.shown, null, { timeout: 2000 });
-    await page.keyboard.press("n");
+    await page.keyboard.press("m");
     await page.waitForFunction(() => !window.__bo1Coop.minimap.shown, null, { timeout: 2000 }); // hidden under the big map
     const opened = await page.evaluate(() => {
       const c = window.__bo1Coop;
@@ -457,7 +457,7 @@ const scenarios = {
     assert.equal((await run("mapdoor 0")).ok, true, "mapdoor 0");
     await page.waitForFunction(() => !window.__bo1Coop.mapOverlay.model.doors.some((d) => d.index === 0), null, { timeout: 2000 });
     await snap("map-door-open");
-    await page.keyboard.press("n");
+    await page.keyboard.press("m");
     await page.waitForFunction(() => window.__bo1Coop.mapOverlay.host.style.display === "none", null, { timeout: 2000 });
     await page.waitForFunction(() => window.__bo1Coop.minimap.shown, null, { timeout: 2000 }); // back once the big map closes
     assert.equal(await page.evaluate(() => window.five?.screen), "playing");

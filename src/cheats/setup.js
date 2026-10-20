@@ -8,6 +8,7 @@ import { addCheatsMod, modBase } from "./mod.js";
 import { writeModFiles } from "./opfs.js";
 import { C } from "./strings.js";
 import { minimapActions, minimapSettingBlocks } from "../map/minimap.js";
+import { directSettingActions, directSettingBlocks } from "../net/direct-setting.js";
 
 const WRITE_TIMEOUT_MS = 5000;
 
@@ -46,6 +47,7 @@ export function cheatsSettingBlocks(session) {
     { kind: "text", cls: "muted small", text: C.note },
     { kind: "buttons", buttons: [{ act: "cheatsSetting", label: on ? C.turnOff : C.turnOn, style: "ghost" }] },
     ...minimapSettingBlocks(session),
+    ...directSettingBlocks(session),
   ];
 }
 
@@ -57,5 +59,6 @@ export function cheatsSettingActions(session) {
       session.notice = C.reload;
     },
     ...minimapActions(session),
+    ...directSettingActions(session),
   };
 }
