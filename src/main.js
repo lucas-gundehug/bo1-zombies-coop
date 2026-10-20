@@ -21,6 +21,7 @@ import { createMap } from "./map/state.js";
 import { mapTick } from "./map/live.js";
 import { installMapKey } from "./map/hotkey.js";
 import { MapOverlay } from "./map/overlay.js";
+import { Minimap, minimapEnabled } from "./map/minimap.js";
 import { cleanName, guestIdFor, saveSetting } from "./util/settings.js";
 import { checkForUpdate, RELAY_GUIDE } from "./util/updates.js";
 
@@ -38,10 +39,14 @@ function start() {
   session.fun = createFun();
   session.cheats = createCheats();
   session.map = createMap();
+  session.map.minimap = minimapEnabled();
   installCheatsKey(session);
   session.mapOverlay = new MapOverlay();
   session.mapOverlay.mount();
   installMapKey(session, session.mapOverlay);
+  session.minimap = new Minimap();
+  session.minimap.mount();
+  session.minimap.start(session);
   watchConsole(session);
   if (session.mode) keepSinglePlayer(session.room);
 

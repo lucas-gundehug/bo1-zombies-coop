@@ -7,6 +7,10 @@ export function createMap() {
     openedAt: null, // when the panel was last opened (the "no data" note waits a few seconds)
     slug: null,
     plan: null,
+    icons: new Map(), // the game's perk and box icons for this map (src/map/icons.js), once read
+    iconTries: 0,
+    iconsAt: -Infinity,
+    iconsLoading: false,
     tracks: new Map(), // n -> track of recent positions, for gliding (src/map/track.js)
     live: new Map(), // n -> { x, y, z, yaw, room, s, floor, at }: the latest sample per player number
     liveV: null, // the state counter of the latest live sample

@@ -412,8 +412,29 @@ const scenarios = {
           }),
         ms,
       );
+    // the game's own icons were read from the pack: every perk machine on this map, and the box
+    const needed = await page.evaluate(() => {
+      const plan = window.__bo1Coop.map.plan;
+      const ids = new Set(plan.pois.filter((p) => p.kind === "perk").map((p) => p.id));
+      if (plan.pois.some((p) => p.kind === "box")) ids.add("box");
+      return [...ids];
+    });
+    await page.waitForFunction((ids) => ids.every((id) => window.__bo1Coop.map.icons.has(id)), needed, { timeout: 30000 });
+    log("icons:", JSON.stringify(needed));
+    // the corner minimap is on by itself, with the room; the setting turns it off; frames are as smooth either way
+    await page.waitForFunction(() => window.__bo1Coop.minimap.shown && window.__bo1Coop.minimap.model?.room, null, { timeout: 10000 });
+    log("minimap room:", await page.evaluate(() => window.__bo1Coop.minimap.model.room));
+    await snap("minimap");
+    const withMinimap = await frames(10000);
+    await page.evaluate(() => window.__bo1Coop.card.handlers.minimapSetting());
+    await page.waitForFunction(() => !window.__bo1Coop.minimap.shown, null, { timeout: 2000 });
     const closed = await frames(10000);
+    log("frames with the minimap:", JSON.stringify(withMinimap), "without:", JSON.stringify(closed));
+    assert.ok(withMinimap.p95 <= closed.p95 * 1.2 + 2, `frame time with the minimap: p95 ${withMinimap.p95.toFixed(1)} ms vs ${closed.p95.toFixed(1)} ms without`);
+    await page.evaluate(() => window.__bo1Coop.card.handlers.minimapSetting());
+    await page.waitForFunction(() => window.__bo1Coop.minimap.shown, null, { timeout: 2000 });
     await page.keyboard.press("n");
+    await page.waitForFunction(() => !window.__bo1Coop.minimap.shown, null, { timeout: 2000 }); // hidden under the big map
     const opened = await page.evaluate(() => {
       const c = window.__bo1Coop;
       return { open: c.map.open, screen: window.five?.screen, menuOpen: c.engine.menuOpen(), locked: Boolean(document.pointerLockElement) };
@@ -438,7 +459,43 @@ const scenarios = {
     await snap("map-door-open");
     await page.keyboard.press("n");
     await page.waitForFunction(() => window.__bo1Coop.mapOverlay.host.style.display === "none", null, { timeout: 2000 });
+    await page.waitForFunction(() => window.__bo1Coop.minimap.shown, null, { timeout: 2000 }); // back once the big map closes
     assert.equal(await page.evaluate(() => window.five?.screen), "playing");
+  },
+  // Health levels: player 0's health follows the level (read where Fun mode reads entity fields, src/fun/fun.js)
+  async health() {
+    await setCheats(true);
+    await startMap();
+    assert.ok(await waitReady(), "ready");
+    await command("god"); // no zombie may change the numbers while we read them
+    const health = () => page.evaluate(() => {
+      const { build, engine } = window.__bo1Coop;
+      return engine.int(build.fun.entities + build.fun.ent.health);
+    });
+    const start = await health();
+    log("health at the start:", start);
+    for (const pct of [200, 300, 100]) {
+      assert.equal((await run(`health 0 ${pct}`)).ok, true, `health ${pct}`);
+      await wait(800);
+      const now = await health();
+      log(`health ${pct}%:`, now);
+      assert.equal(now, Math.round((start * pct) / 100), `health at ${pct}%`);
+    }
+    assert.equal((await run("health 0 50")).code, "bad_health", "50% is refused");
+    // on top of Juggernog: its maximum (the entity's maxHealth, right after health) doubles at 200%
+    const maxHealth = () => page.evaluate(() => {
+      const { build, engine } = window.__bo1Coop;
+      return engine.int(build.fun.entities + build.fun.ent.health + 4);
+    });
+    assert.equal((await run("perk 0 specialty_armorvest", 60000)).ok, true, "Juggernog");
+    await wait(2000);
+    const jug = await maxHealth();
+    log("maximum health with Juggernog:", jug);
+    assert.ok(jug > start, "Juggernog raised the maximum");
+    assert.equal((await run("health 0 200")).ok, true, "health 200 with Juggernog");
+    await wait(1500);
+    log("maximum health with Juggernog at 200%:", await maxHealth());
+    assert.equal(await maxHealth(), jug * 2, "200% of Juggernog's maximum");
   },
   async load() {
     await setCheats(true);

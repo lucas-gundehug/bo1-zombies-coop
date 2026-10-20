@@ -21,6 +21,7 @@ export function createBridge() {
     weapons: [],
     perks: [],
     powerups: [],
+    health: {}, // slot -> health level in %, as the game confirmed it (100 when not set)
     seq: 0,
     outbox: [], // [seq, command text] not sent yet
     sent: new Map(), // seq -> { action, target, arg, until } waiting for a result
@@ -117,7 +118,10 @@ export function onCheatsLine(session, line) {
     Object.assign(cheats, { ready: state.ready, round: state.round, frozen: state.frozen, power: state.power, horde: state.horde, scriptLists: state.lists });
     // The script's counter. It starts again from 0 when the game restarts in the same page (game over): then
     // nothing sent before can still be taken, so stop waiting for it.
-    if (state.seq < cheats.scriptSeq) cheats.lastSeq = state.seq;
+    if (state.seq < cheats.scriptSeq) {
+      cheats.lastSeq = state.seq;
+      cheats.health = {};
+    }
     cheats.scriptSeq = state.seq;
   } else if (name === "cheats_weapons_count") {
     const count = Number(value) || 0;

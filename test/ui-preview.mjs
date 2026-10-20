@@ -89,12 +89,12 @@ const scenes = [
 ];
 
 // Fork: the in-game map (N), staged from a bundled plan: three players in three open rooms, the rest closed.
-const stageMap = ({ plan, players }) => {
+const stageMap = ({ plan, players, mini }) => {
   const c = window.__bo1Coop;
   const later = Date.now() + 3600e3; // samples "from the future" never go stale while the shot is taken
   const open = plan.rooms.map((r) => r.label[0] === 0);
   const spots = plan.rooms.map((r, i) => [i, r.label]).filter(([, l]) => l[0] === 0).slice(0, players.length);
-  Object.assign(c.map, { slug: plan.slug, plan, planOk: true, open: true, openedAt: Date.now() });
+  Object.assign(c.map, { slug: plan.slug, plan, planOk: true, open: !mini, openedAt: Date.now(), minimap: true });
   c.map.state = { v: 1, sig: plan.sig, doors: plan.doors.map((d, i) => i % 3 === 0), rooms: open.map((o, i) => o && i < 4), box: [0], power: true, at: later };
   window.five.views = [];
   spots.forEach(([room, [, x, y]], i) => {
@@ -103,11 +103,12 @@ const stageMap = ({ plan, players }) => {
     c.map.tracks.set(i + 1, [{ at: later, x, y, yaw }]);
     if (i === 0) window.five.views.push({ origin: [x, y, 60], angles: [0, yaw, 0], ms: 1, flags: 0 });
   });
-  c.mapOverlay.show(c);
+  if (!mini) c.mapOverlay.show(c);
 };
 const mapScenes = ["kino", "five", "moon", "cotd"].flatMap((slug) => [
   { name: `10-map-${slug}`, slug, size: { width: 1280, height: 720 } },
   { name: `11-map-${slug}-small`, slug, size: { width: 1100, height: 650 } },
+  { name: `12-minimap-${slug}`, slug, mini: true, size: { width: 1100, height: 650 } },
 ]);
 
 // ONLY=<text> shoots only the scenes whose name contains it.
@@ -119,9 +120,9 @@ for (const scene of mapScenes.filter((s) => (!process.env.ONLY || s.name.include
   const zone = Object.entries({ zombie_theater: "kino", zombie_pentagon: "five", zombie_moon: "moon", zombie_coast: "cotd" }).find(([, s]) => s === scene.slug)[0];
   await page.evaluate(fake, { screen: "playing", coop: { set: { zone, name: "Lucas", peer: true }, clients: [{ slot: 1, state: 5, loopback: true, port: 2406 }, { slot: 2, state: 5, loopback: true, port: 2407 }],
     guests: [{ seat: 1, state: { phase: "connected", name: "Jonas" }, slot: { slot: 1, state: 5 } }, { seat: 2, state: { phase: "connected", name: "Mads" }, slot: { slot: 2, state: 5 } }], stats: { rtt: 38, rtts: { 1: 38, 2: 40 } } } });
-  await page.evaluate(stageMap, { plan: JSON.parse(fs.readFileSync(`src/map/plans/${scene.slug}.json`, "utf8")), players: ["Lucas", "Jonas", "Mads"] });
+  await page.evaluate(stageMap, { plan: JSON.parse(fs.readFileSync(`src/map/plans/${scene.slug}.json`, "utf8")), players: ["Lucas", "Jonas", "Mads"], mini: scene.mini });
   await page.waitForTimeout(800);
-  await page.screenshot({ path: `${OUT}/${scene.name}.png` });
+  await page.screenshot({ path: `${OUT}/${scene.name}.png`, ...(scene.mini ? { clip: { x: 0, y: 0, width: 240, height: 250 } } : {}) });
   console.log("shot", scene.name);
   await page.close();
 }
@@ -145,9 +146,16 @@ const readmeScenes = [
     clients: [1, 2, 3].map((slot) => ({ slot, state: 5, loopback: true, port: 2405 + slot })), guests: friends,
     stats: { rtt: 12, rtts: { 1: 12, 2: 18, 3: 64 }, lost: 0 } } } },
   { name: "readme-cheats", from: "Give to", run: { screen: "ready", coop: {
-    set: { zone: "zombie_theater", name: "Lucas", peer: true, cheats: { enabled: true, ok: true, ready: true, round: 12, frozen: false, power: true, horde: false, target: 1, noticeArea: "perks", ...cheatLists } },
+    set: { zone: "zombie_theater", name: "Lucas", peer: true, cheats: { enabled: true, ok: true, ready: true, round: 12, frozen: false, power: true, horde: false, target: 1, noticeArea: "health", ...cheatLists,
+      weapons: ["ray_gun_zm", "thundergun_zm", "zombie_cymbal_monkey", "galil_zm", "famas_zm", "spas_zm", "python_zm", "m1911_zm"], health: { 1: 200 } } },
     clients: [1, 2].map((slot) => ({ slot, state: 5, loopback: true, port: 2405 + slot })), guests: friends.slice(0, 2),
-    fun: { open: true, notice: "Juggernog given to Jonas.", noticeAt: Date.now() + 3600e3, timescale: 1, jump: 39, gravity: 800, players: {} },
+    fun: { open: true, notice: "Health 200% for Jonas.", noticeAt: Date.now() + 3600e3, timescale: 1, jump: 39, gravity: 800, players: {} },
+    stats: { rtt: 12, rtts: { 1: 12, 2: 18 } } } } },
+  { name: "readme-fun", from: "Players", to: "Give to", run: { screen: "ready", coop: {
+    set: { zone: "zombie_theater", name: "Lucas", peer: true, cheats: { enabled: true, ok: true, ready: true, round: 12, frozen: false, power: true, horde: false, target: 1, ...cheatLists } },
+    clients: [1, 2].map((slot) => ({ slot, state: 5, loopback: true, port: 2405 + slot })), guests: friends.slice(0, 2),
+    fun: { open: true, infiniteClip: true, timescale: 1, jump: 150, gravity: 400,
+      players: { 0: { god: true, demigod: false, notarget: false, noclip: false, ufo: false, speed: 1.5 }, 1: { god: false, demigod: true, notarget: true, noclip: false, ufo: false, speed: 1 } } },
     stats: { rtt: 12, rtts: { 1: 12, 2: 18 } } } } },
 ];
 for (const scene of readmeScenes.filter((s) => !process.env.ONLY || s.name.includes(process.env.ONLY))) {
@@ -166,8 +174,15 @@ for (const scene of readmeScenes.filter((s) => !process.env.ONLY || s.name.inclu
         return el ? el.getBoundingClientRect().top - 10 : null;
       }, scene.from)
     : null;
+  const bottom = scene.to
+    ? await page.evaluate((label) => {
+        const root = window.__bo1Coop.card.root;
+        const el = [...root.querySelectorAll("*")].find((e) => e.children.length === 0 && e.textContent.trim().toLowerCase() === label.toLowerCase());
+        return el ? el.getBoundingClientRect().top - 6 : null;
+      }, scene.to)
+    : null;
   const y = top ?? box.y - 8;
-  const height = Math.min(box.y + box.height + 8, 3390) - y;
+  const height = (bottom ?? Math.min(box.y + box.height + 8, 3390)) - y;
   await page.screenshot({ path: `${OUT}/${scene.name}.png`, clip: { x: Math.max(0, box.x - 8), y, width: box.width + 16, height } });
   console.log("shot", scene.name);
   await page.close();

@@ -4,10 +4,11 @@ import { perkName, powerupName, weaponName } from "./names.js";
 import { C } from "./strings.js";
 
 const MAX_ROUND = 255;
+export const HEALTH_LEVELS = [100, 150, 200, 300, 500];
 const byName = (name) => (a, b) => name(a).localeCompare(name(b));
 
 // The notice goes right under the group it is about: the card is long, and Fun mode's own notice line is at its top.
-const AREA = { give: "weapons", pap: "weapons", perk: "perks", powerup: "powerups", round: "rounds", next: "rounds", freeze: "rounds" };
+const AREA = { give: "weapons", pap: "weapons", perk: "perks", health: "health", powerup: "powerups", round: "rounds", next: "rounds", freeze: "rounds" };
 
 function say(session, text, action) {
   session.fun.notice = text;
@@ -41,6 +42,7 @@ const ERRORS = {
   no_powerup: (d) => C.errNoPowerup(powerupName(d)),
   bad_round: () => C.errBadRound(MAX_ROUND),
   horde: () => C.errHorde,
+  bad_health: () => C.errBadHealth,
 };
 
 function resultText(result, sent, name) {
@@ -52,6 +54,8 @@ function resultText(result, sent, name) {
       return C.packed(name);
     case "perk":
       return C.given(perkName(sent.arg), name);
+    case "health":
+      return C.healthSet(sent.arg, name);
     case "powerup":
       return C.dropped(powerupName(sent.arg), name);
     case "round":
@@ -89,6 +93,14 @@ export function cheatBlocks(session, players) {
   }
   noticeAfter(session, "perks", blocks);
 
+  // health levels for the chosen player (or everyone): the level shown is the one the game confirmed
+  blocks.push({ kind: "label", text: C.health });
+  blocks.push({ kind: "text", cls: "muted small", text: C.healthNote });
+  const levelOf = (slot) => cheats.health?.[slot] ?? 100;
+  const current = chosen === "all" ? (players.every((p) => levelOf(p.slot) === levelOf(players[0].slot)) ? levelOf(players[0].slot) : null) : levelOf(chosen);
+  blocks.push({ kind: "chips", chips: HEALTH_LEVELS.map((pct) => ({ act: "cheatHealth", arg: String(pct), label: `${pct}%`, on: current === pct })) });
+  noticeAfter(session, "health", blocks);
+
   blocks.push({ kind: "label", text: C.powerups });
   if (!cheats.powerups.length) blocks.push({ kind: "text", cls: "muted small", text: C.noPowerups });
   else blocks.push({ kind: "grid", buttons: [...cheats.powerups].sort(byName(powerupName)).map((p) => ({ act: "cheatPowerup", arg: p, label: powerupName(p) })) });
@@ -118,6 +130,10 @@ export function cheatActions(session, funPlayers) {
   const cheats = session.cheats;
   cheats.onResult = (result, sent) => {
     const players = funPlayers(session);
+    if (result.ok && sent.action === "health") {
+      const slots = sent.target === "all" ? players.map((p) => p.slot) : [Number(sent.target)];
+      for (const slot of slots) cheats.health[slot] = Number(sent.arg);
+    }
     say(session, resultText(result, sent, who(session, players, sent.target)), sent.action);
   };
   const toChosen = (action, arg, pending) => {
@@ -132,6 +148,7 @@ export function cheatActions(session, funPlayers) {
     cheatPap: () => toChosen("pap", undefined, (name) => C.packing(name)),
     cheatPerk: (perk) => toChosen("perk", perk, (name) => C.giving(perkName(perk), name)),
     cheatPowerup: (powerup) => toChosen("powerup", powerup, (name) => C.giving(powerupName(powerup), name)),
+    cheatHealth: (pct) => toChosen("health", pct, (name) => C.settingHealth(pct, name)),
     cheatRound: (text) => {
       const round = Number(String(text ?? "").trim());
       if (!Number.isInteger(round) || round < 1 || round > MAX_ROUND) return say(session, C.errBadRound(MAX_ROUND), "round");

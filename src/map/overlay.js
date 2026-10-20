@@ -7,7 +7,7 @@ import { mapModel } from "./model.js";
 import { fitView, toScreen } from "./plan.js";
 import { M } from "./strings.js";
 
-const C = {
+export const C = {
   panel: "rgba(18,17,16,.9)",
   line: "#34302b",
   fg: "#ece6dc",
@@ -42,12 +42,12 @@ const PAD = 18;
 /** The panel's box inside a width × height window: 12% in from the sides, 8% from the top and bottom. */
 export const panelBox = (width, height) => ({ x: Math.round(width * 0.12), y: Math.round(height * 0.08), w: Math.round(width * 0.76), h: Math.round(height * 0.84) });
 
-function roundRect(ctx, x, y, w, h, r) {
+export function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
   ctx.roundRect(x, y, w, h, r);
 }
 
-function text(ctx, value, x, y, { size = 13, weight = 600, color = C.fg, align = "left", base = "middle" } = {}) {
+export function text(ctx, value, x, y, { size = 13, weight = 600, color = C.fg, align = "left", base = "middle" } = {}) {
   ctx.font = `${weight} ${size}px ${FONT}`;
   ctx.fillStyle = color;
   ctx.textAlign = align;
@@ -57,7 +57,8 @@ function text(ctx, value, x, y, { size = 13, weight = 600, color = C.fg, align =
 }
 
 /** Rooms of one floor, with their names, into a cached canvas the size of the map area. */
-function drawRooms(plan, model, view, w, h, dpr) {
+/** Rooms of one floor into a cached canvas the size of the map area; `labels: false` leaves out the room names. */
+export function drawRooms(plan, model, view, w, h, dpr, { labels = true } = {}) {
   const canvas = new OffscreenCanvas(Math.max(1, Math.round(w * dpr)), Math.max(1, Math.round(h * dpr)));
   const ctx = canvas.getContext("2d");
   ctx.scale(dpr, dpr);
@@ -93,7 +94,7 @@ function drawRooms(plan, model, view, w, h, dpr) {
     fill(plan.rooms[i], 0, look(i).fill);
   }
   const size = Math.max(10, Math.min(14, s * 160));
-  for (const i of order) {
+  for (const i of labels ? order : []) {
     const room = plan.rooms[i];
     if (room.label[0] !== model.floor) continue;
     const [lx, ly] = toScreen(view, room.label[1], room.label[2]);
@@ -102,7 +103,30 @@ function drawRooms(plan, model, view, w, h, dpr) {
   return canvas;
 }
 
-function drawLock(ctx, x, y, door) {
+/** A closed door's tag: a lock with the price (a bolt for power doors); `compact` draws only the small lock or bolt. */
+export function drawLock(ctx, x, y, door, compact = false) {
+  if (compact) {
+    ctx.beginPath();
+    ctx.arc(x, y, 7, 0, Math.PI * 2);
+    ctx.fillStyle = "#121110";
+    ctx.fill();
+    ctx.strokeStyle = C.gold;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    if (door.kind === "power") {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(0.65, 0.65);
+      bolt(ctx, 0, 0, C.gold);
+      ctx.restore();
+    } else {
+      ctx.strokeRect(x - 3, y - 1, 6, 4);
+      ctx.beginPath();
+      ctx.arc(x, y - 1.5, 2, Math.PI, 0);
+      ctx.stroke();
+    }
+    return;
+  }
   const label = door.kind === "power" ? "" : String(door.cost);
   ctx.font = `800 11px ${FONT}`;
   const w = 26 + (label ? ctx.measureText(label).width : 0);
@@ -139,7 +163,32 @@ function bolt(ctx, x, y, color) {
   ctx.fill();
 }
 
-function drawPoi(ctx, x, y, poi) {
+export function drawPoi(ctx, x, y, poi, icons, size = 26) {
+  // the game's own icon when it could be read (src/map/icons.js): perk shields, the Mystery Box
+  const icon = icons?.get(poi.kind === "box" ? "box" : poi.id);
+  if (icon && (poi.kind === "perk" || poi.kind === "box")) {
+    ctx.save();
+    ctx.globalAlpha = poi.kind === "box" && !poi.active ? 0.35 : 1;
+    ctx.drawImage(icon, x - size / 2, y - size / 2, size, size);
+    ctx.restore();
+    if (poi.kind === "box" && poi.active) {
+      ctx.strokeStyle = C.gold;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(x, y, size / 2 + 3, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    return;
+  }
+  if (size !== 26) {
+    // the drawn stand-ins are made for 26 px: scale them to the size asked for (the minimap's 18)
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(size / 26, size / 26);
+    drawPoi(ctx, 0, 0, poi, null, 26);
+    ctx.restore();
+    return;
+  }
   if (poi.kind === "power") {
     ctx.beginPath();
     ctx.arc(x, y, 11, 0, Math.PI * 2);
@@ -174,7 +223,8 @@ function drawPoi(ctx, x, y, poi) {
   text(ctx, label, x, y + 0.5, { size: 10, weight: 800, color: pap ? "#d7c2ff" : "#fff", align: "center" });
 }
 
-function drawPlayer(ctx, view, p) {
+/** A player's dot with the letter inside and a line for where they look; `r` is the dot's radius. */
+export function drawPlayer(ctx, view, p, r = 11) {
   const [x, y] = toScreen(view, p.x, p.y);
   const rad = (p.yaw * Math.PI) / 180;
   const [fx, fy] = toScreen(view, p.x + Math.cos(rad) * 100, p.y + Math.sin(rad) * 100);
@@ -184,20 +234,20 @@ function drawPlayer(ctx, view, p) {
   ctx.lineCap = "round";
   ctx.beginPath();
   ctx.moveTo(x, y);
-  ctx.lineTo(x + ((fx - x) / len) * 22, y + ((fy - y) / len) * 22);
+  ctx.lineTo(x + ((fx - x) / len) * r * 2, y + ((fy - y) / len) * r * 2);
   ctx.stroke();
   ctx.beginPath();
-  ctx.arc(x, y, 11, 0, Math.PI * 2);
+  ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.fillStyle = p.color;
   ctx.fill();
   ctx.lineWidth = p.downed ? 3 : 2;
   ctx.strokeStyle = p.downed ? C.bad : "#000";
   ctx.stroke();
-  text(ctx, p.letter, x, y + 0.5, { size: 12, weight: 900, color: "#121110", align: "center" });
+  text(ctx, p.letter, x, y + 0.5, { size: Math.round(r * 1.1), weight: 900, color: "#121110", align: "center" });
 }
 
 /** Draws one frame of the panel. `cache` keeps the rooms layer between frames. */
-export function drawMap(ctx, width, height, model, plan, cache) {
+export function drawMap(ctx, width, height, model, plan, cache, icons = null) {
   ctx.clearRect(0, 0, width, height);
   const box = panelBox(width, height);
   roundRect(ctx, box.x, box.y, box.w, box.h, 10);
@@ -260,7 +310,7 @@ export function drawMap(ctx, width, height, model, plan, cache) {
     let [x, y] = toScreen(view, poi.at[1], poi.at[2]);
     while (!free(x, y, 14)) x += 30;
     placed.push([x, y, 14]);
-    drawPoi(ctx, x, y, poi);
+    drawPoi(ctx, x, y, poi, icons);
   }
   for (const door of model.doors) {
     if (door.at[0] !== model.floor) continue;
@@ -339,6 +389,6 @@ export class MapOverlay {
     const ctx = this.canvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, -box.x * dpr, -box.y * dpr);
     this.model = mapModel(session, Date.now()); // the last frame's model (the real-game test reads it)
-    drawMap(ctx, width, height, this.model, session.map.plan, this.cache);
+    drawMap(ctx, width, height, this.model, session.map.plan, this.cache, session.map.icons);
   }
 }

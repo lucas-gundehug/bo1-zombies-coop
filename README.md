@@ -22,9 +22,13 @@ connections between players for smoother co-op.
 
 <table>
   <tr>
-    <td align="center" width="50%"><img src="docs/images/map-kino.png" alt="The in-game map on Kino der Toten" width="100%"><br><b>🗺️ The map (N)</b></td>
-    <td align="center" width="25%"><img src="docs/images/fork-cheats.png" alt="The cheat menu: give to, weapons on this map, perks, power-ups and rounds" width="100%"><br><b>🔫 The cheat menu (M)</b></td>
-    <td align="center" width="25%"><img src="docs/images/fork-lobby.png" alt="The lobby: four players, two on a direct link and one on the relay" width="100%"><br><b>🔗 Direct connections</b></td>
+    <td align="center" colspan="4" valign="top"><img src="docs/images/map-kino.png" alt="The in-game map on Kino der Toten: rooms, the player in the Lobby, closed doors with prices, the game's perk icons and Mystery Box spots" width="100%"><br><b>🗺️ The map (N)</b><br><sub>Rooms, your friends, closed doors with prices, perks, the box, Pack-a-Punch and power</sub></td>
+    <td align="center" colspan="2" valign="top"><img src="docs/images/minimap.png" alt="The minimap in the top left corner: the room name on top, the player in the middle" width="100%"><br><b>🧭 The minimap</b><br><sub>Always in the corner, scrolls with you</sub></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2" valign="top"><img src="docs/images/fork-cheats.png" alt="The cheat menu: give to, weapons on this map, Pack-a-Punch, free perks, health levels, power-ups and rounds" width="100%"><br><b>🔫 The cheat menu (M)</b><br><sub>Weapons, perks, health, power-ups, rounds</sub></td>
+    <td align="center" colspan="2" valign="top"><img src="docs/images/fork-fun.png" alt="Fun mode: god mode, can't die, invisible, noclip, fly, speed and points per player; ammo, zombies and world settings" width="100%"><br><b>🕹️ Fun mode</b><br><sub>God mode, flying, speed, points, ammo, gravity</sub></td>
+    <td align="center" colspan="2" valign="top"><img src="docs/images/fork-lobby.png" alt="The lobby with four players: two on a direct link, one on the relay" width="100%"><br><b>🔗 Co-op for 4</b><br><sub>Direct connections, relay as a fallback</sub></td>
   </tr>
 </table>
 
@@ -38,6 +42,7 @@ builds on it** and follows its updates, so new vel.gg engines keep working, and 
 | :--------------- | :------------------------------------------------ | :------------------------------------------------------------------------------------------------ |
 | Weapons          | A fixed list of 24, the same on every map         | Exactly the weapons the map has (Zap Guns on Moon, Thundergun on Kino, Baby Gun on Shangri-La…)    |
 | Perks & upgrades | —                                                 | Any perk for free, Pack-a-Punch for the weapon in hand                                            |
+| Health           | God mode (can't be hurt) only                     | Health levels from 100% to 500%, per player, on top of Juggernog                                  |
 | Give to          | The host only                                     | You, one friend, or everyone at once                                                              |
 | Rounds           | —                                                 | Jump to any round (1–255), skip ahead, or freeze the round                                        |
 | Map              | —                                                 | Press **N**: friends, your room, closed doors with prices, perks, box, Pack-a-Punch, power        |
@@ -57,6 +62,7 @@ map.
 | 🔫 **Weapons on this map** | Read from the game when the map loads, so every button works: wonder weapons included.                                           |
 | ⚡ **Pack-a-Punch**        | Upgrades the weapon the chosen player is holding.                                                                                |
 | 🥤 **Perks (free)**        | The map's perk machines: Juggernog, Speed Cola, Double Tap, Mule Kick and the rest. The first perk turns the power on, as the switch would. |
+| ❤️ **Health levels**       | 100%, 150%, 200%, 300% or 500% health for any player. You still go down, just after more hits; Juggernog adds on top, and the level stays through revives and new rounds. |
 | 💥 **Power-ups**           | Max Ammo, Insta-Kill, Nuke, Fire Sale and the rest, dropped in front of the player.                                               |
 | 🔁 **Rounds**              | Jump to any round from 1 to 255, forwards or backwards, or skip to the next one.                                                 |
 | 🧊 **Freeze round**        | The round doesn't end, even with every zombie dead, until you unfreeze it.                                                       |
@@ -81,13 +87,24 @@ paused, and you keep walking, aiming and shooting while it's open. Press **N** a
 | 🟠 **You and friends** | A dot in each player's co-op colour with the first letter of their name, a line for where they look. Dots glide smoothly; a downed friend gets a red ring. |
 | 📍 **Your room**       | Outlined in orange, with its name at the top ("Lobby", "Theater"…).                                  |
 | 🔒 **Closed doors**    | A lock with the price at every door and debris pile still closed; a lightning bolt for doors the power opens. Bought doors disappear. |
-| 🥤 **Perks**           | Every perk machine, labelled (Jug, Spd, DT, QR…).                                                    |
-| ❓ **Mystery Box**     | Every spot the box can be, with the one it's in now lit up.                                           |
+| 🥤 **Perks**           | Every perk machine, with the game's own perk icon.                                                   |
+| 📦 **Mystery Box**     | Every spot the box can be, with the one it's in now ringed in gold.                                   |
 | 🟣 **Pack-a-Punch**    | Where it is.                                                                                          |
 | ⚡ **Power switch**    | Lit up once the power is on.                                                                          |
 | 🏢 **Floors**          | On maps with several floors, the floor you're on, with buttons that show which friends are on another. |
 
-Everyone running this version sees the map, whoever hosts. The floor plans are made from each map's own data, so no
+### The minimap
+
+A small map sits in the top left corner during every game. You stay in the middle, and it scrolls under you as you run,
+with the room you're in written along the top. It shows the same rooms, doors, icons and friends as the big map, and it
+hides while the big map is open. Turn it off under **Settings → Minimap** on the Co-op card.
+
+<p align="center">
+  <img src="docs/images/minimap.png" alt="The minimap in the top left corner: the room name on top, the player in the middle" width="240">
+</p>
+
+Everyone running this version sees the maps, whoever hosts. The perk and box icons are read from the game's own files
+in your browser while you play. The floor plans are made from each map's own data, so no
 picture of the level is needed.
 
 ---
@@ -155,17 +172,40 @@ in `chrome://extensions`. The Co-op card tells you when a new version is out.
 | Key           | In a game                                                                                       |
 | :------------ | :---------------------------------------------------------------------------------------------- |
 | **M**         | Opens the Co-op card at Fun mode and the cheat menu. Click the game (or press M again) to go back. |
-| **N**         | Opens and closes the map.                                                                       |
+| **N**         | Opens and closes the big map.                                                                   |
 | **Esc**       | The game's own menu. It pauses the game for everyone.                                           |
 
 **Using the cheat menu:** pick who gets it under **Give to**, then click a weapon, perk or power-up. A message under
 the button tells you whether it worked.
 
-<img src="docs/images/fork-cheats.png" alt="The cheat menu: give to Lucas, Jonas, Mads or everyone; the map's weapons; free perks; power-ups; rounds" width="328"> **Settings → Cheat menu → Turn off** brings back the original Fun mode and turns
-off the map (reload the page afterwards).
+<img src="docs/images/fork-cheats.png" alt="The cheat menu: give to Lucas, Jonas, Mads or everyone; the map's weapons; free perks; power-ups; rounds" width="328">
 
-**Playing with friends often?** Make your own relay (free, 5 minutes). It's only used to introduce players and as a
-fallback, but your own is only for your group. The Co-op card has a **Create my relay** button with the guide.
+**Settings → Minimap → Turn off** hides the corner minimap. **Settings → Cheat menu → Turn off** brings back the
+original Fun mode and turns off both maps (reload the page afterwards).
+
+---
+
+## 👥 Playing With Friends
+
+**Direct by default.** When a friend joins your game, their browser connects straight to yours, and the game runs over
+that direct link. There's nothing to set up. Two free public servers (from Cloudflare and Google) help the browsers
+find each other. The Co-op card shows **Direct** or **Relay** under each player's ping.
+
+**The relay** is a small server that introduces players to each other. It also carries the game for anyone whose
+direct link can't be made, which happens on some strict home or work networks. Everyone uses the original project's
+shared relay unless they pick their own.
+
+**Your own relay (optional, free, 5 minutes).** The shared relay has a daily limit for everyone together. With direct
+links it's rarely a problem, but if you play often, or a friend keeps showing **Relay**, make your own:
+
+1. On the Co-op card's start screen, click **Create my relay**.
+   [The guide](https://allanlotta.github.io/bo1-zombies-coop/#relay) walks you through it on a free Cloudflare
+   account.
+2. Open **Settings → Relay**, click **Change relay**, and paste your relay's address.
+3. Host as usual. Your invite link carries your relay. Friends who open it see "This invite uses another relay" and
+   click **Use this relay** once.
+
+Only the host needs to set a relay up. Friends just open the invite link.
 
 ---
 

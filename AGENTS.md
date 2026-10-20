@@ -24,7 +24,9 @@ guest, and after `prepareHost` captured the settings guests copy). `src/cheats/g
 dvar and publishes `cheats_*` dvars; `src/cheats/bridge.js` reads them by sending the dvar's name as a console command
 and catching the engine's `"name" is: "value^7"` print in `console.log`. M opens the card without pausing
 (`src/cheats/hotkey.js`): vel.gg presses Escape for the game whenever it sees the pointer lock lost, so the one unlock M
-causes is hidden from it.
+causes is hidden from it. Health levels (100–500 %, `health <target> <pct>`) multiply the player's own `maxhealth`
+(100, or Juggernog's 250); `cheats_health_loop` notices when the game resets it (a perk, a revive, a respawn) and puts
+the level back on top.
 
 ## Direct links in one paragraph
 
@@ -55,6 +57,11 @@ for a one-off dump (each room's path nodes) and builds the plan; the raw dumps s
 `node scripts/map-plan.mjs rebuild` remakes the plans from them (after changing the floors or names in
 `src/map/names.js`). A plan whose `sig` doesn't match the game hides the doors, so regenerate the plans when vel.gg
 changes a map. Findings behind it: `docs/superpowers/specs/2026-10-20-in-game-map-spike.md`.
+The perk and Mystery Box icons are the game's own: `src/map/icons.js` reads them at run time from the map pack's
+`.iwd` archives in OPFS (`pack-<slug>/files/main`, zip files of `.iwi` images; perks in `iw_06` / `iw_36`, the box's
+`minimap_icon_mystery_box` in `iw_05`) and decodes their DXT data, so no game artwork is in the repo; without them the
+map draws text labels. The corner minimap (`src/map/minimap.js`, on unless Settings → Minimap is off) copies the
+square around the player out of a cached drawing of the floor each frame and hides while the big map is open.
 
 ## Checks
 
@@ -68,7 +75,7 @@ changes a map. Findings behind it: `docs/superpowers/specs/2026-10-20-in-game-ma
   command), `kino ui` (M and the card's buttons), `kino load` / `kino off`, `<map> sweep` (everything once on a map),
   `HORDE=1` for Hell mode. `PROFILE=<dir>` reuses a browser profile with the packs already downloaded. The map:
   `<map> map-script` (the script's data; `MAPDOOR=8` on Five opens a debris pile), `<map> map` (N, a door opening,
-  smoothness), and in co-op `MAP=1 node test/e2e.mjs 2 kino` (the guest's map, the host's dot gliding).
+  smoothness), `kino health` (levels and Juggernog stacking, read from entity memory), and in co-op `MAP=1 node test/e2e.mjs 2 kino` (the guest's map, the host's dot gliding).
 - Things learned in game: the script's lists are published 2 s after everyone spawned (wait for `lists>=1`); unfreezing
   keeps zombie spawning paused until the round ends, or one extra zombie spawns. A bought door keeps its trigger with
   `_door_open` set (debris may delete it); hidden box spots and Moon's Juggernog and Speed Cola triggers sit 10,000
