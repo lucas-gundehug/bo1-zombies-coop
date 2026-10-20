@@ -50,7 +50,9 @@ changes a map. Findings behind it: `docs/superpowers/specs/2026-10-20-in-game-ma
 - Things learned in game: the script's lists are published 2 s after everyone spawned (wait for `lists>=1`); unfreezing
   keeps zombie spawning paused until the round ends, or one extra zombie spawns. A bought door keeps its trigger with
   `_door_open` set (debris may delete it); hidden box spots and Moon's Juggernog and Speed Cola triggers sit 10,000
-  units down (`chest.orig_origin` is a box's real place).
+  units down (`chest.orig_origin` is a box's real place). Power switches: `use_elec_switch` (most maps),
+  `use_power_switch` (Der Riese), `use_master_switch` (Verrückt), `power_trigger_left` / `_right` (Shangri-La); all set
+  the `power_on` flag.
 
 ## Release
 
