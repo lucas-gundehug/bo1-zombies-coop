@@ -179,8 +179,29 @@ the button tells you whether it worked.
 **Settings → Minimap → Turn off** hides the corner minimap. **Settings → Cheat menu → Turn off** brings back the
 original Fun mode and turns off both maps (reload the page afterwards).
 
-**Playing with friends often?** Make your own relay (free, 5 minutes). It's only used to introduce players and as a
-fallback, but your own is only for your group. The Co-op card has a **Create my relay** button with the guide.
+---
+
+## 👥 Playing With Friends
+
+**Direct by default.** When a friend joins your game, their browser connects straight to yours, and the game runs over
+that direct link. There's nothing to set up. Two free public servers (from Cloudflare and Google) help the browsers
+find each other. The Co-op card shows **Direct** or **Relay** under each player's ping.
+
+**The relay** is a small server that introduces players to each other. It also carries the game for anyone whose
+direct link can't be made, which happens on some strict home or work networks. Everyone uses the original project's
+shared relay unless they pick their own.
+
+**Your own relay (optional, free, 5 minutes).** The shared relay has a daily limit for everyone together. With direct
+links it's rarely a problem, but if you play often, or a friend keeps showing **Relay**, make your own:
+
+1. On the Co-op card's start screen, click **Create my relay**.
+   [The guide](https://allanlotta.github.io/bo1-zombies-coop/#relay) walks you through it on a free Cloudflare
+   account.
+2. Open **Settings → Relay**, click **Change relay**, and paste your relay's address.
+3. Host as usual. Your invite link carries your relay. Friends who open it see "This invite uses another relay" and
+   click **Use this relay** once.
+
+Only the host needs to set a relay up. Friends just open the invite link.
 
 ---
 
