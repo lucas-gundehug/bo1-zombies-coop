@@ -1,4 +1,4 @@
-// BO1 Zombies Co-op 2.2.2.1 for vel.gg. Built from src/ with scripts/build.mjs; edit the sources, not this file.
+// BO1 Zombies Co-op 2.2.2.2 for vel.gg. Built from src/ with scripts/build.mjs; edit the sources, not this file.
 (() => {
   // relay/src/protocol.js
   var ROLES = Object.freeze(["host", "guest"]);
@@ -578,12 +578,412 @@
     }
   };
 
+  // src/ui/strings.js
+  var LANG = /^pt\b/i.test(navigator.language ?? "") ? "pt" : "en";
+  var STRINGS = {
+    en: {
+      tagline: "up to 4 players",
+      chip: { solo: "Solo", hosting: "Hosting", joining: "Joining", lobby: "Lobby", ingame: "In game", paused: "Paused", offline: "Offline", error: "Error", ended: "Disconnected" },
+      intro: "Play zombies with up to 3 friends. One player hosts, the others join with the invite link. Everyone needs this extension.",
+      host: "Host a game",
+      joinLabel: "Join a friend",
+      joinPlaceholder: "Room code or invite link",
+      join: "Join",
+      room: "Room",
+      inviteAside: (n) => `${n} free seat${n === 1 ? "" : "s"}`,
+      copy: "Copy link",
+      copyCode: "Copy code",
+      copied: "Copied!",
+      players: "Lobby",
+      playersAside: (n, max) => `${n}/${max} connected`,
+      freeHint: "Send someone the link",
+      player: (n) => `Player ${n}`,
+      you: "you",
+      hostTag: "host",
+      st: {
+        free: "Free seat",
+        left: "Left",
+        reconnecting: "Reconnecting…",
+        disconnected: "Disconnected · can rejoin",
+        ingame: "In game",
+        ready: "Ready",
+        joining: "Joining…",
+        turn: "Next in line",
+        loading: "Loading the map…",
+        picking: "Picking a map",
+        lobby: "In the lobby",
+        opening: "Opening the room…",
+        away: "Not in the room"
+      },
+      map: "Map",
+      noMap: "Not picked yet",
+      mapSubHost: "Everyone follows you to this map",
+      mapSubGuest: "Picked by the host",
+      hell: "Hell mode",
+      stepsGuest: ["Room", "Map", "Load", "Join", "Play"],
+      stepsHost: ["Map", "Load", "Lobby", "Play"],
+      pickMap: "Pick a map in the game menu. Everyone follows you to it.",
+      gate: "Players are on the way. Your start waits for them, so everyone spawns together.",
+      startNow: "Start now",
+      allIn: "Everyone is in. Click the game to start.",
+      latecomers: "Players who join after the start watch until the next round (the BO1 rule for latecomers).",
+      pausedYou: "Paused. Everyone is paused too.",
+      pausedBy: "Paused by another player.",
+      waitingHost: "Waiting for the host…",
+      hostPicking: "Waiting for the host to pick a map…",
+      opening: (m) => `Opening ${m}…`,
+      pressKey: "Press any key on the page to load the map.",
+      loadingMap: "Loading the map…",
+      hostLoading: "Waiting for the host to finish loading…",
+      nextInLine: "Another player is joining. You are next.",
+      connecting: "Connecting to the host…",
+      joiningGame: "Joining the host's game…",
+      waitingStart: "You are in. Waiting for the host to start.",
+      clickToPlay: "You are in. Click the game to play.",
+      lateJoin: "The host had already started: you watch until the next round, then spawn.",
+      ended: "Disconnected from the host. You can rejoin while the host keeps playing.",
+      failed: "Could not join. Try again.",
+      rejoin: "Rejoin",
+      goToHost: "Go to the host",
+      leave: "Leave co-op",
+      otherRelay: (h) => `This invite uses another relay (${h}). Switch to it to join.`,
+      useRelay: "Use this relay",
+      settings: "Settings",
+      yourName: "Your name",
+      namePlaceholder: "Shown in the lobby",
+      save: "Save",
+      connection: "Connection",
+      relay: "Relay",
+      relayState: { open: "Connected", connecting: "Connecting…", closed: "Reconnecting…", idle: "Starting…" },
+      ping: "Ping",
+      path: { direct: "Direct", relay: "Relay", connecting: "Connecting…" },
+      pathCount: (d, r) => `${d} Direct, ${r} Relay`,
+      dropped: "Packets dropped",
+      relayDefault: "Default relay",
+      relayCustom: (h) => `Custom (${h})`,
+      relayNote: "Free Cloudflare plan: a few hours of play a day, shared by everyone on this relay. For a group that plays often, create your own (5 minutes, free).",
+      changeRelay: "Change relay",
+      useDefault: "Use the default relay",
+      cancel: "Cancel",
+      relayEditNote: "Everyone must use the same relay. Your invite links carry it.",
+      relayPlaceholder: "https://your-relay.workers.dev",
+      usage: (p, t) => `Today: ${p}% of the free allowance used · resets at ${t}`,
+      usedUp: (t) => `Today's allowance is used up · resets at ${t}`,
+      controller: "Controller",
+      ctrl: { off: "Off", unavailable: "Unavailable", press: "Press any button on it", later: (n) => `${n} · works in game`, active: (n, a, max) => `${n} · aim ${a}/${max}` },
+      aimDown: "Aim −",
+      aimUp: "Aim +",
+      turnOff: "Turn off",
+      turnOn: "Turn on",
+      credits: "Game: vel.gg by MisaDev4 · Co-op: BO1 Zombies Co-op",
+      notRoomCode: "That is not a room code. Paste the invite link or the 16-letter code.",
+      notRelay: "That is not a relay address. It looks like https://something.workers.dev",
+      controllerReload: "Reload the page to apply the controller setting.",
+      engineUpdated: "vel.gg updated its game engine, and this version of the extension does not know it yet: co-op and the controller are off.",
+      enginePatchFailed: (m) => `Could not prepare the engine (${m}): co-op and the controller are off.`,
+      replaced: "This room was opened in another tab or window.",
+      full: (n) => `This game is full (${n} players).`,
+      workerFailed: (m) => `Co-op worker failed: ${m}`,
+      unexpectedMemory: "Unexpected engine memory: co-op is off.",
+      hostNoAnswer: "The host did not answer. Check that their game page is open, then reload.",
+      versionMismatch: "You and the host have different versions of the game. Reload both pages.",
+      hostPlaying: (m) => `The host is playing ${m}. Reload this page.`,
+      connectFailed: "Could not start the connection to the host. Reload both pages.",
+      notLetIn: "The host did not let us in. Reload both pages and try again.",
+      hostLeft: "The host left the game.",
+      updateAvailable: (v) => `Version ${v} is out. Updating takes about a minute.`,
+      updateHow: "How to update",
+      relayOverQuota: (t) => `This relay used up today's free allowance${t ? ` (it comes back at ${t})` : ""}. With your own relay, free and set up in 5 minutes, your group plays now.`,
+      relayGuide: "Create my relay",
+      relayPitch: "Co-op runs through a relay. The shared one is free but small: a few hours of play a day for everyone together, and it runs out when many people play. Your own relay is free too, takes 5 minutes to create, and is only for your group.",
+      relayPitchHost: "You are on the shared relay, which can run out on busy days. With your own (free, 5 minutes) your group never waits.",
+      relayHaveOne: "I already have one"
+    },
+    pt: {
+      tagline: "até 4 jogadores",
+      chip: { solo: "Solo", hosting: "Hospedando", joining: "Entrando", lobby: "Lobby", ingame: "Em jogo", paused: "Pausado", offline: "Offline", error: "Erro", ended: "Desconectado" },
+      intro: "Jogue zombies com até 3 amigos. Um jogador hospeda e os outros entram pelo link de convite. Todos precisam desta extensão.",
+      host: "Hospedar partida",
+      joinLabel: "Entrar na partida de um amigo",
+      joinPlaceholder: "Código da sala ou link",
+      join: "Entrar",
+      room: "Sala",
+      inviteAside: (n) => `${n} vaga${n === 1 ? "" : "s"} livre${n === 1 ? "" : "s"}`,
+      copy: "Copiar link",
+      copyCode: "Copiar código",
+      copied: "Copiado!",
+      players: "Lobby",
+      playersAside: (n, max) => `${n}/${max} conectados`,
+      freeHint: "Mande o link para alguém",
+      player: (n) => `Jogador ${n}`,
+      you: "você",
+      hostTag: "host",
+      st: {
+        free: "Vaga livre",
+        left: "Saiu",
+        reconnecting: "Reconectando…",
+        disconnected: "Desconectou · pode voltar",
+        ingame: "Em jogo",
+        ready: "Pronto",
+        joining: "Entrando…",
+        turn: "Na fila para entrar",
+        loading: "Carregando o mapa…",
+        picking: "Escolhendo o mapa",
+        lobby: "No lobby",
+        opening: "Abrindo a sala…",
+        away: "Fora da sala"
+      },
+      map: "Mapa",
+      noMap: "Ainda não escolhido",
+      mapSubHost: "Todos vão seguir você para este mapa",
+      mapSubGuest: "Escolhido pelo host",
+      hell: "Hell mode",
+      stepsGuest: ["Sala", "Mapa", "Carregar", "Entrar", "Jogar"],
+      stepsHost: ["Mapa", "Carregar", "Lobby", "Jogar"],
+      pickMap: "Escolha um mapa no menu do jogo. Todos vão seguir você.",
+      gate: "Tem jogadores a caminho. Seu início espera por eles, para todos nascerem juntos.",
+      startNow: "Começar agora",
+      allIn: "Todos entraram. Clique no jogo para começar.",
+      latecomers: "Quem entrar depois do início assiste até a próxima rodada (regra do BO1 para quem chega atrasado).",
+      pausedYou: "Pausado. Todos estão pausados também.",
+      pausedBy: "Pausado por outro jogador.",
+      waitingHost: "Esperando o host…",
+      hostPicking: "Esperando o host escolher o mapa…",
+      opening: (m) => `Abrindo ${m}…`,
+      pressKey: "Aperte qualquer tecla na página para carregar o mapa.",
+      loadingMap: "Carregando o mapa…",
+      hostLoading: "Esperando o host terminar de carregar…",
+      nextInLine: "Outro jogador está entrando. Você é o próximo.",
+      connecting: "Conectando ao host…",
+      joiningGame: "Entrando na partida do host…",
+      waitingStart: "Você entrou. Esperando o host começar.",
+      clickToPlay: "Você entrou. Clique no jogo para jogar.",
+      lateJoin: "O host já tinha começado: você assiste até a próxima rodada e então nasce.",
+      ended: "Desconectado do host. Você pode voltar enquanto o host continuar jogando.",
+      failed: "Não deu para entrar. Tente de novo.",
+      rejoin: "Voltar para a partida",
+      goToHost: "Ir até o host",
+      leave: "Sair do co-op",
+      otherRelay: (h) => `Este convite usa outro relay (${h}). Troque para ele para entrar.`,
+      useRelay: "Usar este relay",
+      settings: "Configurações",
+      yourName: "Seu nome",
+      namePlaceholder: "Aparece no lobby",
+      save: "Salvar",
+      connection: "Conexão",
+      relay: "Relay",
+      relayState: { open: "Conectado", connecting: "Conectando…", closed: "Reconectando…", idle: "Iniciando…" },
+      ping: "Ping",
+      path: { direct: "Direta", relay: "Relay", connecting: "Conectando…" },
+      pathCount: (d, r) => `${d} Direta, ${r} Relay`,
+      dropped: "Pacotes perdidos",
+      relayDefault: "Relay padrão",
+      relayCustom: (h) => `Personalizado (${h})`,
+      relayNote: "Plano grátis da Cloudflare: algumas horas de jogo por dia, divididas por todos que usam este relay. Para um grupo que joga sempre, crie o seu (5 minutos, grátis).",
+      changeRelay: "Trocar relay",
+      useDefault: "Usar o relay padrão",
+      cancel: "Cancelar",
+      relayEditNote: "Todos precisam usar o mesmo relay. Seus links de convite já levam ele.",
+      relayPlaceholder: "https://seu-relay.workers.dev",
+      usage: (p, t) => `Hoje: ${p}% da cota grátis usada · renova às ${t}`,
+      usedUp: (t) => `Cota de hoje esgotada · renova às ${t}`,
+      controller: "Controle",
+      ctrl: { off: "Desligado", unavailable: "Indisponível", press: "Aperte qualquer botão nele", later: (n) => `${n} · funciona no jogo`, active: (n, a, max) => `${n} · mira ${a}/${max}` },
+      aimDown: "Mira −",
+      aimUp: "Mira +",
+      turnOff: "Desligar",
+      turnOn: "Ligar",
+      credits: "Jogo: vel.gg por MisaDev4 · Co-op: BO1 Zombies Co-op",
+      notRoomCode: "Isso não é um código de sala. Cole o link de convite ou o código de 16 letras.",
+      notRelay: "Isso não é um endereço de relay. Ele parece com https://algo.workers.dev",
+      controllerReload: "Recarregue a página para aplicar a configuração do controle.",
+      engineUpdated: "O vel.gg atualizou o motor do jogo e esta versão da extensão ainda não o conhece: co-op e controle desligados.",
+      enginePatchFailed: (m) => `Não deu para preparar o motor do jogo (${m}): co-op e controle desligados.`,
+      replaced: "Esta sala foi aberta em outra aba ou janela.",
+      full: (n) => `Esta partida está cheia (${n} jogadores).`,
+      workerFailed: (m) => `O worker do co-op falhou: ${m}`,
+      unexpectedMemory: "Memória do motor inesperada: co-op desligado.",
+      hostNoAnswer: "O host não respondeu. Confira se a página do jogo dele está aberta e recarregue.",
+      versionMismatch: "Você e o host estão com versões diferentes do jogo. Recarreguem as duas páginas.",
+      hostPlaying: (m) => `O host está jogando ${m}. Recarregue esta página.`,
+      connectFailed: "Não deu para iniciar a conexão com o host. Recarreguem as duas páginas.",
+      notLetIn: "O host não deixou entrar. Recarreguem as duas páginas e tentem de novo.",
+      hostLeft: "O host saiu da partida.",
+      updateAvailable: (v) => `Saiu a versão ${v}. Atualizar leva cerca de 1 minuto.`,
+      updateHow: "Como atualizar",
+      relayOverQuota: (t) => `Este relay usou toda a cota grátis de hoje${t ? ` (ela volta às ${t})` : ""}. Com o seu próprio relay, grátis e criado em 5 minutos, o seu grupo joga agora.`,
+      relayGuide: "Criar meu relay",
+      relayPitch: "O co-op passa por um relay. O compartilhado é grátis, mas pequeno: algumas horas de jogo por dia para todo mundo junto, e acaba quando muita gente joga. O seu próprio relay também é grátis, leva 5 minutos para criar e é só do seu grupo.",
+      relayPitchHost: "Você está no relay compartilhado, que pode acabar nos dias cheios. Com o seu (grátis, 5 minutos) o seu grupo nunca espera.",
+      relayHaveOne: "Já tenho um"
+    }
+  };
+  var T = STRINGS[LANG];
+
+  // src/util/settings.js
+  var PREFIX = "bo1coop.";
+  function readSetting(key, fallback) {
+    try {
+      return localStorage.getItem(PREFIX + key) ?? fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  function saveSetting(key, value) {
+    try {
+      if (value === "" || value == null) localStorage.removeItem(PREFIX + key);
+      else localStorage.setItem(PREFIX + key, value);
+    } catch {
+    }
+  }
+  function guestIdFor(room) {
+    const key = `${PREFIX}guest:${room}`;
+    try {
+      const saved = sessionStorage.getItem(key);
+      if (saved && GUEST_ID_PATTERN.test(saved)) return saved;
+      const id = createGuestId();
+      sessionStorage.setItem(key, id);
+      return id;
+    } catch {
+      return createGuestId();
+    }
+  }
+  var cleanName = (text) => String(text ?? "").replace(/[^\p{L}\p{N} _.-]/gu, "").replace(/\s+/g, " ").trim().slice(0, 16);
+
+  // src/util/relay.js
+  var DEFAULT_RELAY = "https://bo1z-coop-4p-relay.allanlotta.workers.dev";
+  function normalizeRelay(text) {
+    try {
+      const url = new URL(String(text).trim());
+      if (url.protocol === "wss:") url.protocol = "https:";
+      return url.protocol === "https:" && url.hostname.includes(".") ? url.origin : "";
+    } catch {
+      return "";
+    }
+  }
+  function isLoopback(url) {
+    try {
+      return ["127.0.0.1", "localhost", "[::1]"].includes(new URL(url).hostname);
+    } catch {
+      return false;
+    }
+  }
+  function pickRelay(override) {
+    if (override && isLoopback(override)) return override;
+    return normalizeRelay(readSetting("relay", "")) || DEFAULT_RELAY;
+  }
+  function inviteLink(session) {
+    const relay = session.relay !== DEFAULT_RELAY && !session.relayParam ? `&relay=${encodeURIComponent(session.relay)}` : "";
+    return `${location.origin}${landingUrl(`coop=join&coopRoom=${session.room}${session.relayParam}${relay}`)}`;
+  }
+
+  // src/session/session.js
+  var VERSION = "2.2.2";
+  var AIM_LEVELS = 10;
+  function createSession(search = location.search) {
+    const params = new URLSearchParams(search);
+    const room = normalizeRoomCode(params.get("coopRoom") ?? params.get("room") ?? "");
+    const wanted = params.get("coop");
+    const relayOverride = params.get("coopRelay");
+    const session = {
+      version: VERSION,
+      /** "host", "guest", or null when playing solo. */
+      mode: room && wanted === "host" ? "host" : room && wanted === "join" ? "guest" : null,
+      room,
+      relay: pickRelay(relayOverride),
+      relayParam: relayOverride && isLoopback(relayOverride) ? `&coopRelay=${encodeURIComponent(relayOverride)}` : "",
+      // A relay named in an invite is only used after the guest agrees to switch.
+      inviteRelay: normalizeRelay(params.get("relay") ?? ""),
+      // The controller drives the game through the patched engine, so with it on even solo games get patched.
+      controller: readSetting("controller", "1") !== "0",
+      aimLevel: Math.max(0, Math.min(AIM_LEVELS - 1, Number(readSetting("aim", "4")) || 0)),
+      name: cleanName(readSetting("name", "")),
+      // engine
+      hash: null,
+      build: null,
+      patched: false,
+      engine: null,
+      zone: null,
+      gameSettings: null,
+      // network
+      socket: "idle",
+      pump: null,
+      stats: null,
+      usage: null,
+      /** Host: some guest is in the room. Guest: the host is in the room. Either path counts (syncPresence). */
+      peer: false,
+      // direct links (src/net/direct.js): seat -> "direct" while that link is open (seat 0 on a guest is the host)
+      direct: null,
+      links: /* @__PURE__ */ new Map(),
+      relayGuests: /* @__PURE__ */ new Set(),
+      // host: the seats the relay says are in the room
+      relayLeft: /* @__PURE__ */ new Set(),
+      // host: seats the relay reported gone since this host connection's welcome
+      relayPeer: false,
+      // guest: the relay says the host is in the room
+      // host
+      queues: null,
+      guests: /* @__PURE__ */ new Map(),
+      // seat -> what the host knows about that guest
+      joinTurn: null,
+      // the seat currently allowed to connect
+      joinTurnAt: 0,
+      gate: false,
+      // the host's start waits for players on their way
+      startAlone: false,
+      // guest
+      phase: "idle",
+      guestId: null,
+      seat: null,
+      hostInfo: null,
+      // map and settings, from the host
+      hostState: null,
+      // the host's view of this guest (ready, slot state, join turn)
+      lobby: null,
+      // the room as the host last described it
+      hostPos: null,
+      hostTrail: [],
+      // card
+      update: null,
+      // { version, url } when a newer release is out
+      overQuota: null,
+      // { resetsAt } while the relay is out of its daily allowance
+      error: null,
+      notice: null,
+      editRelay: false,
+      showSettings: false,
+      copiedLinkAt: 0,
+      copiedCodeAt: 0,
+      log: []
+    };
+    session.note = (text) => {
+      session.log.push(`${(/* @__PURE__ */ new Date()).toISOString().slice(11, 23)} ${text}`);
+      if (session.log.length > 200) session.log.shift();
+    };
+    session.fail = (key, ...args) => {
+      const text = T[key];
+      session.error = typeof text === "function" ? text(...args) : text ?? key;
+    };
+    session.onSocket = ({ state, code }) => {
+      session.socket = state;
+      if (state === "closed" && code === 4005) session.overQuota ??= { resetsAt: null };
+      if (state === "closed" && code === 4001) session.fail("replaced");
+      if (state === "closed" && code === 4004) session.fail("full", MAX_GUESTS + 1);
+      session.note(`relay ${state}${code ? ` ${code}` : ""}`);
+    };
+    return session;
+  }
+  var validSeat = (seat) => Number.isInteger(seat) && seat >= 1 && seat <= MAX_GUESTS;
+
   // src/net/pump.js
   function startPump(session, onControl2) {
-    const url = URL.createObjectURL(new Blob(['(() => {\n  // relay/src/protocol.js\n  var PROTOCOL_VERSION = 3;\n  var ROLES = Object.freeze(["host", "guest"]);\n  var RELAY_MESSAGE_TYPES = Object.freeze(["welcome", "peer", "error"]);\n  var MAX_GUESTS = 3;\n  var MAX_TEXT_BYTES = 4096;\n  var MAX_BINARY_BYTES = 65536;\n  var MAX_PACKET_BYTES = 1264;\n  function relaySocketUrl(relayBase, room, role, guestId) {\n    const url = new URL(relayBase);\n    url.protocol = url.protocol === "http:" || url.protocol === "ws:" ? "ws:" : "wss:";\n    url.pathname = `/v1/rooms/${encodeURIComponent(room)}`;\n    url.search = `?role=${role}&v=${PROTOCOL_VERSION}${role === "guest" ? `&id=${guestId}` : ""}`;\n    return url.toString();\n  }\n  var BATCH_VERSION = 1;\n  var KIND_PACKETS = 1;\n  var KIND_SEAT_PACKETS = 2;\n  function writeBatch(kind, items, seatOf, packetOf) {\n    const header = kind === KIND_SEAT_PACKETS ? 3 : 2;\n    let size = 4;\n    for (const item of items) size += header + packetOf(item).byteLength;\n    if (items.length > 65535 || size > MAX_BINARY_BYTES) throw new RangeError("packet batch too large");\n    const out = new Uint8Array(size);\n    const view = new DataView(out.buffer);\n    out[0] = BATCH_VERSION;\n    out[1] = kind;\n    view.setUint16(2, items.length, true);\n    let at = 4;\n    for (const item of items) {\n      const packet = packetOf(item);\n      if (packet.byteLength > MAX_PACKET_BYTES) throw new RangeError("packet too large");\n      if (kind === KIND_SEAT_PACKETS) out[at++] = seatOf(item);\n      view.setUint16(at, packet.byteLength, true);\n      out.set(packet, at + 2);\n      at += 2 + packet.byteLength;\n    }\n    return out;\n  }\n  function readBatch(kind, data) {\n    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);\n    if (bytes.byteLength < 4 || bytes[0] !== BATCH_VERSION || bytes[1] !== kind) return null;\n    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);\n    const count = view.getUint16(2, true);\n    const items = [];\n    let at = 4;\n    for (let i = 0; i < count; i += 1) {\n      let seat = 0;\n      if (kind === KIND_SEAT_PACKETS) {\n        if (at + 1 > bytes.byteLength) return null;\n        seat = bytes[at++];\n        if (seat < 1 || seat > MAX_GUESTS) return null;\n      }\n      if (at + 2 > bytes.byteLength) return null;\n      const length = view.getUint16(at, true);\n      at += 2;\n      if (length > MAX_PACKET_BYTES || at + length > bytes.byteLength) return null;\n      items.push({ seat, packet: bytes.subarray(at, at + length) });\n      at += length;\n    }\n    return at === bytes.byteLength ? items : null;\n  }\n  var encodePackets = (packets) => writeBatch(KIND_PACKETS, packets, null, (p) => p);\n  var decodePackets = (data) => readBatch(KIND_PACKETS, data)?.map((item) => item.packet) ?? null;\n  var encodeSeatPackets = (items) => writeBatch(KIND_SEAT_PACKETS, items, (i) => i.seat, (i) => i.packet);\n  var decodeSeatPackets = (data) => readBatch(KIND_SEAT_PACKETS, data);\n  function parseControl(text) {\n    if (typeof text !== "string" || text.length > MAX_TEXT_BYTES) return null;\n    let value;\n    try {\n      value = JSON.parse(text);\n    } catch {\n      return null;\n    }\n    const ok = value && typeof value === "object" && !Array.isArray(value) && typeof value.t === "string" && value.t.length <= 32;\n    return ok ? value : null;\n  }\n\n  // src/net/queues.js\n  var QueueReader = class {\n    constructor(buffer, loopback, base, { consume = false } = {}) {\n      this.i32 = new Int32Array(buffer);\n      this.u8 = new Uint8Array(buffer);\n      this.lb = loopback;\n      this.base = base;\n      this.readIndex = base + loopback.offGet >> 2;\n      this.writeIndex = base + loopback.offSend >> 2;\n      this.consume = consume;\n      this.cursor = Atomics.load(this.i32, this.writeIndex);\n      this.lost = 0;\n    }\n    /** Forgets everything written so far. */\n    skip() {\n      this.cursor = Atomics.load(this.i32, this.writeIndex);\n      if (this.consume) Atomics.store(this.i32, this.readIndex, this.cursor);\n    }\n    /** New packets since the last call. Slots the engine overwrote before we got to them count as lost. */\n    poll(out = []) {\n      const { slots, slotSize, offLen, dataMax } = this.lb;\n      let written = Atomics.load(this.i32, this.writeIndex);\n      if (written - this.cursor > slots - 1) {\n        this.lost += written - (slots - 1) - this.cursor;\n        this.cursor = written - (slots - 1);\n      }\n      while (this.cursor < written) {\n        const slot = this.base + (this.cursor & slots - 1) * slotSize;\n        const length = this.i32[slot + offLen >> 2];\n        const packet = length > 0 && length <= dataMax ? this.u8.slice(slot, slot + length) : null;\n        written = Atomics.load(this.i32, this.writeIndex);\n        if (written - this.cursor > slots - 1) this.lost += 1;\n        else if (packet) out.push(packet);\n        this.cursor += 1;\n      }\n      if (this.consume) Atomics.store(this.i32, this.readIndex, this.cursor);\n      return out;\n    }\n  };\n  var QueueWriter = class {\n    constructor(buffer, loopback, base) {\n      this.i32 = new Int32Array(buffer);\n      this.u8 = new Uint8Array(buffer);\n      this.lb = loopback;\n      this.base = base;\n      this.readIndex = base + loopback.offGet >> 2;\n      this.writeIndex = base + loopback.offSend >> 2;\n    }\n    hasRoom() {\n      return Atomics.load(this.i32, this.writeIndex) - Atomics.load(this.i32, this.readIndex) < this.lb.slots - 1;\n    }\n    /** False, without writing, when the engine has not caught up yet; the caller retries later. */\n    push(packet, port) {\n      const { slots, slotSize, offLen, offPort, dataMax } = this.lb;\n      if (packet.byteLength === 0 || packet.byteLength > dataMax) return true;\n      if (!this.hasRoom()) return false;\n      const written = Atomics.load(this.i32, this.writeIndex);\n      const slot = this.base + (written & slots - 1) * slotSize;\n      this.u8.set(packet, slot);\n      Atomics.store(this.i32, slot + offLen >> 2, packet.byteLength);\n      Atomics.store(this.i32, slot + offPort >> 2, port);\n      Atomics.add(this.i32, this.writeIndex, 1);\n      return true;\n    }\n  };\n  function connectionlessCommand(packet) {\n    if (packet.byteLength < 5 || packet[0] !== 255 || packet[1] !== 255 || packet[2] !== 255 || packet[3] !== 255) return null;\n    let end = 4;\n    while (end < packet.byteLength && end < 64 && packet[end] !== 0 && packet[end] !== 32 && packet[end] !== 10) end += 1;\n    return String.fromCharCode(...packet.subarray(4, end));\n  }\n\n  // src/net/pump-worker.js\n  var POLL_MS = 1;\n  var FLUSH_MS = 4;\n  var INBOX_LIMIT = 512;\n  var PING_MS = 2e3;\n  var state = {\n    role: null,\n    url: null,\n    socket: null,\n    closed: false,\n    retries: 0,\n    readers: [],\n    writer: null,\n    ports: {},\n    reading: false,\n    injecting: false,\n    dropUntilConnect: false,\n    dropCommands: [],\n    inbox: [],\n    outbox: [],\n    lastFlush: 0,\n    looping: false,\n    stats: { packetsOut: 0, packetsIn: 0, bytesOut: 0, bytesIn: 0, framesOut: 0, framesIn: 0, dropped: 0, lost: 0, rtt: null, rtts: {} }\n  };\n  var hosting = () => state.role === "host";\n  var post = (message) => self.postMessage(message);\n  self.onmessage = ({ data: message }) => {\n    switch (message.type) {\n      case "connect":\n        state.role = message.role;\n        state.url = relaySocketUrl(message.relay, message.room, message.role, message.guestId);\n        open();\n        loop();\n        break;\n      case "attach":\n        state.readers = message.reads.map(({ seat, base }) => ({ seat, queue: new QueueReader(message.buffer, message.loopback, base, { consume: true }) }));\n        state.writer = new QueueWriter(message.buffer, message.loopback, message.writeBase);\n        state.ports = message.ports;\n        state.reading = Boolean(message.reading);\n        state.injecting = Boolean(message.injecting);\n        state.dropCommands = message.dropCommands ?? [];\n        break;\n      case "read":\n        for (const { queue } of state.readers) queue.skip();\n        state.dropUntilConnect = Boolean(message.dropUntilConnect);\n        state.reading = true;\n        break;\n      case "inject":\n        state.injecting = Boolean(message.on);\n        if (message.clearInbox) state.inbox.length = 0;\n        break;\n      case "send":\n        sendText(message.message);\n        break;\n      case "close":\n        state.closed = true;\n        try {\n          state.socket?.close(1e3, "bye");\n        } catch {\n        }\n        break;\n    }\n  };\n  function open() {\n    if (state.closed) return;\n    let socket;\n    try {\n      socket = new WebSocket(state.url);\n    } catch (error) {\n      post({ type: "socket", state: "error", reason: String(error?.message ?? error) });\n      retry();\n      return;\n    }\n    socket.binaryType = "arraybuffer";\n    state.socket = socket;\n    post({ type: "socket", state: "connecting" });\n    socket.onopen = () => {\n      state.retries = 0;\n      post({ type: "socket", state: "open" });\n    };\n    socket.onmessage = ({ data }) => typeof data === "string" ? onText(data) : onBinary(data);\n    socket.onclose = (event) => {\n      if (state.socket === socket) state.socket = null;\n      post({ type: "socket", state: "closed", code: event.code, reason: event.reason });\n      if (event.code === 4001 || event.code === 4004) state.closed = true;\n      else if (event.code === 4005) setTimeout(open, 6e4);\n      else retry();\n    };\n    socket.onerror = () => {\n    };\n  }\n  function retry() {\n    if (state.closed) return;\n    setTimeout(open, Math.min(5e3, 250 * 2 ** state.retries));\n    state.retries += 1;\n  }\n  function onBinary(data) {\n    const items = hosting() ? decodeSeatPackets(data) : decodePackets(data)?.map((packet) => ({ seat: 0, packet }));\n    if (!items) return;\n    state.stats.framesIn += 1;\n    for (const item of items) {\n      state.stats.packetsIn += 1;\n      state.stats.bytesIn += item.packet.byteLength;\n      const command = connectionlessCommand(item.packet);\n      if (command && state.dropCommands.includes(command)) continue;\n      state.inbox.push(item);\n    }\n    if (state.inbox.length > INBOX_LIMIT) {\n      state.stats.dropped += state.inbox.length - INBOX_LIMIT;\n      state.inbox.splice(0, state.inbox.length - INBOX_LIMIT);\n    }\n    pump();\n  }\n  function onText(text) {\n    const message = parseControl(text);\n    if (!message) return;\n    if (message.t === "ping") {\n      sendText(hosting() ? { t: "pong", ts: message.ts, to: message.from } : { t: "pong", ts: message.ts });\n    } else if (message.t === "pong") {\n      if (typeof message.ts !== "number") return;\n      const rtt = Math.max(0, performance.now() - message.ts);\n      if (hosting()) {\n        if (Number.isInteger(message.from)) state.stats.rtts[message.from] = rtt;\n        state.stats.rtt = Math.max(0, ...Object.values(state.stats.rtts));\n      } else {\n        state.stats.rtt = rtt;\n      }\n    } else {\n      post({ type: "control", message });\n    }\n  }\n  function sendText(message) {\n    if (state.socket?.readyState !== WebSocket.OPEN) return false;\n    state.socket.send(JSON.stringify(message));\n    return true;\n  }\n  function flush(now) {\n    if (!state.outbox.length) return;\n    const socket = state.socket;\n    if (socket?.readyState !== WebSocket.OPEN) {\n      state.stats.dropped += state.outbox.length;\n    } else {\n      const seats = hosting();\n      const perPacket = seats ? 3 : 2;\n      let batch = [];\n      let size = 4;\n      const send = () => {\n        if (!batch.length) return;\n        socket.send(seats ? encodeSeatPackets(batch) : encodePackets(batch.map((item) => item.packet)));\n        state.stats.framesOut += 1;\n        batch = [];\n        size = 4;\n      };\n      for (const item of state.outbox) {\n        const bytes = perPacket + item.packet.byteLength;\n        if (size + bytes > MAX_BINARY_BYTES) send();\n        batch.push(item);\n        size += bytes;\n        state.stats.packetsOut += 1;\n        state.stats.bytesOut += item.packet.byteLength;\n      }\n      send();\n    }\n    state.outbox.length = 0;\n    state.lastFlush = now;\n  }\n  function pump() {\n    const now = performance.now();\n    if (state.reading) {\n      let lost = 0;\n      for (const { seat, queue } of state.readers) {\n        let packets = queue.poll([]);\n        lost += queue.lost;\n        if (state.dropUntilConnect && packets.length) {\n          const first = packets.findIndex((packet) => connectionlessCommand(packet) === "connect");\n          packets = first < 0 ? [] : packets.slice(first);\n          if (first >= 0) state.dropUntilConnect = false;\n        }\n        for (const packet of packets) state.outbox.push({ seat, packet });\n      }\n      state.stats.lost = lost;\n    }\n    if (state.outbox.length && now - state.lastFlush >= FLUSH_MS) flush(now);\n    if (state.writer && state.injecting) {\n      while (state.inbox.length && state.writer.push(state.inbox[0].packet, state.ports[state.inbox[0].seat] ?? 0)) state.inbox.shift();\n    }\n  }\n  async function loop() {\n    if (state.looping) return;\n    state.looping = true;\n    const tick = new Int32Array(new SharedArrayBuffer(4));\n    let lastPing = 0;\n    let lastStats = 0;\n    while (!state.closed) {\n      pump();\n      const now = performance.now();\n      if (now - lastPing >= PING_MS) {\n        lastPing = now;\n        sendText({ t: "ping", ts: now });\n      }\n      if (now - lastStats >= 1e3) {\n        lastStats = now;\n        post({ type: "stats", stats: { ...state.stats, rtts: { ...state.stats.rtts }, inbox: state.inbox.length } });\n      }\n      const wait = Atomics.waitAsync ? Atomics.waitAsync(tick, 0, 0, POLL_MS) : null;\n      if (wait?.async) await wait.value;\n      else await new Promise((resolve) => setTimeout(resolve, POLL_MS));\n    }\n  }\n})();\n'], { type: "text/javascript" }));
+    const url = URL.createObjectURL(new Blob(['(() => {\n  // relay/src/protocol.js\n  var PROTOCOL_VERSION = 3;\n  var ROLES = Object.freeze(["host", "guest"]);\n  var RELAY_MESSAGE_TYPES = Object.freeze(["welcome", "peer", "error"]);\n  var MAX_GUESTS = 3;\n  var MAX_TEXT_BYTES = 4096;\n  var MAX_BINARY_BYTES = 65536;\n  var MAX_PACKET_BYTES = 1264;\n  function relaySocketUrl(relayBase, room, role, guestId) {\n    const url = new URL(relayBase);\n    url.protocol = url.protocol === "http:" || url.protocol === "ws:" ? "ws:" : "wss:";\n    url.pathname = `/v1/rooms/${encodeURIComponent(room)}`;\n    url.search = `?role=${role}&v=${PROTOCOL_VERSION}${role === "guest" ? `&id=${guestId}` : ""}`;\n    return url.toString();\n  }\n  var BATCH_VERSION = 1;\n  var KIND_PACKETS = 1;\n  var KIND_SEAT_PACKETS = 2;\n  function writeBatch(kind, items, seatOf, packetOf) {\n    const header = kind === KIND_SEAT_PACKETS ? 3 : 2;\n    let size = 4;\n    for (const item of items) size += header + packetOf(item).byteLength;\n    if (items.length > 65535 || size > MAX_BINARY_BYTES) throw new RangeError("packet batch too large");\n    const out = new Uint8Array(size);\n    const view = new DataView(out.buffer);\n    out[0] = BATCH_VERSION;\n    out[1] = kind;\n    view.setUint16(2, items.length, true);\n    let at = 4;\n    for (const item of items) {\n      const packet = packetOf(item);\n      if (packet.byteLength > MAX_PACKET_BYTES) throw new RangeError("packet too large");\n      if (kind === KIND_SEAT_PACKETS) out[at++] = seatOf(item);\n      view.setUint16(at, packet.byteLength, true);\n      out.set(packet, at + 2);\n      at += 2 + packet.byteLength;\n    }\n    return out;\n  }\n  function readBatch(kind, data) {\n    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);\n    if (bytes.byteLength < 4 || bytes[0] !== BATCH_VERSION || bytes[1] !== kind) return null;\n    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);\n    const count = view.getUint16(2, true);\n    const items = [];\n    let at = 4;\n    for (let i = 0; i < count; i += 1) {\n      let seat = 0;\n      if (kind === KIND_SEAT_PACKETS) {\n        if (at + 1 > bytes.byteLength) return null;\n        seat = bytes[at++];\n        if (seat < 1 || seat > MAX_GUESTS) return null;\n      }\n      if (at + 2 > bytes.byteLength) return null;\n      const length = view.getUint16(at, true);\n      at += 2;\n      if (length > MAX_PACKET_BYTES || at + length > bytes.byteLength) return null;\n      items.push({ seat, packet: bytes.subarray(at, at + length) });\n      at += length;\n    }\n    return at === bytes.byteLength ? items : null;\n  }\n  var encodePackets = (packets) => writeBatch(KIND_PACKETS, packets, null, (p) => p);\n  var decodePackets = (data) => readBatch(KIND_PACKETS, data)?.map((item) => item.packet) ?? null;\n  var encodeSeatPackets = (items) => writeBatch(KIND_SEAT_PACKETS, items, (i) => i.seat, (i) => i.packet);\n  var decodeSeatPackets = (data) => readBatch(KIND_SEAT_PACKETS, data);\n  function parseControl(text) {\n    if (typeof text !== "string" || text.length > MAX_TEXT_BYTES) return null;\n    let value;\n    try {\n      value = JSON.parse(text);\n    } catch {\n      return null;\n    }\n    const ok = value && typeof value === "object" && !Array.isArray(value) && typeof value.t === "string" && value.t.length <= 32;\n    return ok ? value : null;\n  }\n  var isPeerMessage = (message) => message !== null && !RELAY_MESSAGE_TYPES.includes(message.t);\n\n  // src/net/queues.js\n  var QueueReader = class {\n    constructor(buffer, loopback, base, { consume = false } = {}) {\n      this.i32 = new Int32Array(buffer);\n      this.u8 = new Uint8Array(buffer);\n      this.lb = loopback;\n      this.base = base;\n      this.readIndex = base + loopback.offGet >> 2;\n      this.writeIndex = base + loopback.offSend >> 2;\n      this.consume = consume;\n      this.cursor = Atomics.load(this.i32, this.writeIndex);\n      this.lost = 0;\n    }\n    /** Forgets everything written so far. */\n    skip() {\n      this.cursor = Atomics.load(this.i32, this.writeIndex);\n      if (this.consume) Atomics.store(this.i32, this.readIndex, this.cursor);\n    }\n    /** New packets since the last call. Slots the engine overwrote before we got to them count as lost. */\n    poll(out = []) {\n      const { slots, slotSize, offLen, dataMax } = this.lb;\n      let written = Atomics.load(this.i32, this.writeIndex);\n      if (written - this.cursor > slots - 1) {\n        this.lost += written - (slots - 1) - this.cursor;\n        this.cursor = written - (slots - 1);\n      }\n      while (this.cursor < written) {\n        const slot = this.base + (this.cursor & slots - 1) * slotSize;\n        const length = this.i32[slot + offLen >> 2];\n        const packet = length > 0 && length <= dataMax ? this.u8.slice(slot, slot + length) : null;\n        written = Atomics.load(this.i32, this.writeIndex);\n        if (written - this.cursor > slots - 1) this.lost += 1;\n        else if (packet) out.push(packet);\n        this.cursor += 1;\n      }\n      if (this.consume) Atomics.store(this.i32, this.readIndex, this.cursor);\n      return out;\n    }\n  };\n  var QueueWriter = class {\n    constructor(buffer, loopback, base) {\n      this.i32 = new Int32Array(buffer);\n      this.u8 = new Uint8Array(buffer);\n      this.lb = loopback;\n      this.base = base;\n      this.readIndex = base + loopback.offGet >> 2;\n      this.writeIndex = base + loopback.offSend >> 2;\n    }\n    hasRoom() {\n      return Atomics.load(this.i32, this.writeIndex) - Atomics.load(this.i32, this.readIndex) < this.lb.slots - 1;\n    }\n    /** False, without writing, when the engine has not caught up yet; the caller retries later. */\n    push(packet, port) {\n      const { slots, slotSize, offLen, offPort, dataMax } = this.lb;\n      if (packet.byteLength === 0 || packet.byteLength > dataMax) return true;\n      if (!this.hasRoom()) return false;\n      const written = Atomics.load(this.i32, this.writeIndex);\n      const slot = this.base + (written & slots - 1) * slotSize;\n      this.u8.set(packet, slot);\n      Atomics.store(this.i32, slot + offLen >> 2, packet.byteLength);\n      Atomics.store(this.i32, slot + offPort >> 2, port);\n      Atomics.add(this.i32, this.writeIndex, 1);\n      return true;\n    }\n  };\n  function connectionlessCommand(packet) {\n    if (packet.byteLength < 5 || packet[0] !== 255 || packet[1] !== 255 || packet[2] !== 255 || packet[3] !== 255) return null;\n    let end = 4;\n    while (end < packet.byteLength && end < 64 && packet[end] !== 0 && packet[end] !== 32 && packet[end] !== 10) end += 1;\n    return String.fromCharCode(...packet.subarray(4, end));\n  }\n\n  // src/net/rtc-messages.js\n  var RTC_TYPES = Object.freeze(["rtc-offer", "rtc-answer", "rtc-ice"]);\n\n  // src/net/routes.js\n  var LINK_STALE_MS = 1500;\n  function createRoutes() {\n    return {\n      /** seat -> { game, control }: the data channels the page handed over for that link */\n      links: /* @__PURE__ */ new Map(),\n      /** Host: the guest seats the relay says are in the room. */\n      relaySeats: /* @__PURE__ */ new Set()\n    };\n  }\n  function isDirect(routes, seat, now = performance.now()) {\n    const link = routes.links.get(seat);\n    if (link?.game?.readyState !== "open" || link?.control?.readyState !== "open") return false;\n    return link.aliveAt === void 0 || now - link.aliveAt < LINK_STALE_MS;\n  }\n  var packetPath = (routes, seat, now = performance.now()) => isDirect(routes, seat, now) ? "direct" : "relay";\n  function controlRoutes(routes, message, hosting2, now = performance.now()) {\n    const relay = [{ via: "relay", message }];\n    if (RTC_TYPES.includes(message.t)) return relay;\n    if (!hosting2) return isDirect(routes, 0, now) ? [{ via: "direct", seat: 0 }] : relay;\n    if (message.to !== void 0) return isDirect(routes, message.to, now) ? [{ via: "direct", seat: message.to }] : relay;\n    const direct = [...routes.links.keys()].filter((seat) => isDirect(routes, seat, now)).sort((a, b) => a - b);\n    if (!direct.length) return relay;\n    const viaRelay = [...routes.relaySeats].filter((seat) => !direct.includes(seat)).sort((a, b) => a - b);\n    return [...direct.map((seat) => ({ via: "direct", seat })), ...viaRelay.map((seat) => ({ via: "relay", message: { ...message, to: seat } }))];\n  }\n  var isSeat = (seat) => Number.isInteger(seat) && seat >= 1 && seat <= MAX_GUESTS;\n  function fromDirect(text, seat, hosting2) {\n    const message = parseControl(text);\n    if (!isPeerMessage(message)) return null;\n    if (hosting2) {\n      delete message.seat;\n      message.from = seat;\n    }\n    return message;\n  }\n  function relayPresence(routes, message) {\n    if (message?.t === "welcome" && Array.isArray(message.guests)) {\n      routes.relaySeats = new Set(message.guests.filter(isSeat));\n    } else if (message?.t === "peer" && isSeat(message.seat)) {\n      if (message.present) routes.relaySeats.add(message.seat);\n      else routes.relaySeats.delete(message.seat);\n    }\n  }\n\n  // src/net/pump-worker.js\n  var POLL_MS = 1;\n  var FLUSH_MS = 4;\n  var INBOX_LIMIT = 512;\n  var PING_MS = 2e3;\n  var DIRECT_PING_MS = 500;\n  var DIRECT_BUFFER_LIMIT = 256 * 1024;\n  var state = {\n    role: null,\n    url: null,\n    socket: null,\n    closed: false,\n    retries: 0,\n    readers: [],\n    writer: null,\n    ports: {},\n    reading: false,\n    injecting: false,\n    dropUntilConnect: false,\n    dropCommands: [],\n    inbox: [],\n    outbox: [],\n    lastFlush: 0,\n    looping: false,\n    relayDown: false,\n    routes: createRoutes(),\n    // framesOut/In and textOut/In count relay frames only; packets and bytes count both paths.\n    stats: { packetsOut: 0, packetsIn: 0, bytesOut: 0, bytesIn: 0, framesOut: 0, framesIn: 0, textOut: 0, textIn: 0, dropped: 0, lost: 0, rtt: null, rtts: {}, paths: {} }\n  };\n  var hosting = () => state.role === "host";\n  var post = (message) => self.postMessage(message);\n  self.onmessage = ({ data: message }) => {\n    switch (message.type) {\n      case "connect":\n        state.role = message.role;\n        state.url = relaySocketUrl(message.relay, message.room, message.role, message.guestId);\n        open();\n        loop();\n        break;\n      case "attach":\n        state.readers = message.reads.map(({ seat, base }) => ({ seat, queue: new QueueReader(message.buffer, message.loopback, base, { consume: true }) }));\n        state.writer = new QueueWriter(message.buffer, message.loopback, message.writeBase);\n        state.ports = message.ports;\n        state.reading = Boolean(message.reading);\n        state.injecting = Boolean(message.injecting);\n        state.dropCommands = message.dropCommands ?? [];\n        break;\n      case "read":\n        for (const { queue } of state.readers) queue.skip();\n        state.dropUntilConnect = Boolean(message.dropUntilConnect);\n        state.reading = true;\n        break;\n      case "inject":\n        state.injecting = Boolean(message.on);\n        if (message.clearInbox) state.inbox.length = 0;\n        break;\n      case "send":\n        sendText(message.message);\n        break;\n      case "link":\n        addLink(message.seat, message.game, message.control, message.id);\n        break;\n      case "unlink":\n        if (message.id === void 0 || state.routes.links.get(message.seat)?.id === message.id) removeLink(message.seat);\n        break;\n      case "relay-down":\n        state.relayDown = true;\n        try {\n          state.socket?.close(1e3, "relay-down");\n        } catch {\n        }\n        break;\n      case "close":\n        state.closed = true;\n        try {\n          state.socket?.close(1e3, "bye");\n        } catch {\n        }\n        break;\n    }\n  };\n  function open() {\n    if (state.closed || state.relayDown) return;\n    let socket;\n    try {\n      socket = new WebSocket(state.url);\n    } catch (error) {\n      post({ type: "socket", state: "error", reason: String(error?.message ?? error) });\n      retry();\n      return;\n    }\n    socket.binaryType = "arraybuffer";\n    state.socket = socket;\n    post({ type: "socket", state: "connecting" });\n    socket.onopen = () => {\n      state.retries = 0;\n      post({ type: "socket", state: "open" });\n    };\n    socket.onmessage = ({ data }) => typeof data === "string" ? onText(data) : onBinary(data);\n    socket.onclose = (event) => {\n      if (state.socket === socket) state.socket = null;\n      state.routes.relaySeats.clear();\n      post({ type: "socket", state: "closed", code: event.code, reason: event.reason });\n      if (event.code === 4001 || event.code === 4004) state.closed = true;\n      else if (event.code === 4005) setTimeout(open, 6e4);\n      else retry();\n    };\n    socket.onerror = () => {\n    };\n  }\n  function retry() {\n    if (state.closed || state.relayDown) return;\n    setTimeout(open, Math.min(5e3, 250 * 2 ** state.retries));\n    state.retries += 1;\n  }\n  function onBinary(data) {\n    const items = hosting() ? decodeSeatPackets(data) : decodePackets(data)?.map((packet) => ({ seat: 0, packet }));\n    if (!items) return;\n    state.stats.framesIn += 1;\n    receive(items);\n  }\n  function receive(items) {\n    for (const item of items) {\n      state.stats.packetsIn += 1;\n      state.stats.bytesIn += item.packet.byteLength;\n      const command = connectionlessCommand(item.packet);\n      if (command && state.dropCommands.includes(command)) continue;\n      state.inbox.push(item);\n    }\n    if (state.inbox.length > INBOX_LIMIT) {\n      state.stats.dropped += state.inbox.length - INBOX_LIMIT;\n      state.inbox.splice(0, state.inbox.length - INBOX_LIMIT);\n    }\n    pump();\n  }\n  function onText(text) {\n    state.stats.textIn += 1;\n    const message = parseControl(text);\n    if (!message) return;\n    if (hosting()) relayPresence(state.routes, message);\n    onControl(message);\n  }\n  function onControl(message) {\n    if (message.t === "ping") {\n      const echo = message.d ? { d: 1, k: message.k } : {};\n      sendText(hosting() ? { t: "pong", ts: message.ts, to: message.from, ...echo } : { t: "pong", ts: message.ts, ...echo });\n    } else if (message.t === "pong") {\n      if (typeof message.ts !== "number") return;\n      if (message.d) {\n        const link = state.routes.links.get(hosting() ? message.from : 0);\n        if (link && link.id === message.k) link.aliveAt = performance.now();\n      }\n      const rtt = Math.max(0, performance.now() - message.ts);\n      if (hosting()) {\n        if (Number.isInteger(message.from)) state.stats.rtts[message.from] = rtt;\n        state.stats.rtt = Math.max(0, ...Object.values(state.stats.rtts));\n      } else {\n        state.stats.rtt = rtt;\n      }\n    } else {\n      post({ type: "control", message });\n    }\n  }\n  function sendText(message) {\n    let sent = false;\n    for (const route of controlRoutes(state.routes, message, hosting())) {\n      if (route.via === "direct") {\n        try {\n          state.routes.links.get(route.seat).control.send(JSON.stringify(message));\n          sent = true;\n        } catch {\n        }\n      } else if (state.socket?.readyState === WebSocket.OPEN) {\n        state.socket.send(JSON.stringify(route.message));\n        state.stats.textOut += 1;\n        sent = true;\n      }\n    }\n    return sent;\n  }\n  function sendDirect(seat, packet) {\n    const channel = state.routes.links.get(seat).game;\n    if (channel.bufferedAmount > DIRECT_BUFFER_LIMIT) {\n      state.stats.dropped += 1;\n      return;\n    }\n    try {\n      channel.send(packet);\n      state.stats.packetsOut += 1;\n      state.stats.bytesOut += packet.byteLength;\n    } catch {\n      state.stats.dropped += 1;\n    }\n  }\n  function addLink(seat, game, control, id) {\n    removeLink(seat);\n    const link = { id, game, control, reported: false };\n    state.routes.links.set(seat, link);\n    game.binaryType = "arraybuffer";\n    const opened = () => {\n      if (state.routes.links.get(seat) !== link || link.reported || !isDirect(state.routes, seat)) return;\n      link.reported = true;\n      link.aliveAt = performance.now();\n      post({ type: "link", seat, id, open: true });\n    };\n    const closed = () => {\n      if (state.routes.links.get(seat) === link) removeLink(seat);\n    };\n    for (const channel of [game, control]) {\n      channel.onopen = opened;\n      channel.onclose = closed;\n      channel.onerror = closed;\n    }\n    game.onmessage = ({ data }) => {\n      if (!(data instanceof ArrayBuffer)) return;\n      receive([{ seat, packet: new Uint8Array(data) }]);\n      pump();\n    };\n    control.onmessage = ({ data }) => {\n      const message = typeof data === "string" ? fromDirect(data, seat, hosting()) : null;\n      if (message) onControl(message);\n    };\n    opened();\n  }\n  function removeLink(seat) {\n    const link = state.routes.links.get(seat);\n    if (!link) return;\n    state.routes.links.delete(seat);\n    for (const channel of [link.game, link.control]) {\n      channel.onopen = channel.onclose = channel.onerror = channel.onmessage = null;\n      try {\n        channel.close();\n      } catch {\n      }\n    }\n    if (link.reported) post({ type: "link", seat, id: link.id, open: false });\n  }\n  function pingLinks(now) {\n    for (const link of state.routes.links.values()) {\n      if (!link.reported) continue;\n      try {\n        link.control.send(JSON.stringify({ t: "ping", ts: now, d: 1, k: link.id }));\n      } catch {\n      }\n    }\n  }\n  function paths() {\n    const seats = hosting() ? /* @__PURE__ */ new Set([...state.routes.links.keys(), ...state.routes.relaySeats]) : [0];\n    return Object.fromEntries([...seats].map((seat) => [seat, packetPath(state.routes, seat)]));\n  }\n  function flush(now) {\n    if (!state.outbox.length) return;\n    const socket = state.socket;\n    if (socket?.readyState !== WebSocket.OPEN) {\n      state.stats.dropped += state.outbox.length;\n    } else {\n      const seats = hosting();\n      const perPacket = seats ? 3 : 2;\n      let batch = [];\n      let size = 4;\n      const send = () => {\n        if (!batch.length) return;\n        socket.send(seats ? encodeSeatPackets(batch) : encodePackets(batch.map((item) => item.packet)));\n        state.stats.framesOut += 1;\n        batch = [];\n        size = 4;\n      };\n      for (const item of state.outbox) {\n        const bytes = perPacket + item.packet.byteLength;\n        if (size + bytes > MAX_BINARY_BYTES) send();\n        batch.push(item);\n        size += bytes;\n        state.stats.packetsOut += 1;\n        state.stats.bytesOut += item.packet.byteLength;\n      }\n      send();\n    }\n    state.outbox.length = 0;\n    state.lastFlush = now;\n  }\n  function pump() {\n    const now = performance.now();\n    if (state.reading) {\n      let lost = 0;\n      for (const { seat, queue } of state.readers) {\n        let packets = queue.poll([]);\n        lost += queue.lost;\n        if (state.dropUntilConnect && packets.length) {\n          const first = packets.findIndex((packet) => connectionlessCommand(packet) === "connect");\n          packets = first < 0 ? [] : packets.slice(first);\n          if (first >= 0) state.dropUntilConnect = false;\n        }\n        for (const packet of packets) {\n          if (packetPath(state.routes, seat) === "direct") sendDirect(seat, packet);\n          else state.outbox.push({ seat, packet });\n        }\n      }\n      state.stats.lost = lost;\n    }\n    if (state.outbox.length && now - state.lastFlush >= FLUSH_MS) flush(now);\n    if (state.writer && state.injecting) {\n      while (state.inbox.length && state.writer.push(state.inbox[0].packet, state.ports[state.inbox[0].seat] ?? 0)) state.inbox.shift();\n    }\n  }\n  async function loop() {\n    if (state.looping) return;\n    state.looping = true;\n    const tick = new Int32Array(new SharedArrayBuffer(4));\n    let lastPing = 0;\n    let lastDirectPing = 0;\n    let lastStats = 0;\n    while (!state.closed) {\n      pump();\n      const now = performance.now();\n      if (now - lastDirectPing >= DIRECT_PING_MS) {\n        lastDirectPing = now;\n        pingLinks(now);\n      }\n      if (now - lastPing >= PING_MS) {\n        lastPing = now;\n        sendText({ t: "ping", ts: now });\n      }\n      if (now - lastStats >= 1e3) {\n        lastStats = now;\n        post({ type: "stats", stats: { ...state.stats, rtts: { ...state.stats.rtts }, paths: paths(), inbox: state.inbox.length } });\n      }\n      const wait = Atomics.waitAsync ? Atomics.waitAsync(tick, 0, 0, POLL_MS) : null;\n      if (wait?.async) await wait.value;\n      else await new Promise((resolve) => setTimeout(resolve, POLL_MS));\n    }\n  }\n})();\n'], { type: "text/javascript" }));
     const worker = new Worker(url, { name: "bo1-coop-pump" });
     worker.onmessage = ({ data: message }) => {
-      if (message.type === "socket") session.onSocket(message);
+      if (message.type === "socket") {
+        session.onSocket(message);
+        if (message.state !== "open") relayClosed(session);
+      } else if (message.type === "link") session.direct?.onLink(message.seat, message.open, message.id);
       else if (message.type === "control") onControl2(session, message.message);
       else if (message.type === "stats") session.stats = message.stats;
     };
@@ -594,6 +994,48 @@
   function send(session, message) {
     session.pump?.postMessage({ type: "send", message });
   }
+  function postToPump(session, message, transfer = []) {
+    session.pump?.postMessage(message, transfer);
+  }
+
+  // src/net/rtc-messages.js
+  var RTC_TYPES = Object.freeze(["rtc-offer", "rtc-answer", "rtc-ice"]);
+  var CANDIDATE_FLUSH_MS = 250;
+  var CONNECT_TIMEOUT_MS = 8e3;
+  var MAX_SDP = 3e3;
+  var MAX_ICE_JSON = 3500;
+  var MAX_CANDIDATES = 8;
+  var MAX_CANDIDATE = 512;
+  var MAX_MID = 16;
+  var MAX_ATTEMPT = 1e6;
+  var ACCEPTS = { host: ["rtc-offer", "rtc-ice"], guest: ["rtc-answer", "rtc-ice"] };
+  var isSeat = (seat) => Number.isInteger(seat) && seat >= 1 && seat <= MAX_GUESTS;
+  var isText = (value, max) => typeof value === "string" && value.length >= 1 && value.length <= max;
+  function candidate(value) {
+    if (!value || typeof value !== "object" || !isText(value.c, MAX_CANDIDATE)) return null;
+    if (value.m !== null && !(typeof value.m === "string" && value.m.length <= MAX_MID)) return null;
+    if (value.i !== null && !(Number.isInteger(value.i) && value.i >= 0 && value.i <= 15)) return null;
+    return { c: value.c, m: value.m, i: value.i };
+  }
+  function parseRtc(message, { role }) {
+    if (!message || typeof message !== "object" || !ACCEPTS[role]?.includes(message.t)) return null;
+    const { t, n } = message;
+    if (!Number.isInteger(n) || n < 1 || n > MAX_ATTEMPT) return null;
+    if (role === "host" && !isSeat(message.from)) return null;
+    const out = { t, n };
+    if (t === "rtc-ice") {
+      if (!Array.isArray(message.cands) || message.cands.length < 1 || message.cands.length > MAX_CANDIDATES) return null;
+      const cands = message.cands.map(candidate);
+      if (cands.includes(null)) return null;
+      out.cands = cands;
+    } else {
+      if (!isText(message.sdp, MAX_SDP)) return null;
+      out.sdp = message.sdp;
+    }
+    if (role === "host") out.from = message.from;
+    return out;
+  }
+  var retryDelay = (failures) => [5e3, 15e3, 3e4][failures] ?? 6e4;
 
   // src/engine/memory.js
   var NORMAL_SPEED = 0.999;
@@ -739,519 +1181,6 @@
       this.setInt(this.build.mailbox.inboundRing, port);
     }
   };
-
-  // src/ui/strings.js
-  var LANG = /^pt\b/i.test(navigator.language ?? "") ? "pt" : "en";
-  var STRINGS = {
-    en: {
-      tagline: "up to 4 players",
-      chip: { solo: "Solo", hosting: "Hosting", joining: "Joining", lobby: "Lobby", ingame: "In game", paused: "Paused", offline: "Offline", error: "Error", ended: "Disconnected" },
-      intro: "Play zombies with up to 3 friends. One player hosts, the others join with the invite link. Everyone needs this extension.",
-      host: "Host a game",
-      joinLabel: "Join a friend",
-      joinPlaceholder: "Room code or invite link",
-      join: "Join",
-      room: "Room",
-      inviteAside: (n) => `${n} free seat${n === 1 ? "" : "s"}`,
-      copy: "Copy link",
-      copyCode: "Copy code",
-      copied: "Copied!",
-      players: "Lobby",
-      playersAside: (n, max) => `${n}/${max} connected`,
-      freeHint: "Send someone the link",
-      player: (n) => `Player ${n}`,
-      you: "you",
-      hostTag: "host",
-      st: {
-        free: "Free seat",
-        left: "Left",
-        reconnecting: "Reconnecting…",
-        disconnected: "Disconnected · can rejoin",
-        ingame: "In game",
-        ready: "Ready",
-        joining: "Joining…",
-        turn: "Next in line",
-        loading: "Loading the map…",
-        picking: "Picking a map",
-        lobby: "In the lobby",
-        opening: "Opening the room…",
-        away: "Not in the room"
-      },
-      map: "Map",
-      noMap: "Not picked yet",
-      mapSubHost: "Everyone follows you to this map",
-      mapSubGuest: "Picked by the host",
-      hell: "Hell mode",
-      stepsGuest: ["Room", "Map", "Load", "Join", "Play"],
-      stepsHost: ["Map", "Load", "Lobby", "Play"],
-      pickMap: "Pick a map in the game menu. Everyone follows you to it.",
-      gate: "Players are on the way. Your start waits for them, so everyone spawns together.",
-      startNow: "Start now",
-      allIn: "Everyone is in. Click the game to start.",
-      latecomers: "Players who join after the start watch until the next round (the BO1 rule for latecomers).",
-      pausedYou: "Paused. Everyone is paused too.",
-      pausedBy: "Paused by another player.",
-      waitingHost: "Waiting for the host…",
-      hostPicking: "Waiting for the host to pick a map…",
-      opening: (m) => `Opening ${m}…`,
-      pressKey: "Press any key on the page to load the map.",
-      loadingMap: "Loading the map…",
-      hostLoading: "Waiting for the host to finish loading…",
-      nextInLine: "Another player is joining. You are next.",
-      connecting: "Connecting to the host…",
-      joiningGame: "Joining the host's game…",
-      waitingStart: "You are in. Waiting for the host to start.",
-      clickToPlay: "You are in. Click the game to play.",
-      lateJoin: "The host had already started: you watch until the next round, then spawn.",
-      ended: "Disconnected from the host. You can rejoin while the host keeps playing.",
-      failed: "Could not join. Try again.",
-      rejoin: "Rejoin",
-      goToHost: "Go to the host",
-      leave: "Leave co-op",
-      otherRelay: (h) => `This invite uses another relay (${h}). Switch to it to join.`,
-      useRelay: "Use this relay",
-      settings: "Settings",
-      yourName: "Your name",
-      namePlaceholder: "Shown in the lobby",
-      save: "Save",
-      connection: "Connection",
-      relay: "Relay",
-      relayState: { open: "Connected", connecting: "Connecting…", closed: "Reconnecting…", idle: "Starting…" },
-      ping: "Ping",
-      dropped: "Packets dropped",
-      relayDefault: "Default relay",
-      relayCustom: (h) => `Custom (${h})`,
-      relayNote: "Free Cloudflare plan: a few hours of play a day, shared by everyone on this relay. For a group that plays often, create your own (5 minutes, free).",
-      changeRelay: "Change relay",
-      useDefault: "Use the default relay",
-      cancel: "Cancel",
-      relayEditNote: "Everyone must use the same relay. Your invite links carry it.",
-      relayPlaceholder: "https://your-relay.workers.dev",
-      usage: (p, t) => `Today: ${p}% of the free allowance used · resets at ${t}`,
-      usedUp: (t) => `Today's allowance is used up · resets at ${t}`,
-      controller: "Controller",
-      ctrl: { off: "Off", unavailable: "Unavailable", press: "Press any button on it", later: (n) => `${n} · works in game`, active: (n, a, max) => `${n} · aim ${a}/${max}` },
-      aimDown: "Aim −",
-      aimUp: "Aim +",
-      turnOff: "Turn off",
-      turnOn: "Turn on",
-      credits: "Game: vel.gg by MisaDev4 · Co-op: BO1 Zombies Co-op",
-      notRoomCode: "That is not a room code. Paste the invite link or the 16-letter code.",
-      notRelay: "That is not a relay address. It looks like https://something.workers.dev",
-      controllerReload: "Reload the page to apply the controller setting.",
-      engineUpdated: "vel.gg updated its game engine, and this version of the extension does not know it yet: co-op and the controller are off.",
-      enginePatchFailed: (m) => `Could not prepare the engine (${m}): co-op and the controller are off.`,
-      replaced: "This room was opened in another tab or window.",
-      full: (n) => `This game is full (${n} players).`,
-      workerFailed: (m) => `Co-op worker failed: ${m}`,
-      unexpectedMemory: "Unexpected engine memory: co-op is off.",
-      hostNoAnswer: "The host did not answer. Check that their game page is open, then reload.",
-      versionMismatch: "You and the host have different versions of the game. Reload both pages.",
-      hostPlaying: (m) => `The host is playing ${m}. Reload this page.`,
-      connectFailed: "Could not start the connection to the host. Reload both pages.",
-      notLetIn: "The host did not let us in. Reload both pages and try again.",
-      hostLeft: "The host left the game.",
-      updateAvailable: (v) => `Version ${v} is out. Updating takes about a minute.`,
-      updateHow: "How to update",
-      relayOverQuota: (t) => `This relay used up today's free allowance${t ? ` (it comes back at ${t})` : ""}. With your own relay, free and set up in 5 minutes, your group plays now.`,
-      relayGuide: "Create my relay",
-      relayPitch: "Co-op runs through a relay. The shared one is free but small: a few hours of play a day for everyone together, and it runs out when many people play. Your own relay is free too, takes 5 minutes to create, and is only for your group.",
-      relayPitchHost: "You are on the shared relay, which can run out on busy days. With your own (free, 5 minutes) your group never waits.",
-      relayHaveOne: "I already have one"
-    },
-    pt: {
-      tagline: "até 4 jogadores",
-      chip: { solo: "Solo", hosting: "Hospedando", joining: "Entrando", lobby: "Lobby", ingame: "Em jogo", paused: "Pausado", offline: "Offline", error: "Erro", ended: "Desconectado" },
-      intro: "Jogue zombies com até 3 amigos. Um jogador hospeda e os outros entram pelo link de convite. Todos precisam desta extensão.",
-      host: "Hospedar partida",
-      joinLabel: "Entrar na partida de um amigo",
-      joinPlaceholder: "Código da sala ou link",
-      join: "Entrar",
-      room: "Sala",
-      inviteAside: (n) => `${n} vaga${n === 1 ? "" : "s"} livre${n === 1 ? "" : "s"}`,
-      copy: "Copiar link",
-      copyCode: "Copiar código",
-      copied: "Copiado!",
-      players: "Lobby",
-      playersAside: (n, max) => `${n}/${max} conectados`,
-      freeHint: "Mande o link para alguém",
-      player: (n) => `Jogador ${n}`,
-      you: "você",
-      hostTag: "host",
-      st: {
-        free: "Vaga livre",
-        left: "Saiu",
-        reconnecting: "Reconectando…",
-        disconnected: "Desconectou · pode voltar",
-        ingame: "Em jogo",
-        ready: "Pronto",
-        joining: "Entrando…",
-        turn: "Na fila para entrar",
-        loading: "Carregando o mapa…",
-        picking: "Escolhendo o mapa",
-        lobby: "No lobby",
-        opening: "Abrindo a sala…",
-        away: "Fora da sala"
-      },
-      map: "Mapa",
-      noMap: "Ainda não escolhido",
-      mapSubHost: "Todos vão seguir você para este mapa",
-      mapSubGuest: "Escolhido pelo host",
-      hell: "Hell mode",
-      stepsGuest: ["Sala", "Mapa", "Carregar", "Entrar", "Jogar"],
-      stepsHost: ["Mapa", "Carregar", "Lobby", "Jogar"],
-      pickMap: "Escolha um mapa no menu do jogo. Todos vão seguir você.",
-      gate: "Tem jogadores a caminho. Seu início espera por eles, para todos nascerem juntos.",
-      startNow: "Começar agora",
-      allIn: "Todos entraram. Clique no jogo para começar.",
-      latecomers: "Quem entrar depois do início assiste até a próxima rodada (regra do BO1 para quem chega atrasado).",
-      pausedYou: "Pausado. Todos estão pausados também.",
-      pausedBy: "Pausado por outro jogador.",
-      waitingHost: "Esperando o host…",
-      hostPicking: "Esperando o host escolher o mapa…",
-      opening: (m) => `Abrindo ${m}…`,
-      pressKey: "Aperte qualquer tecla na página para carregar o mapa.",
-      loadingMap: "Carregando o mapa…",
-      hostLoading: "Esperando o host terminar de carregar…",
-      nextInLine: "Outro jogador está entrando. Você é o próximo.",
-      connecting: "Conectando ao host…",
-      joiningGame: "Entrando na partida do host…",
-      waitingStart: "Você entrou. Esperando o host começar.",
-      clickToPlay: "Você entrou. Clique no jogo para jogar.",
-      lateJoin: "O host já tinha começado: você assiste até a próxima rodada e então nasce.",
-      ended: "Desconectado do host. Você pode voltar enquanto o host continuar jogando.",
-      failed: "Não deu para entrar. Tente de novo.",
-      rejoin: "Voltar para a partida",
-      goToHost: "Ir até o host",
-      leave: "Sair do co-op",
-      otherRelay: (h) => `Este convite usa outro relay (${h}). Troque para ele para entrar.`,
-      useRelay: "Usar este relay",
-      settings: "Configurações",
-      yourName: "Seu nome",
-      namePlaceholder: "Aparece no lobby",
-      save: "Salvar",
-      connection: "Conexão",
-      relay: "Relay",
-      relayState: { open: "Conectado", connecting: "Conectando…", closed: "Reconectando…", idle: "Iniciando…" },
-      ping: "Ping",
-      dropped: "Pacotes perdidos",
-      relayDefault: "Relay padrão",
-      relayCustom: (h) => `Personalizado (${h})`,
-      relayNote: "Plano grátis da Cloudflare: algumas horas de jogo por dia, divididas por todos que usam este relay. Para um grupo que joga sempre, crie o seu (5 minutos, grátis).",
-      changeRelay: "Trocar relay",
-      useDefault: "Usar o relay padrão",
-      cancel: "Cancelar",
-      relayEditNote: "Todos precisam usar o mesmo relay. Seus links de convite já levam ele.",
-      relayPlaceholder: "https://seu-relay.workers.dev",
-      usage: (p, t) => `Hoje: ${p}% da cota grátis usada · renova às ${t}`,
-      usedUp: (t) => `Cota de hoje esgotada · renova às ${t}`,
-      controller: "Controle",
-      ctrl: { off: "Desligado", unavailable: "Indisponível", press: "Aperte qualquer botão nele", later: (n) => `${n} · funciona no jogo`, active: (n, a, max) => `${n} · mira ${a}/${max}` },
-      aimDown: "Mira −",
-      aimUp: "Mira +",
-      turnOff: "Desligar",
-      turnOn: "Ligar",
-      credits: "Jogo: vel.gg por MisaDev4 · Co-op: BO1 Zombies Co-op",
-      notRoomCode: "Isso não é um código de sala. Cole o link de convite ou o código de 16 letras.",
-      notRelay: "Isso não é um endereço de relay. Ele parece com https://algo.workers.dev",
-      controllerReload: "Recarregue a página para aplicar a configuração do controle.",
-      engineUpdated: "O vel.gg atualizou o motor do jogo e esta versão da extensão ainda não o conhece: co-op e controle desligados.",
-      enginePatchFailed: (m) => `Não deu para preparar o motor do jogo (${m}): co-op e controle desligados.`,
-      replaced: "Esta sala foi aberta em outra aba ou janela.",
-      full: (n) => `Esta partida está cheia (${n} jogadores).`,
-      workerFailed: (m) => `O worker do co-op falhou: ${m}`,
-      unexpectedMemory: "Memória do motor inesperada: co-op desligado.",
-      hostNoAnswer: "O host não respondeu. Confira se a página do jogo dele está aberta e recarregue.",
-      versionMismatch: "Você e o host estão com versões diferentes do jogo. Recarreguem as duas páginas.",
-      hostPlaying: (m) => `O host está jogando ${m}. Recarregue esta página.`,
-      connectFailed: "Não deu para iniciar a conexão com o host. Recarreguem as duas páginas.",
-      notLetIn: "O host não deixou entrar. Recarreguem as duas páginas e tentem de novo.",
-      hostLeft: "O host saiu da partida.",
-      updateAvailable: (v) => `Saiu a versão ${v}. Atualizar leva cerca de 1 minuto.`,
-      updateHow: "Como atualizar",
-      relayOverQuota: (t) => `Este relay usou toda a cota grátis de hoje${t ? ` (ela volta às ${t})` : ""}. Com o seu próprio relay, grátis e criado em 5 minutos, o seu grupo joga agora.`,
-      relayGuide: "Criar meu relay",
-      relayPitch: "O co-op passa por um relay. O compartilhado é grátis, mas pequeno: algumas horas de jogo por dia para todo mundo junto, e acaba quando muita gente joga. O seu próprio relay também é grátis, leva 5 minutos para criar e é só do seu grupo.",
-      relayPitchHost: "Você está no relay compartilhado, que pode acabar nos dias cheios. Com o seu (grátis, 5 minutos) o seu grupo nunca espera.",
-      relayHaveOne: "Já tenho um"
-    }
-  };
-  var T = STRINGS[LANG];
-
-  // src/util/settings.js
-  var PREFIX = "bo1coop.";
-  function readSetting(key, fallback) {
-    try {
-      return localStorage.getItem(PREFIX + key) ?? fallback;
-    } catch {
-      return fallback;
-    }
-  }
-  function saveSetting(key, value) {
-    try {
-      if (value === "" || value == null) localStorage.removeItem(PREFIX + key);
-      else localStorage.setItem(PREFIX + key, value);
-    } catch {
-    }
-  }
-  function guestIdFor(room) {
-    const key = `${PREFIX}guest:${room}`;
-    try {
-      const saved = sessionStorage.getItem(key);
-      if (saved && GUEST_ID_PATTERN.test(saved)) return saved;
-      const id = createGuestId();
-      sessionStorage.setItem(key, id);
-      return id;
-    } catch {
-      return createGuestId();
-    }
-  }
-  var cleanName = (text) => String(text ?? "").replace(/[^\p{L}\p{N} _.-]/gu, "").replace(/\s+/g, " ").trim().slice(0, 16);
-
-  // src/util/relay.js
-  var DEFAULT_RELAY = "https://bo1z-coop-4p-relay.allanlotta.workers.dev";
-  function normalizeRelay(text) {
-    try {
-      const url = new URL(String(text).trim());
-      if (url.protocol === "wss:") url.protocol = "https:";
-      return url.protocol === "https:" && url.hostname.includes(".") ? url.origin : "";
-    } catch {
-      return "";
-    }
-  }
-  function isLoopback(url) {
-    try {
-      return ["127.0.0.1", "localhost", "[::1]"].includes(new URL(url).hostname);
-    } catch {
-      return false;
-    }
-  }
-  function pickRelay(override) {
-    if (override && isLoopback(override)) return override;
-    return normalizeRelay(readSetting("relay", "")) || DEFAULT_RELAY;
-  }
-  function inviteLink(session) {
-    const relay = session.relay !== DEFAULT_RELAY && !session.relayParam ? `&relay=${encodeURIComponent(session.relay)}` : "";
-    return `${location.origin}${landingUrl(`coop=join&coopRoom=${session.room}${session.relayParam}${relay}`)}`;
-  }
-
-  // src/session/session.js
-  var VERSION = "2.2.2";
-  var AIM_LEVELS = 10;
-  function createSession(search = location.search) {
-    const params = new URLSearchParams(search);
-    const room = normalizeRoomCode(params.get("coopRoom") ?? params.get("room") ?? "");
-    const wanted = params.get("coop");
-    const relayOverride = params.get("coopRelay");
-    const session = {
-      version: VERSION,
-      /** "host", "guest", or null when playing solo. */
-      mode: room && wanted === "host" ? "host" : room && wanted === "join" ? "guest" : null,
-      room,
-      relay: pickRelay(relayOverride),
-      relayParam: relayOverride && isLoopback(relayOverride) ? `&coopRelay=${encodeURIComponent(relayOverride)}` : "",
-      // A relay named in an invite is only used after the guest agrees to switch.
-      inviteRelay: normalizeRelay(params.get("relay") ?? ""),
-      // The controller drives the game through the patched engine, so with it on even solo games get patched.
-      controller: readSetting("controller", "1") !== "0",
-      aimLevel: Math.max(0, Math.min(AIM_LEVELS - 1, Number(readSetting("aim", "4")) || 0)),
-      name: cleanName(readSetting("name", "")),
-      // engine
-      hash: null,
-      build: null,
-      patched: false,
-      engine: null,
-      zone: null,
-      gameSettings: null,
-      // network
-      socket: "idle",
-      pump: null,
-      stats: null,
-      usage: null,
-      /** Host: some guest is in the room. Guest: the host is in the room. */
-      peer: false,
-      // host
-      queues: null,
-      guests: /* @__PURE__ */ new Map(),
-      // seat -> what the host knows about that guest
-      joinTurn: null,
-      // the seat currently allowed to connect
-      joinTurnAt: 0,
-      gate: false,
-      // the host's start waits for players on their way
-      startAlone: false,
-      // guest
-      phase: "idle",
-      guestId: null,
-      seat: null,
-      hostInfo: null,
-      // map and settings, from the host
-      hostState: null,
-      // the host's view of this guest (ready, slot state, join turn)
-      lobby: null,
-      // the room as the host last described it
-      hostPos: null,
-      hostTrail: [],
-      // card
-      update: null,
-      // { version, url } when a newer release is out
-      overQuota: null,
-      // { resetsAt } while the relay is out of its daily allowance
-      error: null,
-      notice: null,
-      editRelay: false,
-      showSettings: false,
-      copiedLinkAt: 0,
-      copiedCodeAt: 0,
-      log: []
-    };
-    session.note = (text) => {
-      session.log.push(`${(/* @__PURE__ */ new Date()).toISOString().slice(11, 23)} ${text}`);
-      if (session.log.length > 200) session.log.shift();
-    };
-    session.fail = (key, ...args) => {
-      const text = T[key];
-      session.error = typeof text === "function" ? text(...args) : text ?? key;
-    };
-    session.onSocket = ({ state, code }) => {
-      session.socket = state;
-      if (state === "closed" && code === 4005) session.overQuota ??= { resetsAt: null };
-      if (state !== "open") {
-        session.peer = false;
-        for (const guest2 of session.guests.values()) {
-          if (guest2.present) guest2.leftAt = Date.now();
-          guest2.present = false;
-        }
-      }
-      if (state === "closed" && code === 4001) session.fail("replaced");
-      if (state === "closed" && code === 4004) session.fail("full", MAX_GUESTS + 1);
-      session.note(`relay ${state}${code ? ` ${code}` : ""}`);
-    };
-    return session;
-  }
-  var validSeat = (seat) => Number.isInteger(seat) && seat >= 1 && seat <= MAX_GUESTS;
-
-  // src/session/messages.js
-  function onControl(session, message) {
-    if (session.mode === "host") onHostMessage(session, message);
-    else onGuestMessage(session, message);
-  }
-  function onHostMessage(session, message) {
-    switch (message.t) {
-      case "welcome":
-        session.overQuota = null;
-        for (const seat of Array.isArray(message.guests) ? message.guests : []) guestArrived(session, seat);
-        break;
-      case "peer":
-        if (!validSeat(message.seat)) return;
-        if (message.present) guestArrived(session, message.seat);
-        else guestLeft(session, message.seat);
-        break;
-      case "state":
-        if (validSeat(message.from)) guest(session, message.from).state = message;
-        break;
-      case "pause":
-        if (validSeat(message.from)) guest(session, message.from).pause = Boolean(message.on);
-        break;
-      case "error":
-        session.note(`relay error ${message.code}`);
-        if (message.code === "over_quota") session.overQuota = { resetsAt: message.resetsAt ?? null };
-        break;
-    }
-    session.peer = [...session.guests.values()].some((g) => g.present);
-  }
-  function onGuestMessage(session, message) {
-    switch (message.t) {
-      case "welcome":
-        session.overQuota = null;
-        session.seat = validSeat(message.seat) ? message.seat : null;
-        session.peer = Boolean(message.peer);
-        if (session.peer) introduce(session);
-        break;
-      case "peer":
-        session.peer = Boolean(message.present);
-        if (session.peer) introduce(session);
-        else {
-          session.hostLeftAt = Date.now();
-          session.remotePause = false;
-        }
-        session.note(`host ${session.peer ? "joined" : "left"} the room`);
-        break;
-      case "info":
-        session.hostInfo = message;
-        followHostMap(session);
-        break;
-      case "state":
-        session.hostState = message;
-        break;
-      case "pause":
-        session.remotePause = Boolean(message.on);
-        break;
-      case "lobby":
-        if (Array.isArray(message.players)) session.lobby = message;
-        break;
-      case "pos":
-        if (Array.isArray(message.o) && message.o.length === 3 && message.o.every(Number.isFinite)) {
-          session.hostPos = { origin: message.o, at: Date.now() };
-          rememberHostTrail(session, session.hostPos);
-        }
-        break;
-      case "error":
-        session.note(`relay error ${message.code}`);
-        if (message.code === "room_full") session.fail("full", MAX_GUESTS + 1);
-        if (message.code === "over_quota") session.overQuota = { resetsAt: message.resetsAt ?? null };
-        break;
-    }
-  }
-  function guest(session, seat) {
-    let record = session.guests.get(seat);
-    if (!record) {
-      record = { seat, present: false, state: null, pause: false, slot: null, leftAt: 0, kicks: 0, lastKickAt: 0, sent: {} };
-      session.guests.set(seat, record);
-    }
-    return record;
-  }
-  function guestArrived(session, seat) {
-    if (!validSeat(seat)) return;
-    const record = guest(session, seat);
-    if (!record.present) session.note(`player ${seat + 1} joined the room`);
-    Object.assign(record, { present: true, state: null, pause: false, sent: {}, sentPause: void 0 });
-    session.sentLobby = null;
-    sendGameInfo(session, seat);
-  }
-  function guestLeft(session, seat) {
-    const record = guest(session, seat);
-    Object.assign(record, { present: false, leftAt: Date.now(), pause: false });
-    session.note(`player ${seat + 1} left the room`);
-  }
-  function introduce(session) {
-    send(session, { t: "state", phase: session.phase, v: VERSION, name: session.name });
-    send(session, { t: "pause", on: Boolean(session.menuOpen) });
-    session.sentPhase = session.phase;
-    session.sentPhaseAt = Date.now();
-  }
-  function sendGameInfo(session, to) {
-    const zone = session.zone ?? currentZone();
-    send(session, {
-      t: "info",
-      v: VERSION,
-      hash: session.hash,
-      zone,
-      slug: MAP_SLUGS[zone] ?? null,
-      horde: currentHorde(),
-      guns: currentGuns(),
-      gameArgs: session.gameSettings,
-      ...to ? { to } : {}
-    });
-  }
-  var TRAIL_STEP = 16;
-  var TRAIL_MS = 2e4;
-  function rememberHostTrail(session, pos) {
-    const trail = session.hostTrail ??= [];
-    const last = trail.at(-1);
-    if (!last || Math.hypot(pos.origin[0] - last.origin[0], pos.origin[1] - last.origin[1], pos.origin[2] - last.origin[2]) >= TRAIL_STEP) trail.push(pos);
-    while (trail.length && pos.at - trail[0].at > TRAIL_MS) trail.shift();
-  }
 
   // src/session/guest.js
   var HOST_GONE_MS = 1e4;
@@ -1494,6 +1423,316 @@
     session.movedAt = Date.now();
     session.note(`moved next to the host (${why})`);
     return true;
+  }
+
+  // src/session/messages.js
+  function onControl(session, message) {
+    if (RTC_TYPES.includes(message.t)) session.direct?.onSignal(message);
+    else if (session.mode === "host") onHostMessage(session, message);
+    else onGuestMessage(session, message);
+  }
+  function onHostMessage(session, message) {
+    switch (message.t) {
+      case "welcome":
+        session.overQuota = null;
+        session.relayGuests = new Set((Array.isArray(message.guests) ? message.guests : []).filter(validSeat));
+        session.relayLeft = /* @__PURE__ */ new Set();
+        for (let seat = 1; seat <= MAX_GUESTS; seat += 1) syncPresence(session, seat);
+        break;
+      case "peer":
+        if (!validSeat(message.seat)) return;
+        if (message.present && session.relayLeft.delete(message.seat)) session.direct?.drop(message.seat);
+        if (message.present) {
+          session.relayGuests.add(message.seat);
+          guestArrived(session, message.seat);
+        } else {
+          session.relayGuests.delete(message.seat);
+          session.relayLeft.add(message.seat);
+        }
+        syncPresence(session, message.seat);
+        break;
+      case "state":
+        if (validSeat(message.from)) guest(session, message.from).state = message;
+        break;
+      case "pause":
+        if (validSeat(message.from)) guest(session, message.from).pause = Boolean(message.on);
+        break;
+      case "error":
+        session.note(`relay error ${message.code}`);
+        if (message.code === "over_quota") session.overQuota = { resetsAt: message.resetsAt ?? null };
+        break;
+    }
+    session.peer = [...session.guests.values()].some((g) => g.present);
+  }
+  function onGuestMessage(session, message) {
+    switch (message.t) {
+      case "welcome":
+        session.overQuota = null;
+        session.seat = validSeat(message.seat) ? message.seat : null;
+        session.relayPeer = Boolean(message.peer);
+        syncPresence(session, 0);
+        if (session.peer) introduce(session);
+        break;
+      case "peer":
+        session.relayPeer = Boolean(message.present);
+        syncPresence(session, 0);
+        if (session.peer) introduce(session);
+        session.note(`host ${session.relayPeer ? "joined" : "left"} the room (relay)`);
+        break;
+      case "info":
+        session.hostInfo = message;
+        followHostMap(session);
+        break;
+      case "state":
+        session.hostState = message;
+        break;
+      case "pause":
+        session.remotePause = Boolean(message.on);
+        break;
+      case "lobby":
+        if (Array.isArray(message.players)) session.lobby = message;
+        break;
+      case "pos":
+        if (Array.isArray(message.o) && message.o.length === 3 && message.o.every(Number.isFinite)) {
+          session.hostPos = { origin: message.o, at: Date.now() };
+          rememberHostTrail(session, session.hostPos);
+        }
+        break;
+      case "error":
+        session.note(`relay error ${message.code}`);
+        if (message.code === "room_full") session.fail("full", MAX_GUESTS + 1);
+        if (message.code === "over_quota") session.overQuota = { resetsAt: message.resetsAt ?? null };
+        break;
+    }
+  }
+  function guest(session, seat) {
+    let record = session.guests.get(seat);
+    if (!record) {
+      record = { seat, present: false, state: null, pause: false, slot: null, leftAt: 0, kicks: 0, lastKickAt: 0, sent: {} };
+      session.guests.set(seat, record);
+    }
+    return record;
+  }
+  function syncPresence(session, seat, { hostLeft = true } = {}) {
+    const direct = session.links.get(seat) === "direct";
+    if (session.mode === "host") {
+      const present = session.relayGuests.has(seat) || direct;
+      const record = session.guests.get(seat);
+      if (present && !record?.present) guestArrived(session, seat);
+      else if (!present && record?.present) guestLeft(session, seat);
+      session.peer = [...session.guests.values()].some((g) => g.present);
+      return;
+    }
+    const was = session.peer;
+    session.peer = session.relayPeer || direct;
+    if (was && !session.peer) {
+      if (hostLeft) session.hostLeftAt = Date.now();
+      session.remotePause = false;
+      session.note(hostLeft ? "host left" : "relay lost");
+    }
+  }
+  function relayClosed(session) {
+    if (session.mode === "host") {
+      session.relayGuests.clear();
+      for (let seat = 1; seat <= MAX_GUESTS; seat += 1) syncPresence(session, seat);
+    } else if (session.mode === "guest") {
+      session.relayPeer = false;
+      syncPresence(session, 0, { hostLeft: false });
+    }
+  }
+  function guestArrived(session, seat) {
+    if (!validSeat(seat)) return;
+    const record = guest(session, seat);
+    if (!record.present) session.note(`player ${seat + 1} joined the room`);
+    Object.assign(record, { present: true, state: null, pause: false, sent: {}, sentPause: void 0 });
+    session.sentLobby = null;
+    sendGameInfo(session, seat);
+  }
+  function guestLeft(session, seat) {
+    const record = guest(session, seat);
+    Object.assign(record, { present: false, leftAt: Date.now(), pause: false });
+    session.note(`player ${seat + 1} left the room`);
+  }
+  function introduce(session) {
+    send(session, { t: "state", phase: session.phase, v: VERSION, name: session.name });
+    send(session, { t: "pause", on: Boolean(session.menuOpen) });
+    session.sentPhase = session.phase;
+    session.sentPhaseAt = Date.now();
+  }
+  function sendGameInfo(session, to) {
+    const zone = session.zone ?? currentZone();
+    send(session, {
+      t: "info",
+      v: VERSION,
+      hash: session.hash,
+      zone,
+      slug: MAP_SLUGS[zone] ?? null,
+      horde: currentHorde(),
+      guns: currentGuns(),
+      gameArgs: session.gameSettings,
+      ...to ? { to } : {}
+    });
+  }
+  var TRAIL_STEP = 16;
+  var TRAIL_MS = 2e4;
+  function rememberHostTrail(session, pos) {
+    const trail = session.hostTrail ??= [];
+    const last = trail.at(-1);
+    if (!last || Math.hypot(pos.origin[0] - last.origin[0], pos.origin[1] - last.origin[1], pos.origin[2] - last.origin[2]) >= TRAIL_STEP) trail.push(pos);
+    while (trail.length && pos.at - trail[0].at > TRAIL_MS) trail.shift();
+  }
+
+  // src/net/direct.js
+  var ICE_SERVERS = Object.freeze([{ urls: "stun:stun.cloudflare.com:3478" }, { urls: "stun:stun.l.google.com:19302" }]);
+  function createDirect(session, { RTCPeerConnection = globalThis.RTCPeerConnection, now = Date.now } = {}) {
+    const enabled = globalThis.__bo1CoopDirect !== false && typeof RTCPeerConnection === "function";
+    const hosting = () => session.mode === "host";
+    const links = /* @__PURE__ */ new Map();
+    let attempt = 0;
+    let linkIds = 0;
+    let failures = 0;
+    let nextOfferAt = 0;
+    function connect(seat, n) {
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS.map((server) => ({ ...server })) });
+      const link = { seat, n, id: linkIds += 1, pc, startedAt: now(), open: false, remoteSet: false, waiting: [], gathered: [], flushedAt: 0 };
+      links.set(seat, link);
+      const game = pc.createDataChannel("game", { negotiated: true, id: 1, ordered: false, maxRetransmits: 0 });
+      const control = pc.createDataChannel("control", { negotiated: true, id: 2 });
+      postToPump(session, { type: "link", seat, id: link.id, game, control }, [game, control]);
+      pc.onicecandidate = ({ candidate: candidate2 }) => {
+        if (candidate2?.candidate && candidate2.candidate.length <= MAX_CANDIDATE) {
+          link.gathered.push({ c: candidate2.candidate, m: candidate2.sdpMid ?? null, i: candidate2.sdpMLineIndex ?? null });
+        }
+      };
+      pc.onconnectionstatechange = () => {
+        if (["failed", "closed"].includes(pc.connectionState)) fail(seat, link, `connection ${pc.connectionState}`);
+      };
+      return link;
+    }
+    function close(seat) {
+      const link = links.get(seat);
+      if (!link) return;
+      links.delete(seat);
+      link.pc.onicecandidate = link.pc.onconnectionstatechange = null;
+      try {
+        link.pc.close();
+      } catch {
+      }
+      postToPump(session, { type: "unlink", seat, id: link.id });
+      if (session.links.delete(seat)) syncPresence(session, seat);
+    }
+    function fail(seat, link, why) {
+      if (links.get(seat) !== link) return;
+      session.note(`direct link ${seat} given up (${why})`);
+      close(seat);
+      if (!hosting()) {
+        nextOfferAt = now() + retryDelay(failures);
+        failures += 1;
+      }
+    }
+    async function offer() {
+      attempt += 1;
+      const link = connect(0, attempt);
+      try {
+        const description = await link.pc.createOffer();
+        await link.pc.setLocalDescription(description);
+        if (description.sdp.length > MAX_SDP) throw new Error(`offer too long (${description.sdp.length})`);
+        if (links.get(0) === link) send(session, { t: "rtc-offer", n: link.n, sdp: description.sdp });
+      } catch (error) {
+        fail(0, link, error?.message ?? error);
+      }
+    }
+    async function answer({ n, sdp, from: seat }) {
+      close(seat);
+      const link = connect(seat, n);
+      try {
+        await link.pc.setRemoteDescription({ type: "offer", sdp });
+        remoteReady(link);
+        const description = await link.pc.createAnswer();
+        await link.pc.setLocalDescription(description);
+        if (description.sdp.length > MAX_SDP) throw new Error(`answer too long (${description.sdp.length})`);
+        if (links.get(seat) === link) send(session, { t: "rtc-answer", n, sdp: description.sdp, to: seat });
+      } catch (error) {
+        fail(seat, link, error?.message ?? error);
+      }
+    }
+    function remoteReady(link) {
+      link.remoteSet = true;
+      for (const candidate2 of link.waiting.splice(0)) addCandidate(link, candidate2);
+    }
+    function addCandidate(link, { c, m, i }) {
+      link.pc.addIceCandidate({ candidate: c, sdpMid: m, sdpMLineIndex: i }).catch(() => {
+      });
+    }
+    function flushCandidates(link) {
+      if (!link.gathered.length || now() - link.flushedAt < CANDIDATE_FLUSH_MS) return;
+      const message = { t: "rtc-ice", n: link.n, cands: [], ...hosting() ? { to: link.seat } : {} };
+      while (link.gathered.length && message.cands.length < 8) {
+        message.cands.push(link.gathered[0]);
+        if (message.cands.length > 1 && JSON.stringify(message).length > MAX_ICE_JSON) {
+          message.cands.pop();
+          break;
+        }
+        link.gathered.shift();
+      }
+      link.flushedAt = now();
+      send(session, message);
+    }
+    return {
+      onSignal(raw) {
+        if (!enabled) return;
+        const message = parseRtc(raw, { role: hosting() ? "host" : "guest" });
+        if (!message) return;
+        if (message.t === "rtc-offer") {
+          answer(message);
+          return;
+        }
+        const link = links.get(hosting() ? message.from : 0);
+        if (!link || link.n !== message.n) return;
+        if (message.t === "rtc-answer") {
+          if (link.remoteSet) return;
+          link.pc.setRemoteDescription({ type: "answer", sdp: message.sdp }).then(() => remoteReady(link)).catch((error) => fail(link.seat, link, error?.message ?? error));
+        } else {
+          for (const candidate2 of message.cands) {
+            if (link.remoteSet) addCandidate(link, candidate2);
+            else link.waiting.push(candidate2);
+          }
+        }
+      },
+      /** From the pump worker: both channels of link `id` opened, or one of them closed. */
+      onLink(seat, open, id) {
+        const link = links.get(seat);
+        if (!link || link.id !== id) return;
+        if (open) {
+          link.open = true;
+          failures = 0;
+          session.links.set(seat, "direct");
+          session.note(`direct link ${seat} open`);
+          syncPresence(session, seat);
+        } else {
+          if (session.links.delete(seat)) syncPresence(session, seat);
+          fail(seat, link, "channel closed");
+        }
+      },
+      tick() {
+        if (!enabled) return;
+        for (const link of [...links.values()]) {
+          if (!link.open && now() - link.startedAt > CONNECT_TIMEOUT_MS) fail(link.seat, link, "timeout");
+          else flushCandidates(link);
+        }
+        if (!hosting() && session.relayPeer && validSeat(session.seat) && !links.has(0) && now() >= nextOfferAt) offer();
+      },
+      /** Test hook (test/e2e.mjs DROP_DIRECT_S): drops a link as a network failure would. */
+      drop(seat) {
+        const link = links.get(seat);
+        if (link) fail(seat, link, "dropped");
+      },
+      state(seat) {
+        if (!enabled) return "relay";
+        if (session.links.get(seat) === "direct") return "direct";
+        return links.has(seat) ? "connecting" : "relay";
+      }
+    };
   }
 
   // src/cheats/bridge.js
@@ -2923,16 +3162,17 @@ nazizombies_checking_for_cheats()\r
   // src/session/lobby.js
   var roundPing = (rtt) => Number.isFinite(rtt) ? Math.round(rtt) : null;
   var LEFT_VISIBLE_MS = 6e4;
+  var guestPath = (session, g) => g?.present ? session.links.get(g.seat) === "direct" ? "direct" : "relay" : null;
   function hostRoster(session) {
     const screen2 = screen();
     const playing = screen2 === "playing";
     const [hostStatus, hostTone] = playing ? ["ingame", "ok"] : screen2 === "ready" ? ["lobby", "ok"] : session.engine || screen2 === "loading" || screen2 === "download" ? ["loading", "wait"] : ["picking", "wait"];
-    const players = [{ n: 1, name: session.name, host: true, status: hostStatus, tone: hostTone, ping: null }];
+    const players = [{ n: 1, name: session.name, host: true, status: hostStatus, tone: hostTone, ping: null, path: null }];
     const rtts = session.stats?.rtts ?? {};
     for (let seat = 1; seat <= MAX_GUESTS; seat += 1) {
       const g = session.guests.get(seat);
       const [status, tone] = guestStatus(session, g, seat, playing);
-      players.push({ n: seat + 1, name: status === "free" ? "" : cleanName(g?.state?.name), status, tone, ping: g?.present ? roundPing(rtts[seat]) : null });
+      players.push({ n: seat + 1, name: status === "free" ? "" : cleanName(g?.state?.name), status, tone, ping: g?.present ? roundPing(rtts[seat]) : null, path: guestPath(session, g) });
     }
     return { t: "lobby", players, slug: MAP_SLUGS[session.zone ?? currentZone()] ?? null, horde: currentHorde(), playing };
   }
@@ -2967,7 +3207,15 @@ nazizombies_checking_for_cheats()\r
     }
     if (!validSeat(session.seat)) return players;
     const [status, tone] = ownStatus(session);
-    return players.map((p) => p.n === session.seat + 1 ? { ...p, name: session.name, ping: roundPing(session.stats?.rtt), status, tone } : p);
+    return players.map((p) => p.n === session.seat + 1 ? { ...p, name: session.name, ping: roundPing(session.stats?.rtt), path: ownPath(session), status, tone } : p);
+  }
+  var ownPath = (session) => session.direct?.state(0) === "direct" ? "direct" : "relay";
+  function connectionText(session) {
+    if (session.mode === "guest") return T.path[session.direct?.state(0) ?? "relay"] ?? T.path.relay;
+    const present = [...session.guests.values()].filter((g) => g.present);
+    if (!present.length) return null;
+    const direct = present.filter((g) => session.links.get(g.seat) === "direct").length;
+    return T.pathCount(direct, present.length - direct);
   }
   function ownStatus(session) {
     const phase = session.phase;
@@ -3268,6 +3516,7 @@ button.icon:hover { background: var(--bg3); color: var(--fg); }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex: none; }
 .dot.ok { background: var(--ok); } .dot.wait { background: var(--wait); animation: pulse 1.6s ease-in-out infinite; } .dot.bad { background: var(--bad); }
 .ping { flex: none; text-align: right; font: 600 11px ui-monospace, Menlo, monospace; color: var(--muted); display: grid; justify-items: end; gap: 2px; }
+.ping .path { font: 500 10px system-ui, sans-serif; color: var(--dim); }
 .bars { display: flex; gap: 2px; align-items: flex-end; height: 10px; }
 .bars i { width: 3px; border-radius: 1px; background: var(--line); }
 .bars i:nth-child(1) { height: 4px; } .bars i:nth-child(2) { height: 7px; } .bars i:nth-child(3) { height: 10px; }
@@ -3505,6 +3754,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
               const bars = el("span", `bars q${p.ping < 80 ? 3 : p.ping < 180 ? 2 : 1}`);
               bars.append(el("i"), el("i"), el("i"));
               ping.append(bars, el("span", "", `${p.ping} ms`));
+              if (p.path) ping.append(el("span", "path", p.path));
               row.append(ping);
             }
             list.append(row);
@@ -4428,7 +4678,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
         empty,
         status: empty ? session.mode === "host" ? T.freeHint : "" : T.st[p.status] ?? T.st.away,
         tone: p.tone ?? "",
-        ping: empty || p.host || !Number.isFinite(p.ping) ? null : p.ping
+        ping: empty || p.host || !Number.isFinite(p.ping) ? null : p.ping,
+        path: empty || p.host || !T.path[p.path] ? null : T.path[p.path]
       };
     });
   }
@@ -4444,6 +4695,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
         [T.relay, T.relayState[session.socket] ?? T.relayState.idle, session.socket === "open" ? "" : "error"],
         [T.ping, session.stats?.rtt != null ? `${Math.round(session.stats.rtt)} ms` : "–"]
       ];
+      const connection = connectionText(session);
+      if (connection) items.push([T.connection, connection]);
       if (session.stats?.lost) items.push([T.dropped, String(session.stats.lost)]);
       blocks.push({ kind: "kv", items });
     }
@@ -4551,7 +4804,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
   }
 
   // src/cheats/version.js
-  var FORK_VERSION = "2.2.2.1";
+  var FORK_VERSION = "2.2.2.2";
 
   // src/util/updates.js
   var LATEST = "https://api.github.com/repos/lucas-gundehug/bo1-zombies-coop/releases/latest";
@@ -4629,6 +4882,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       if (session.mode === "guest") session.guestId = guestIdFor(session.room);
       session.phase = session.mode === "host" ? "hosting" : "joining-room";
       session.pump = startPump(session, onControl);
+      session.direct = createDirect(session);
       if (session.mode === "host") holdStart(session, card.host);
     }
     setInterval(() => tick(session), TICK_MS);
@@ -4637,6 +4891,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     try {
       if (session.mode === "host") hostTick(session);
       else if (session.mode === "guest") guestTick(session);
+      session.direct?.tick();
       if (session.mode) reportHidden(session);
       funTick(session);
     } catch (error) {
