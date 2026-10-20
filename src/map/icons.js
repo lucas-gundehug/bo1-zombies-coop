@@ -46,7 +46,9 @@ export function parseIwi(bytes) {
   const height = view.getUint16(8, true);
   const end = view.getUint32(16, true);
   const start = view.getUint32(20, true);
-  if (!format || !width || !height || start < 48 || end > bytes.length || end <= start) return null;
+  if (!format || !width || !height || width > 1024 || height > 1024 || start < 48 || end > bytes.length || end <= start) return null;
+  const needed = Math.ceil(width / 4) * Math.ceil(height / 4) * (format === "dxt1" ? 8 : 16);
+  if (end - start < needed) return null;
   return { width, height, format, data: bytes.subarray(start, end) };
 }
 
@@ -113,13 +115,24 @@ export async function loadIcons(slug) {
     for await (const [name, handle] of main.entries()) {
       if (!wanted.size) break;
       if (!name.endsWith(".iwd") || handle.kind !== "file") continue;
-      const file = await handle.getFile();
-      for (const entry of await archiveEntries(file)) {
-        const id = wanted.get(entry.name);
-        if (!id) continue;
-        wanted.delete(entry.name);
-        const image = parseIwi(await entryBytes(file, entry));
-        if (image) icons.set(id, toCanvas(image));
+      // one archive or icon that can't be read must not lose the others
+      try {
+        const file = await handle.getFile();
+        for (const entry of await archiveEntries(file)) {
+          const id = wanted.get(entry.name);
+          if (!id) continue;
+          try {
+            const image = parseIwi(await entryBytes(file, entry));
+            if (image) {
+              icons.set(id, toCanvas(image));
+              wanted.delete(entry.name);
+            }
+          } catch {
+            // this icon stays a text label
+          }
+        }
+      } catch {
+        // skip this archive
       }
     }
   } catch {

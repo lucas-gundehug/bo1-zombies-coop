@@ -3,7 +3,7 @@
 // (src/map/model.js): the rooms of the player's floor are drawn once into a cached canvas at a fixed scale, and each
 // frame the square around the player is copied out of it, with doors, icons and players on top. On in every game
 // unless turned off in the card's settings; hidden while the big map (N) is open.
-import { screen } from "../game/page.js";
+import { latestView, screen } from "../game/page.js";
 import { readSetting, saveSetting } from "../util/settings.js";
 import { mapModel } from "./model.js";
 import { toScreen } from "./plan.js";
@@ -17,12 +17,21 @@ const PAD = SIZE / 2 + 16; // margin around the floor in the cached layer, so th
 
 export const minimapEnabled = () => readSetting("minimap", "1") !== "0";
 
-/** Whether the minimap shows now: in a game, turned on, the big map closed, and the map has data to show. */
-export function minimapVisible(session, now, { playing = screen() === "playing" } = {}) {
+/** The canvas size in device pixels, whole numbers at any display scaling (125% is common on Windows laptops). */
+export const minimapCanvasSize = (dpr) => ({ w: Math.round(SIZE * dpr), h: Math.round((SIZE + BAR) * dpr) });
+
+/**
+ * The model to draw now, or null when the minimap hides: not in a game, turned off, the big map open, no plan, no
+ * data, or no player of mine to center on (spectating after bleeding out, the game paused).
+ */
+export function minimapFrame(session, now, { playing = screen() === "playing", view = latestView() } = {}) {
   const map = session.map;
-  if (!map?.minimap || !playing || map.open || !map.plan) return false;
-  return mapModel(session, now, { view: null }).status === "ok";
+  if (!map?.minimap || !playing || map.open || !map.plan) return null;
+  const model = mapModel(session, now, { view });
+  return model.status === "ok" && model.players.some((p) => p.me) ? model : null;
 }
+
+export const minimapVisible = (session, now, { playing } = {}) => Boolean(minimapFrame(session, now, { playing, view: null }));
 
 /** The square of `size` px around world (x, y) in a layer drawn with `layer` (a fitView-style view). */
 export function minimapWindow(layer, x, y, size) {
@@ -75,6 +84,7 @@ export class Minimap {
     this.canvas = root.querySelector("canvas");
     this.cache = {};
     this.shown = false;
+    this.brokenSlug = undefined; // a map whose drawing failed: no minimap there (no error every frame)
   }
 
   mount() {
@@ -87,37 +97,41 @@ export class Minimap {
 
   /** Runs for the whole page: a cheap check per frame, and a draw while the minimap shows. */
   start(session) {
+    const show = (on) => {
+      if (on === this.shown) return;
+      this.shown = on;
+      this.host.style.display = on ? "block" : "none";
+    };
     const frame = () => {
+      const slug = session.map?.slug;
+      if (this.brokenSlug !== undefined && this.brokenSlug !== slug) this.brokenSlug = undefined;
       try {
-        const now = Date.now();
-        const visible = minimapVisible(session, now);
-        if (visible !== this.shown) {
-          this.shown = visible;
-          this.host.style.display = visible ? "block" : "none";
-        }
-        if (visible) this.draw(session, now);
+        const model = this.brokenSlug === undefined ? minimapFrame(session, Date.now()) : null;
+        show(Boolean(model));
+        if (model) this.draw(session, model);
       } catch (error) {
         session.note?.(`minimap failed: ${error?.stack ?? error}`);
-        this.shown = false;
-        this.host.style.display = "none";
+        this.brokenSlug = slug;
+        show(false);
       }
       requestAnimationFrame(frame);
     };
     requestAnimationFrame(frame);
   }
 
-  draw(session, now) {
+  draw(session, model) {
     const dpr = window.devicePixelRatio || 1;
-    if (this.canvas.width !== SIZE * dpr || this.canvas.height !== (SIZE + BAR) * dpr) {
-      this.canvas.width = SIZE * dpr;
-      this.canvas.height = (SIZE + BAR) * dpr;
+    const size = minimapCanvasSize(dpr);
+    if (this.canvas.width !== size.w || this.canvas.height !== size.h) {
+      this.canvas.width = size.w;
+      this.canvas.height = size.h;
     }
-    const model = mapModel(session, now);
     this.model = model; // the real-game test reads it
-    const me = model.players?.find((p) => p.me);
-    const plan = session.map.plan;
+    const me = model.players.find((p) => p.me);
+    const map = session.map;
+    const plan = map.plan;
     const ctx = this.canvas.getContext("2d");
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.setTransform(size.w / SIZE, 0, 0, size.h / (SIZE + BAR), 0, 0);
     ctx.clearRect(0, 0, SIZE, SIZE + BAR);
     roundRect(ctx, 0.5, 0.5, SIZE - 1, SIZE + BAR - 1, 10);
     ctx.fillStyle = "rgba(18,17,16,.94)";
@@ -126,21 +140,25 @@ export class Minimap {
     ctx.lineWidth = 1;
     ctx.stroke();
     text(ctx, model.room ?? "—", SIZE / 2, BAR / 2 + 1, { size: 13, weight: 800, align: "center" });
-    if (!me || model.status !== "ok") return;
-    const key = JSON.stringify([plan.slug, model.floor, dpr, model.rooms.map((r) => [r.open, r.current])]);
+    // the floor drawing changes with the floor, the state (doors and rooms opening) and the room I'm in
+    const current = model.rooms.findIndex((r) => r.current);
+    const key = `${plan.slug}|${model.floor}|${dpr}|${map.planOk}|${map.state?.at ?? 0}|${current}`;
     if (this.cache.key !== key) this.cache = { key, ...floorLayer(plan, model, dpr) };
     const { view, canvas } = this.cache;
     const win = minimapWindow(view, me.x, me.y, SIZE);
+    // whole device pixels, so the copied square stays sharp while the player moves
+    const sx = Math.round(win.sx * dpr) / dpr;
+    const sy = Math.round(win.sy * dpr) / dpr;
     ctx.save();
     roundRect(ctx, 1, BAR, SIZE - 2, SIZE - 1, 9);
     ctx.clip();
-    ctx.drawImage(canvas, win.sx * dpr, win.sy * dpr, SIZE * dpr, SIZE * dpr, 0, BAR, SIZE, SIZE);
+    ctx.drawImage(canvas, sx * dpr, sy * dpr, SIZE * dpr, SIZE * dpr, 0, BAR, SIZE, SIZE);
     // world -> minimap px: the layer's view moved so the window's corner is at (0, BAR)
-    const mini = { scale: view.scale, rotate: 0, tx: view.tx - win.sx, ty: view.ty - win.sy + BAR };
+    const mini = { scale: view.scale, rotate: 0, tx: view.tx - sx, ty: view.ty - sy + BAR };
     for (const poi of model.pois) {
       if (poi.at[0] !== model.floor) continue;
       const [x, y] = toScreen(mini, poi.at[1], poi.at[2]);
-      drawPoi(ctx, x, y, poi, session.map.icons, 18);
+      drawPoi(ctx, x, y, poi, map.icons, 18);
     }
     for (const door of model.doors) {
       if (door.at[0] !== model.floor) continue;

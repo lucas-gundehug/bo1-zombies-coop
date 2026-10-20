@@ -12,7 +12,7 @@ import { floorOf } from "./plan.js";
 import { planFor } from "./plans/index.js";
 import { pushSample } from "./track.js";
 import { sendMap } from "./net.js";
-import { loadIcons } from "./icons.js";
+import { ICON_FILES, loadIcons as readIcons } from "./icons.js";
 
 const LIVE_EVERY_MS = 250;
 const BITS = /^[01]*$/;
@@ -85,14 +85,35 @@ export function onMapLine(session, name, value) {
 }
 
 /** Called every tick: follows the map being played, and on the host asks the game script for the live data. */
-export function mapTick(session, now, { playing = screen() === "playing", slug = currentSlugOf(session) } = {}) {
+/** The icons this map shows: its perk machines' and the Mystery Box's (a pack holds only its own perks' icons). */
+export function iconsNeeded(plan) {
+  const ids = new Set(plan.pois.filter((p) => p.kind === "perk" && ICON_FILES[p.id]).map((p) => p.id));
+  if (plan.pois.some((p) => p.kind === "box")) ids.add("box");
+  return [...ids];
+}
+
+const ICON_RETRY_MS = 15000;
+const ICON_TRIES = 4;
+const canReadIcons = () => Boolean(globalThis.navigator?.storage?.getDirectory);
+
+export function mapTick(session, now, { playing = screen() === "playing", slug = currentSlugOf(session), loadIcons = canReadIcons() ? readIcons : null } = {}) {
   const map = session.map;
   if (!map) return;
   if (slug !== map.slug) {
-    Object.assign(map, { slug, plan: planFor(slug), state: null, planOk: false, liveV: null, icons: new Map() });
-    if (slug && globalThis.navigator?.storage?.getDirectory) loadIcons(slug).then((icons) => map.slug === slug && (map.icons = icons));
+    Object.assign(map, { slug, plan: planFor(slug), state: null, planOk: false, liveV: null, icons: new Map(), iconTries: 0, iconsAt: -Infinity });
     map.live.clear();
     map.tracks.clear();
+  }
+  // the game's icons, once it runs (its pack is downloaded by then), again a little later while some are missing
+  const missing = Boolean(map.plan) && iconsNeeded(map.plan).some((id) => !map.icons.has(id));
+  if (playing && slug && loadIcons && missing && !map.iconsLoading && map.iconTries < ICON_TRIES && now - map.iconsAt >= ICON_RETRY_MS) {
+    map.iconsLoading = true;
+    map.iconTries += 1;
+    map.iconsAt = now;
+    loadIcons(slug).then((icons) => {
+      map.iconsLoading = false;
+      if (map.slug === slug && icons.size >= map.icons.size) map.icons = icons;
+    });
   }
   if (!playing) {
     // out of the game (game over, back to the menu): what it showed belongs to that game, and a restart starts clean

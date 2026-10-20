@@ -9,6 +9,7 @@ import { FORK_VERSION } from "../src/cheats/version.js";
 import { isNewer } from "../src/util/updates.js";
 import { readFileSync } from "node:fs";
 import { cheatCommand, cheatsTick, createBridge, onCheatsLine, parseDvarPrint, parseState, sendCheat } from "../src/cheats/bridge.js";
+import { cheatActions, cheatBlocks } from "../src/cheats/section.js";
 
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
@@ -240,6 +241,71 @@ test("after a game restart in the same page (the script counts from 0 again) com
   sendCheat(session, "next");
   cheatsTick(session, 2000, true);
   assert.ok(session.fun.queue.includes('set cheats_cmd "2 next"'));
+});
+
+// ---- health levels ----
+
+const PLAYERS = [
+  { slot: 0, n: 1, name: "Lucas" },
+  { slot: 1, n: 2, name: "Jonas" },
+];
+const healthSession = () => {
+  const session = fakeSession();
+  session.fun.notice = null;
+  session.cheats.target = 1;
+  return { session, actions: cheatActions(session, () => PLAYERS) };
+};
+const healthChips = (session) => cheatBlocks(session, PLAYERS).find((b) => b.kind === "chips" && b.chips.some((c) => c.act === "cheatHealth")).chips;
+
+test("a health level goes to the chosen player", () => {
+  const { session, actions } = healthSession();
+  actions.cheatHealth("200");
+  assert.match(session.cheats.outbox.at(-1)[1], /^set cheats_cmd "\d+ health 1 200"$/);
+  assert.match(session.fun.notice, /200%.*Jonas/);
+});
+
+test("the card shows each player's health level once the game confirms it", () => {
+  const { session, actions } = healthSession();
+  assert.deepEqual(
+    healthChips(session).map((c) => [c.label, c.on]),
+    [
+      ["100%", true],
+      ["150%", false],
+      ["200%", false],
+      ["300%", false],
+      ["500%", false],
+    ],
+  );
+  actions.cheatHealth("300");
+  const [seq] = session.cheats.outbox.at(-1);
+  session.cheats.sent.get(seq).until = Date.now() + 10000;
+  session.cheats.lastSeq = seq;
+  onCheatsLine(session, `"cheats_results" is: "${seq} ok^7" default: "^7"`);
+  assert.equal(session.cheats.health[1], 300);
+  assert.equal(healthChips(session).find((c) => c.on).label, "300%");
+  assert.match(session.fun.notice, /300%.*Jonas/);
+  session.cheats.target = 0;
+  assert.equal(healthChips(session).find((c) => c.on).label, "100%", "Lucas is still normal");
+});
+
+test("health for everyone sets every player's level", () => {
+  const { session, actions } = healthSession();
+  session.cheats.target = "all";
+  actions.cheatHealth("150");
+  const [seq] = session.cheats.outbox.at(-1);
+  session.cheats.sent.get(seq).until = Date.now() + 10000;
+  session.cheats.lastSeq = seq;
+  onCheatsLine(session, `"cheats_results" is: "${seq} ok^7" default: "^7"`);
+  assert.deepEqual(session.cheats.health, { 0: 150, 1: 150 });
+  assert.equal(healthChips(session).find((c) => c.on).label, "150%");
+});
+
+test("a restarted game (the script counts from 0) forgets the health levels", () => {
+  const session = fakeSession();
+  session.cheats.health = { 0: 200 };
+  onCheatsLine(session, '"cheats_state" is: "ready=1 seq=5 round=3 frozen=0 power=0 horde=0 lists=1^7" default: "^7"');
+  onCheatsLine(session, '"cheats_state" is: "ready=1 seq=0 round=1 frozen=0 power=0 horde=0 lists=1^7" default: "^7"');
+  assert.deepEqual(session.cheats.health, {});
 });
 
 let failed = 0;

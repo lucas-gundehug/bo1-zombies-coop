@@ -38,6 +38,7 @@ builds on it** and follows its updates, so new vel.gg engines keep working, and 
 | :--------------- | :------------------------------------------------ | :------------------------------------------------------------------------------------------------ |
 | Weapons          | A fixed list of 24, the same on every map         | Exactly the weapons the map has (Zap Guns on Moon, Thundergun on Kino, Baby Gun on Shangri-La…)    |
 | Perks & upgrades | —                                                 | Any perk for free, Pack-a-Punch for the weapon in hand                                            |
+| Health           | God mode (can't be hurt) only                     | Health levels from 100% to 500%, per player, on top of Juggernog                                  |
 | Give to          | The host only                                     | You, one friend, or everyone at once                                                              |
 | Rounds           | —                                                 | Jump to any round (1–255), skip ahead, or freeze the round                                        |
 | Map              | —                                                 | Press **N**: friends, your room, closed doors with prices, perks, box, Pack-a-Punch, power        |
@@ -57,6 +58,7 @@ map.
 | 🔫 **Weapons on this map** | Read from the game when the map loads, so every button works: wonder weapons included.                                           |
 | ⚡ **Pack-a-Punch**        | Upgrades the weapon the chosen player is holding.                                                                                |
 | 🥤 **Perks (free)**        | The map's perk machines: Juggernog, Speed Cola, Double Tap, Mule Kick and the rest. The first perk turns the power on, as the switch would. |
+| ❤️ **Health levels**       | 100%, 150%, 200%, 300% or 500% health for any player. You still go down, just after more hits; Juggernog adds on top, and the level stays through revives and new rounds. |
 | 💥 **Power-ups**           | Max Ammo, Insta-Kill, Nuke, Fire Sale and the rest, dropped in front of the player.                                               |
 | 🔁 **Rounds**              | Jump to any round from 1 to 255, forwards or backwards, or skip to the next one.                                                 |
 | 🧊 **Freeze round**        | The round doesn't end, even with every zombie dead, until you unfreeze it.                                                       |

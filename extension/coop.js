@@ -2009,6 +2009,11 @@
     nextRound: "Next round",
     freeze: "Freeze round",
     giving: (thing, name) => `Giving ${thing} to ${name}…`,
+    health: "Health",
+    healthNote: "More health takes more hits to go down. Juggernog adds on top.",
+    settingHealth: (pct, name) => `Setting health to ${pct}% for ${name}…`,
+    healthSet: (pct, name) => `Health ${pct}% for ${name}.`,
+    errBadHealth: "That health level isn't allowed.",
     packing: (name) => `Pack-a-Punching ${name}'s weapon…`,
     given: (thing, name) => `${thing} given to ${name}.`,
     packed: (name) => `Pack-a-Punched for ${name}.`,
@@ -2031,8 +2036,9 @@
 
   // src/cheats/section.js
   var MAX_ROUND = 255;
+  var HEALTH_LEVELS = [100, 150, 200, 300, 500];
   var byName = (name) => (a, b) => name(a).localeCompare(name(b));
-  var AREA = { give: "weapons", pap: "weapons", perk: "perks", powerup: "powerups", round: "rounds", next: "rounds", freeze: "rounds" };
+  var AREA = { give: "weapons", pap: "weapons", perk: "perks", health: "health", powerup: "powerups", round: "rounds", next: "rounds", freeze: "rounds" };
   function say(session, text3, action) {
     session.fun.notice = text3;
     session.fun.noticeAt = Date.now();
@@ -2059,7 +2065,8 @@
     perk_failed: (d) => C.errPerkFailed(perkName(d)),
     no_powerup: (d) => C.errNoPowerup(powerupName(d)),
     bad_round: () => C.errBadRound(MAX_ROUND),
-    horde: () => C.errHorde
+    horde: () => C.errHorde,
+    bad_health: () => C.errBadHealth
   };
   function resultText(result, sent, name) {
     if (!result.ok) return (ERRORS[result.code] ?? (() => C.errOther(result.code)))(result.detail);
@@ -2070,6 +2077,8 @@
         return C.packed(name);
       case "perk":
         return C.given(perkName(sent.arg), name);
+      case "health":
+        return C.healthSet(sent.arg, name);
       case "powerup":
         return C.dropped(powerupName(sent.arg), name);
       case "round":
@@ -2102,6 +2111,12 @@
       blocks.push({ kind: "grid", buttons: [...cheats.perks].sort(byName(perkName)).map((p) => ({ act: "cheatPerk", arg: p, label: perkName(p) })) });
     }
     noticeAfter(session, "perks", blocks);
+    blocks.push({ kind: "label", text: C.health });
+    blocks.push({ kind: "text", cls: "muted small", text: C.healthNote });
+    const levelOf = (slot) => cheats.health?.[slot] ?? 100;
+    const current = chosen === "all" ? players.every((p) => levelOf(p.slot) === levelOf(players[0].slot)) ? levelOf(players[0].slot) : null : levelOf(chosen);
+    blocks.push({ kind: "chips", chips: HEALTH_LEVELS.map((pct) => ({ act: "cheatHealth", arg: String(pct), label: `${pct}%`, on: current === pct })) });
+    noticeAfter(session, "health", blocks);
     blocks.push({ kind: "label", text: C.powerups });
     if (!cheats.powerups.length) blocks.push({ kind: "text", cls: "muted small", text: C.noPowerups });
     else blocks.push({ kind: "grid", buttons: [...cheats.powerups].sort(byName(powerupName)).map((p) => ({ act: "cheatPowerup", arg: p, label: powerupName(p) })) });
@@ -2127,6 +2142,10 @@
     const cheats = session.cheats;
     cheats.onResult = (result, sent) => {
       const players = funPlayers2(session);
+      if (result.ok && sent.action === "health") {
+        const slots = sent.target === "all" ? players.map((p) => p.slot) : [Number(sent.target)];
+        for (const slot of slots) cheats.health[slot] = Number(sent.arg);
+      }
       say(session, resultText(result, sent, who(session, players, sent.target)), sent.action);
     };
     const toChosen = (action, arg, pending) => {
@@ -2141,6 +2160,7 @@
       cheatPap: () => toChosen("pap", void 0, (name) => C.packing(name)),
       cheatPerk: (perk) => toChosen("perk", perk, (name) => C.giving(perkName(perk), name)),
       cheatPowerup: (powerup) => toChosen("powerup", powerup, (name) => C.giving(powerupName(powerup), name)),
+      cheatHealth: (pct) => toChosen("health", pct, (name) => C.settingHealth(pct, name)),
       cheatRound: (text3) => {
         const round = Number(String(text3 ?? "").trim());
         if (!Number.isInteger(round) || round < 1 || round > MAX_ROUND) return say(session, C.errBadRound(MAX_ROUND), "round");
@@ -2659,7 +2679,9 @@
     const height = view2.getUint16(8, true);
     const end = view2.getUint32(16, true);
     const start2 = view2.getUint32(20, true);
-    if (!format || !width || !height || start2 < 48 || end > bytes.length || end <= start2) return null;
+    if (!format || !width || !height || width > 1024 || height > 1024 || start2 < 48 || end > bytes.length || end <= start2) return null;
+    const needed = Math.ceil(width / 4) * Math.ceil(height / 4) * (format === "dxt1" ? 8 : 16);
+    if (end - start2 < needed) return null;
     return { width, height, format, data: bytes.subarray(start2, end) };
   }
   var rgb565 = (c) => [(c >> 11 & 31) * 255 / 31, (c >> 5 & 63) * 255 / 63, (c & 31) * 255 / 31];
@@ -2718,13 +2740,21 @@
       for await (const [name, handle] of main.entries()) {
         if (!wanted.size) break;
         if (!name.endsWith(".iwd") || handle.kind !== "file") continue;
-        const file = await handle.getFile();
-        for (const entry of await archiveEntries(file)) {
-          const id = wanted.get(entry.name);
-          if (!id) continue;
-          wanted.delete(entry.name);
-          const image = parseIwi(await entryBytes(file, entry));
-          if (image) icons.set(id, toCanvas(image));
+        try {
+          const file = await handle.getFile();
+          for (const entry of await archiveEntries(file)) {
+            const id = wanted.get(entry.name);
+            if (!id) continue;
+            try {
+              const image = parseIwi(await entryBytes(file, entry));
+              if (image) {
+                icons.set(id, toCanvas(image));
+                wanted.delete(entry.name);
+              }
+            } catch {
+            }
+          }
+        } catch {
         }
       }
     } catch {
@@ -2822,14 +2852,31 @@
       map.planOk = Boolean(map.plan) && state.sig === map.plan.sig;
     }
   }
-  function mapTick(session, now, { playing = screen() === "playing", slug = currentSlugOf(session) } = {}) {
+  function iconsNeeded(plan) {
+    const ids = new Set(plan.pois.filter((p) => p.kind === "perk" && ICON_FILES[p.id]).map((p) => p.id));
+    if (plan.pois.some((p) => p.kind === "box")) ids.add("box");
+    return [...ids];
+  }
+  var ICON_RETRY_MS = 15e3;
+  var ICON_TRIES = 4;
+  var canReadIcons = () => Boolean(globalThis.navigator?.storage?.getDirectory);
+  function mapTick(session, now, { playing = screen() === "playing", slug = currentSlugOf(session), loadIcons: loadIcons2 = canReadIcons() ? loadIcons : null } = {}) {
     const map = session.map;
     if (!map) return;
     if (slug !== map.slug) {
-      Object.assign(map, { slug, plan: planFor(slug), state: null, planOk: false, liveV: null, icons: /* @__PURE__ */ new Map() });
-      if (slug && globalThis.navigator?.storage?.getDirectory) loadIcons(slug).then((icons) => map.slug === slug && (map.icons = icons));
+      Object.assign(map, { slug, plan: planFor(slug), state: null, planOk: false, liveV: null, icons: /* @__PURE__ */ new Map(), iconTries: 0, iconsAt: -Infinity });
       map.live.clear();
       map.tracks.clear();
+    }
+    const missing = Boolean(map.plan) && iconsNeeded(map.plan).some((id) => !map.icons.has(id));
+    if (playing && slug && loadIcons2 && missing && !map.iconsLoading && map.iconTries < ICON_TRIES && now - map.iconsAt >= ICON_RETRY_MS) {
+      map.iconsLoading = true;
+      map.iconTries += 1;
+      map.iconsAt = now;
+      loadIcons2(slug).then((icons) => {
+        map.iconsLoading = false;
+        if (map.slug === slug && icons.size >= map.icons.size) map.icons = icons;
+      });
     }
     if (!playing) {
       if (map.live.size || map.state) Object.assign(map, { state: null, planOk: false, liveV: null });
@@ -2863,6 +2910,8 @@
       weapons: [],
       perks: [],
       powerups: [],
+      health: {},
+      // slot -> health level in %, as the game confirmed it (100 when not set)
       seq: 0,
       outbox: [],
       // [seq, command text] not sent yet
@@ -2945,7 +2994,10 @@
     if (name === "cheats_state") {
       const state = parseState(value);
       Object.assign(cheats, { ready: state.ready, round: state.round, frozen: state.frozen, power: state.power, horde: state.horde, scriptLists: state.lists });
-      if (state.seq < cheats.scriptSeq) cheats.lastSeq = state.seq;
+      if (state.seq < cheats.scriptSeq) {
+        cheats.lastSeq = state.seq;
+        cheats.health = {};
+      }
       cheats.scriptSeq = state.seq;
     } else if (name === "cheats_weapons_count") {
       const count = Number(value) || 0;
@@ -3017,6 +3069,7 @@ cheats_main()
 	flag_wait( "all_players_connected" );
 	level thread cheats_state_loop();
 	level thread cheats_freeze_loop();
+	level thread cheats_health_loop();
 	level thread cheats_publish_lists_later();
 	for ( ;; )
 	{
@@ -3276,6 +3329,8 @@ cheats_player_action( action, arg )
 		return self cheats_perk( arg );
 	case "powerup":
 		return self cheats_powerup( arg );
+	case "health":
+		return self cheats_health( int( arg ) );
 	}
 	return "bad_action " + action;
 }
@@ -3364,6 +3419,65 @@ cheats_power_on( player )
 
 // One perk at a time per player: the free-points and perk-count bookkeeping below must not interleave (two quick
 // clicks ran in two threads and left the player 20000 points).
+// Health levels: the player's maximum health is the game's own (100, or Juggernog's) times pct / 100. The game sets
+// maxhealth itself on a perk, a revive or a respawn; cheats_health_loop notices (maxhealth is no longer the value we
+// set), takes that as the new base, and puts the level back on top of it.
+cheats_health( pct )
+{
+	if ( pct < 100 || pct > 1000 )
+	{
+		return "bad_health " + pct;
+	}
+	self.cheats_health = pct;
+	self cheats_health_apply();
+	self.health = self.maxhealth;
+	return "";
+}
+
+cheats_health_apply()
+{
+	if ( !IsDefined( self.cheats_health ) )
+	{
+		return;
+	}
+	if ( !IsDefined( self.cheats_health_set ) || self.maxhealth != self.cheats_health_set )
+	{
+		self.cheats_health_base = self.maxhealth;
+	}
+	target = int( self.cheats_health_base * self.cheats_health / 100 );
+	if ( self.maxhealth != target )
+	{
+		self.maxhealth = target;
+		if ( self.health > target )
+		{
+			self.health = target;
+		}
+	}
+	self.cheats_health_set = target;
+}
+
+cheats_health_loop()
+{
+	for ( ;; )
+	{
+		players = get_players();
+		for ( i = 0; i < players.size; i++ )
+		{
+			player = players[i];
+			if ( !IsDefined( player.cheats_health ) || !IsDefined( player.sessionstate ) || player.sessionstate != "playing" )
+			{
+				continue;
+			}
+			if ( player maps\\_laststand::player_is_in_laststand() )
+			{
+				continue;
+			}
+			player cheats_health_apply();
+		}
+		wait( .5 );
+	}
+}
+
 cheats_perk( perk )
 {
 	while ( is_true( self.cheats_perk_busy ) )
@@ -5240,10 +5354,12 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
   var SCALE = 0.11;
   var PAD2 = SIZE / 2 + 16;
   var minimapEnabled = () => readSetting("minimap", "1") !== "0";
-  function minimapVisible(session, now, { playing = screen() === "playing" } = {}) {
+  var minimapCanvasSize = (dpr) => ({ w: Math.round(SIZE * dpr), h: Math.round((SIZE + BAR) * dpr) });
+  function minimapFrame(session, now, { playing = screen() === "playing", view: view2 = latestView() } = {}) {
     const map = session.map;
-    if (!map?.minimap || !playing || map.open || !map.plan) return false;
-    return mapModel(session, now, { view: null }).status === "ok";
+    if (!map?.minimap || !playing || map.open || !map.plan) return null;
+    const model = mapModel(session, now, { view: view2 });
+    return model.status === "ok" && model.players.some((p) => p.me) ? model : null;
   }
   function minimapWindow(layer, x, y, size) {
     const [sx, sy] = toScreen(layer, x, y);
@@ -5290,6 +5406,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       this.canvas = root.querySelector("canvas");
       this.cache = {};
       this.shown = false;
+      this.brokenSlug = void 0;
     }
     mount() {
       const attach = () => {
@@ -5300,36 +5417,40 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     }
     /** Runs for the whole page: a cheap check per frame, and a draw while the minimap shows. */
     start(session) {
+      const show = (on) => {
+        if (on === this.shown) return;
+        this.shown = on;
+        this.host.style.display = on ? "block" : "none";
+      };
       const frame = () => {
+        const slug = session.map?.slug;
+        if (this.brokenSlug !== void 0 && this.brokenSlug !== slug) this.brokenSlug = void 0;
         try {
-          const now = Date.now();
-          const visible = minimapVisible(session, now);
-          if (visible !== this.shown) {
-            this.shown = visible;
-            this.host.style.display = visible ? "block" : "none";
-          }
-          if (visible) this.draw(session, now);
+          const model = this.brokenSlug === void 0 ? minimapFrame(session, Date.now()) : null;
+          show(Boolean(model));
+          if (model) this.draw(session, model);
         } catch (error) {
           session.note?.(`minimap failed: ${error?.stack ?? error}`);
-          this.shown = false;
-          this.host.style.display = "none";
+          this.brokenSlug = slug;
+          show(false);
         }
         requestAnimationFrame(frame);
       };
       requestAnimationFrame(frame);
     }
-    draw(session, now) {
+    draw(session, model) {
       const dpr = window.devicePixelRatio || 1;
-      if (this.canvas.width !== SIZE * dpr || this.canvas.height !== (SIZE + BAR) * dpr) {
-        this.canvas.width = SIZE * dpr;
-        this.canvas.height = (SIZE + BAR) * dpr;
+      const size = minimapCanvasSize(dpr);
+      if (this.canvas.width !== size.w || this.canvas.height !== size.h) {
+        this.canvas.width = size.w;
+        this.canvas.height = size.h;
       }
-      const model = mapModel(session, now);
       this.model = model;
-      const me = model.players?.find((p) => p.me);
-      const plan = session.map.plan;
+      const me = model.players.find((p) => p.me);
+      const map = session.map;
+      const plan = map.plan;
       const ctx = this.canvas.getContext("2d");
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.setTransform(size.w / SIZE, 0, 0, size.h / (SIZE + BAR), 0, 0);
       ctx.clearRect(0, 0, SIZE, SIZE + BAR);
       roundRect(ctx, 0.5, 0.5, SIZE - 1, SIZE + BAR - 1, 10);
       ctx.fillStyle = "rgba(18,17,16,.94)";
@@ -5338,20 +5459,22 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       ctx.lineWidth = 1;
       ctx.stroke();
       text2(ctx, model.room ?? "—", SIZE / 2, BAR / 2 + 1, { size: 13, weight: 800, align: "center" });
-      if (!me || model.status !== "ok") return;
-      const key = JSON.stringify([plan.slug, model.floor, dpr, model.rooms.map((r) => [r.open, r.current])]);
+      const current = model.rooms.findIndex((r) => r.current);
+      const key = `${plan.slug}|${model.floor}|${dpr}|${map.planOk}|${map.state?.at ?? 0}|${current}`;
       if (this.cache.key !== key) this.cache = { key, ...floorLayer(plan, model, dpr) };
       const { view: view2, canvas } = this.cache;
       const win = minimapWindow(view2, me.x, me.y, SIZE);
+      const sx = Math.round(win.sx * dpr) / dpr;
+      const sy = Math.round(win.sy * dpr) / dpr;
       ctx.save();
       roundRect(ctx, 1, BAR, SIZE - 2, SIZE - 1, 9);
       ctx.clip();
-      ctx.drawImage(canvas, win.sx * dpr, win.sy * dpr, SIZE * dpr, SIZE * dpr, 0, BAR, SIZE, SIZE);
-      const mini = { scale: view2.scale, rotate: 0, tx: view2.tx - win.sx, ty: view2.ty - win.sy + BAR };
+      ctx.drawImage(canvas, sx * dpr, sy * dpr, SIZE * dpr, SIZE * dpr, 0, BAR, SIZE, SIZE);
+      const mini = { scale: view2.scale, rotate: 0, tx: view2.tx - sx, ty: view2.ty - sy + BAR };
       for (const poi of model.pois) {
         if (poi.at[0] !== model.floor) continue;
         const [x, y] = toScreen(mini, poi.at[1], poi.at[2]);
-        drawPoi(ctx, x, y, poi, session.map.icons, 18);
+        drawPoi(ctx, x, y, poi, map.icons, 18);
       }
       for (const door of model.doors) {
         if (door.at[0] !== model.floor) continue;
@@ -6329,6 +6452,9 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       plan: null,
       icons: /* @__PURE__ */ new Map(),
       // the game's perk and box icons for this map (src/map/icons.js), once read
+      iconTries: 0,
+      iconsAt: -Infinity,
+      iconsLoading: false,
       tracks: /* @__PURE__ */ new Map(),
       // n -> track of recent positions, for gliding (src/map/track.js)
       live: /* @__PURE__ */ new Map(),

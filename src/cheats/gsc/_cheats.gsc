@@ -32,6 +32,7 @@ cheats_main()
 	flag_wait( "all_players_connected" );
 	level thread cheats_state_loop();
 	level thread cheats_freeze_loop();
+	level thread cheats_health_loop();
 	level thread cheats_publish_lists_later();
 	for ( ;; )
 	{
@@ -291,6 +292,8 @@ cheats_player_action( action, arg )
 		return self cheats_perk( arg );
 	case "powerup":
 		return self cheats_powerup( arg );
+	case "health":
+		return self cheats_health( int( arg ) );
 	}
 	return "bad_action " + action;
 }
@@ -379,6 +382,65 @@ cheats_power_on( player )
 
 // One perk at a time per player: the free-points and perk-count bookkeeping below must not interleave (two quick
 // clicks ran in two threads and left the player 20000 points).
+// Health levels: the player's maximum health is the game's own (100, or Juggernog's) times pct / 100. The game sets
+// maxhealth itself on a perk, a revive or a respawn; cheats_health_loop notices (maxhealth is no longer the value we
+// set), takes that as the new base, and puts the level back on top of it.
+cheats_health( pct )
+{
+	if ( pct < 100 || pct > 1000 )
+	{
+		return "bad_health " + pct;
+	}
+	self.cheats_health = pct;
+	self cheats_health_apply();
+	self.health = self.maxhealth;
+	return "";
+}
+
+cheats_health_apply()
+{
+	if ( !IsDefined( self.cheats_health ) )
+	{
+		return;
+	}
+	if ( !IsDefined( self.cheats_health_set ) || self.maxhealth != self.cheats_health_set )
+	{
+		self.cheats_health_base = self.maxhealth;
+	}
+	target = int( self.cheats_health_base * self.cheats_health / 100 );
+	if ( self.maxhealth != target )
+	{
+		self.maxhealth = target;
+		if ( self.health > target )
+		{
+			self.health = target;
+		}
+	}
+	self.cheats_health_set = target;
+}
+
+cheats_health_loop()
+{
+	for ( ;; )
+	{
+		players = get_players();
+		for ( i = 0; i < players.size; i++ )
+		{
+			player = players[i];
+			if ( !IsDefined( player.cheats_health ) || !IsDefined( player.sessionstate ) || player.sessionstate != "playing" )
+			{
+				continue;
+			}
+			if ( player maps\_laststand::player_is_in_laststand() )
+			{
+				continue;
+			}
+			player cheats_health_apply();
+		}
+		wait( .5 );
+	}
+}
+
 cheats_perk( perk )
 {
 	while ( is_true( self.cheats_perk_busy ) )

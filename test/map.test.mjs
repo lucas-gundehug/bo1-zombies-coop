@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { fitView, floorOf, toScreen, validPlan } from "../src/map/plan.js";
 import { createMap } from "../src/map/state.js";
-import { mapTick, onMapLine, parseLive, parseMapState } from "../src/map/live.js";
+import { iconsNeeded, mapTick, onMapLine, parseLive, parseMapState } from "../src/map/live.js";
 import { createBridge, onCheatsLine } from "../src/cheats/bridge.js";
 import { SLOT } from "../src/engine/builds.js";
 import { pushSample, sampleTrack } from "../src/map/track.js";
@@ -14,7 +14,7 @@ import { onMapMessage } from "../src/map/net.js";
 import { onMapKey } from "../src/map/hotkey.js";
 import { buildPlan } from "../scripts/plan-build.mjs";
 import { decodeDxt, ICON_FILES, parseIwi, zipEntries } from "../src/map/icons.js";
-import { minimapActions, minimapSettingBlocks, minimapVisible, minimapWindow } from "../src/map/minimap.js";
+import { minimapActions, minimapCanvasSize, minimapSettingBlocks, minimapVisible, minimapWindow } from "../src/map/minimap.js";
 import { planFor } from "../src/map/plans/index.js";
 import { FLOORS as FLOOR_TABLE } from "../src/map/names.js";
 import { MAP_SLUGS } from "../src/game/page.js";
@@ -767,6 +767,50 @@ test("the minimap shows in a game with map data, and hides for the big map, the 
   noPlan.map.minimap = true;
   noPlan.map.plan = null;
   assert.equal(minimapVisible(noPlan, now, { playing: true }), false, "no plan for this level");
+});
+
+test("the minimap hides when there is no player of mine to center on (spectating, paused)", () => {
+  const now = 100000;
+  const session = modelSession(now);
+  session.map.minimap = true;
+  session.map.live.get(1).s = 2; // I bled out and spectate
+  assert.equal(minimapVisible(session, now, { playing: true }), false);
+});
+
+test("the minimap's canvas size is whole pixels at any display scaling", () => {
+  assert.deepEqual(minimapCanvasSize(1), { w: 200, h: 226 });
+  assert.deepEqual(minimapCanvasSize(1.25), { w: 250, h: 283 });
+  assert.ok(Number.isInteger(minimapCanvasSize(1.1).h));
+});
+
+test("iconsNeeded is the map's perks and the box", () => {
+  assert.deepEqual(iconsNeeded(fixturePlan()).sort(), ["box", "specialty_armorvest"]);
+  assert.deepEqual(iconsNeeded(planFor("kino")).sort(), ["box", "specialty_additionalprimaryweapon", "specialty_armorvest", "specialty_fastreload", "specialty_quickrevive", "specialty_rof"]);
+});
+
+test("icons are read once the game is playing, and again later if some were missing", async () => {
+  const session = hostSession();
+  const calls = [];
+  let result = new Map([["box", {}]]);
+  const loadIcons = (slug) => (calls.push(slug), Promise.resolve(result));
+  mapTick(session, 1000, { playing: false, slug: "kino", loadIcons });
+  assert.deepEqual(calls, [], "not before the game runs (the pack may not be downloaded yet)");
+  mapTick(session, 1000, { playing: true, slug: "kino", loadIcons });
+  mapTick(session, 1050, { playing: true, slug: "kino", loadIcons });
+  assert.deepEqual(calls, ["kino"]);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(session.map.icons.size, 1);
+  result = new Map([["box", {}], ["specialty_armorvest", {}]]); // all this map has: the fixture plan's one perk and the box
+  mapTick(session, 1000 + 16000, { playing: true, slug: "kino", loadIcons });
+  assert.deepEqual(calls, ["kino", "kino"], "tried again: the perk's icon was missing");
+  await new Promise((r) => setTimeout(r, 0));
+  mapTick(session, 1000 + 40000, { playing: true, slug: "kino", loadIcons });
+  assert.equal(calls.length, 2, "every icon this map needs: no more reading");
+});
+
+test("parseIwi refuses sizes its data can't hold, or that are too big for an icon", () => {
+  assert.equal(parseIwi(iwi(0x0b, 8, 8, new Uint8Array(8))), null, "8x8 DXT1 needs 32 bytes");
+  assert.equal(parseIwi(iwi(0x0b, 4096, 4, new Uint8Array(8192))), null, "wider than 1024");
 });
 
 test("the minimap setting turns it off and on, and is saved", () => {
