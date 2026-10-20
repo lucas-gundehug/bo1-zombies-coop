@@ -156,3 +156,24 @@ What changes:
 - File layout under `src/net/`, message type names, and how the e2e test forces fallback.
 - Release: this is a feature release of the fork (bump the fourth version part, as in AGENTS.md "Release") once Lucas
   has merged it. All players need the new build to get direct links; older builds keep working over the relay.
+
+## Result (2026-10-20)
+
+- **Bridge:** option 1. Chrome 155 (installed) and Playwright's Chromium 156 transfer an `RTCDataChannel` to a worker
+  (`worker.postMessage(ch, [ch])`, while the channel is still `connecting`), so the page only does signaling and no game
+  data passes its main thread. No extra delay to measure.
+- **Real game** (`test/e2e.mjs`, Kino, `LITE=1`, local relay, all players on one PC, about 60 s of play after joining):
+
+  | Run | What | Result |
+  | --- | --- | --- |
+  | 2 players | guest direct | pass, ping 1–2 ms |
+  | 4 players | all three guests direct | pass, 0 relay game frames |
+  | `NODIRECT=2`, 3 players | player 2 relay, player 3 direct | pass; relay guest 5233/3479 relay game frames out/in, direct guest 0/0 |
+  | `DROP_DIRECT_S=20` | link dropped mid-game | relay within 2 s, still playing, direct again by the end |
+  | `RELAY_DOWN_S=20`, 3 players | relay cut for everyone mid-game | pass, nobody dropped |
+  | `NODIRECT=all` vs direct, 2 players | relay messages the relay received | about 4,700 relay-only vs 58 direct (about 99 % fewer) |
+
+- **Found by the runs and fixed:** a relay restart dropped every direct link (the host took a re-announced seat for a
+  new player); a guest's map page that replaced its invite page's socket never got the game info (hostNoAnswer).
+- Not measured: two machines on different home networks (all runs are on one PC). STUN reachability between two Danish
+  home connections is expected but unproven here; a failed link falls back to the relay.
