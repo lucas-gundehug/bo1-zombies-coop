@@ -1,7 +1,8 @@
 // Talks to the game script (src/cheats/gsc/_cheats.gsc) through the engine console. Commands go out as
 // `set cheats_cmd "<seq> <action> <target> [arg]"`; what the script publishes in cheats_* dvars is read back by sending a
 // dvar's name, which makes the engine print `"name" is: "value^7" default: ...` to the console (src/fun/fun.js
-// watchConsole hands those lines to onCheatsLine).
+// watchConsole hands those lines to onCheatsLine). The map's cheats_map_* dvars go on to src/map/live.js.
+import { onMapLine } from "../map/live.js";
 
 const STATE_EVERY_MS = 1000;
 const STATE_BUSY_MS = 250; // while a command waits to be sent or taken
@@ -65,7 +66,8 @@ export function sendCheat(session, action, target, arg) {
   cheats.sent.set(cheats.seq, { action, target, arg, until: Infinity });
 }
 
-function ask(session, name) {
+/** Asks the engine to print a dvar (once: a name already waiting in the queue is not added again). */
+export function askDvar(session, name) {
   if (!session.fun.queue.includes(name)) session.fun.queue.push(name);
 }
 
@@ -80,11 +82,11 @@ export function cheatsTick(session, now, playing) {
   const busy = cheats.outbox.length > 0 || cheats.scriptSeq < cheats.lastSeq;
   if (now - cheats.lastStateAt >= (busy ? STATE_BUSY_MS : STATE_EVERY_MS)) {
     cheats.lastStateAt = now;
-    ask(session, "cheats_state");
+    askDvar(session, "cheats_state");
   }
   if (cheats.scriptLists > cheats.listsLoaded) {
     cheats.listsLoaded = cheats.scriptLists;
-    for (const name of ["cheats_weapons_count", "cheats_perks", "cheats_powerups"]) ask(session, name);
+    for (const name of ["cheats_weapons_count", "cheats_perks", "cheats_powerups"]) askDvar(session, name);
   }
   if (cheats.outbox.length && cheats.scriptSeq >= cheats.lastSeq && now - cheats.lastSendAt >= SEND_EVERY_MS) {
     cheats.lastSendAt = now;
@@ -98,13 +100,14 @@ export function cheatsTick(session, now, playing) {
   const waiting = [...cheats.sent.keys()].some((seq) => seq <= cheats.lastSeq);
   if (waiting && now - cheats.lastResultAt >= RESULT_EVERY_MS) {
     cheats.lastResultAt = now;
-    ask(session, "cheats_results");
+    askDvar(session, "cheats_results");
   }
 }
 
 /** Takes one console line; the ones answering for a cheats_* dvar update the state. */
 export function onCheatsLine(session, line) {
   const print = parseDvarPrint(line);
+  if (print?.name.startsWith("cheats_map_")) return onMapLine(session, print.name, print.value);
   const cheats = session.cheats;
   if (!print || !cheats) return;
   const { name, value } = print;
@@ -119,7 +122,7 @@ export function onCheatsLine(session, line) {
   } else if (name === "cheats_weapons_count") {
     const count = Number(value) || 0;
     cheats.weaponChunks = new Array(count).fill(null);
-    for (let i = 0; i < count; i += 1) ask(session, `cheats_weapons_${i}`);
+    for (let i = 0; i < count; i += 1) askDvar(session, `cheats_weapons_${i}`);
   } else if (name.startsWith("cheats_weapons_")) {
     const i = Number(name.slice("cheats_weapons_".length));
     if (!cheats.weaponChunks || !(i >= 0 && i < cheats.weaponChunks.length)) return;

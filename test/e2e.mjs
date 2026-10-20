@@ -11,6 +11,8 @@
 // EXT=<folder> tests another build of the extension (an unzipped release, say) instead of ./extension.
 // GUEST_EXT=<folder> gives the guests another build than the host (the public release while the host runs this fork).
 // CHEATS=1 (fork): once everyone is in, the host gives the first guest a Ray Gun and Juggernog through the cheat menu.
+// MAP=1 (fork): the host and the first guest open the in-game map (N); the host walks and its dot must glide on the
+// guest's map.
 //
 // Direct links (fork): guests connect to the host directly and the run checks that each guest is "direct" once
 // everyone is in. NODIRECT=<2,3|all> makes those players (by number, host = 1) skip direct links and use the relay only.
@@ -325,6 +327,47 @@ if (allIn) {
     await give("cheatGive", "ray_gun_zm", "Ray Gun given to");
     await give("cheatPerk", "specialty_armorvest", "Juggernog given to");
     await wait(3000);
+  }
+  if (process.env.MAP && guests.length) {
+    // fork: the in-game map. With GUEST_EXT (an older build without the map) only the host's map is checked: the guest
+    // must simply play on.
+    const g = guests[0];
+    const opened = async (p) => {
+      await p.page.keyboard.press("n");
+      return p.page
+        .waitForFunction(() => window.__bo1Coop.mapOverlay?.model?.status === "ok", null, { timeout: 15000 })
+        .then(() => true, () => false);
+    };
+    if (!(await opened(host))) {
+      log("map: FAILED on the host");
+      ok = false;
+    }
+    await host.page.keyboard.press("n");
+    if (!process.env.GUEST_EXT) {
+      const fed = await g.page
+        .waitForFunction(() => window.__bo1Coop.map?.live.size >= 2 && window.__bo1Coop.map.planOk, null, { timeout: 30000 })
+        .then(() => true, () => false);
+      const shown = fed && (await opened(g));
+      // the host walks while the guest's map draws it: its dot must glide (a new place on most frames)
+      await host.page.keyboard.down("w");
+      const glide = await g.page.evaluate(
+        () =>
+          new Promise((resolve) => {
+            const seen = new Set();
+            const end = performance.now() + 2000;
+            const step = (t) => {
+              const host = window.__bo1Coop.mapOverlay.model?.players?.find((p) => p.n === 1);
+              if (host) seen.add(`${host.x.toFixed(1)},${host.y.toFixed(1)}`);
+              if (t < end) requestAnimationFrame(step);
+              else resolve(seen.size);
+            };
+            requestAnimationFrame(step);
+          }),
+      );
+      await host.page.keyboard.up("w");
+      log(`map on ${g.name}: fed ${fed}, shown ${shown}, host dot at ${glide} different places in 2 s`);
+      if (!fed || !shown || glide < 20) ok = false;
+    }
   }
   for (const p of players) await p.page.screenshot({ path: `${OUT}/${p.name}.png` }).catch(() => {});
 

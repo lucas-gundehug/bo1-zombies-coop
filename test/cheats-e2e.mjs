@@ -322,6 +322,124 @@ const scenarios = {
       await wait(4000);
     }
   },
+  // The map's side of the game script (src/cheats/gsc/_map.gsc): live data, door state, the one-off dump.
+  async "map-script"() {
+    await setCheats(true);
+    await startMap();
+    assert.ok(await waitReady(), "ready");
+    await until((s) => s.lists >= 1, 30000, "lists published");
+    const live = async () => {
+      const value = (await readDvar("cheats_map_live")) ?? "";
+      const v = Number(value.match(/^v=(\d+)/)?.[1] ?? NaN);
+      const players = (value.match(/ p=(.*)$/)?.[1] ?? "").split(";").filter(Boolean).map((e) => e.split(",").map(Number));
+      return { v, players };
+    };
+    const end = Date.now() + 10000;
+    let me = null;
+    while (Date.now() < end && !me) {
+      me = (await live()).players.find((p) => p[0] === 0 && p.length === 7 && p[5] >= 0 && p[6] === 0) ?? null;
+      if (!me) await wait(500);
+    }
+    log("live, player 0:", JSON.stringify(me));
+    assert.ok(me, "player 0 in cheats_map_live with a room, alive");
+    const mapState = async () => {
+      const value = (await readDvar("cheats_map_state")) ?? "";
+      return Object.fromEntries(value.split(" ").filter(Boolean).map((pair) => pair.split("=")));
+    };
+    const before = await mapState();
+    log("map state:", JSON.stringify(before));
+    const [, rooms, doors] = before.sig?.match(/^z(\d+)d(\d+)c\d+$/) ?? [];
+    assert.ok(Number(rooms) >= 1, `sig ${before.sig}`);
+    assert.equal(before.doors?.length ?? 0, Number(doors), "one door bit per door");
+    assert.equal(before.rooms?.length, Number(rooms), "one room bit per room");
+    // MAPDOOR=<i> opens another door than the first (a debris pile on Five: 8)
+    const door = Number(process.env.MAPDOOR ?? 0);
+    if (Number(doors) > door) {
+      // the door hook works only for tests (it makes every door free for a second)
+      assert.equal((await run(`mapdoor ${door}`)).code, "test_only", "mapdoor without cheats_test");
+      await command("set cheats_test 1");
+      const v0 = (await live()).v;
+      assert.equal((await run(`mapdoor ${door}`)).ok, true, `mapdoor ${door}`);
+      const doorEnd = Date.now() + 5000;
+      let after = null;
+      while (Date.now() < doorEnd) {
+        const { v } = await live();
+        after = await mapState();
+        if (v > v0 && after.doors[door] === "1") break;
+        await wait(300);
+      }
+      log(`after mapdoor ${door}:`, JSON.stringify(after));
+      assert.equal(after.doors[door], "1", `door ${door} open`);
+    }
+    await command("set cheats_map_dump 1");
+    let count = 0;
+    for (let i = 0; i < 20 && !count; i += 1) {
+      count = Number(await readDvar("cheats_map_dump_count", 2000)) || 0;
+      if (!count) await wait(1000);
+    }
+    assert.ok(count > 0, "dump chunks");
+    for (let i = 0; i < count; i += 1) {
+      const chunk = await readDvar(`cheats_map_dump_${i}`);
+      assert.ok(chunk && chunk.length < 400, `dump chunk ${i}: ${chunk?.length}`);
+    }
+    log("dump chunks:", count);
+  },
+  // The whole map in one browser: N opens it without pausing or taking the mouse, a bought door disappears from it, N
+  // closes it, and the game runs as smoothly with it open.
+  async map() {
+    await setCheats(true);
+    await startMap();
+    assert.ok(await waitReady(), "ready");
+    await until((s) => s.lists >= 1, 30000, "lists published");
+    await page.waitForFunction(() => window.__bo1Coop.map.planOk === true, null, { timeout: 20000 });
+    const frames = (ms) =>
+      page.evaluate(
+        (duration) =>
+          new Promise((resolve) => {
+            const gaps = [];
+            let last = performance.now();
+            const end = last + duration;
+            const step = (t) => {
+              gaps.push(t - last);
+              last = t;
+              if (t < end) requestAnimationFrame(step);
+              else {
+                gaps.sort((a, b) => a - b);
+                resolve({ median: gaps[Math.floor(gaps.length / 2)], p95: gaps[Math.floor(gaps.length * 0.95)], frames: gaps.length });
+              }
+            };
+            requestAnimationFrame(step);
+          }),
+        ms,
+      );
+    const closed = await frames(10000);
+    await page.keyboard.press("n");
+    const opened = await page.evaluate(() => {
+      const c = window.__bo1Coop;
+      return { open: c.map.open, screen: window.five?.screen, menuOpen: c.engine.menuOpen(), locked: Boolean(document.pointerLockElement) };
+    });
+    log("after N:", JSON.stringify(opened));
+    assert.deepEqual(opened, { open: true, screen: "playing", menuOpen: false, locked: true });
+    await page.waitForFunction(() => window.__bo1Coop.mapOverlay.model?.status === "ok" && window.__bo1Coop.mapOverlay.model.room, null, { timeout: 5000 });
+    const model = await page.evaluate(() => {
+      const m = window.__bo1Coop.mapOverlay.model;
+      return { room: m.room, floor: m.floor, doors: m.doors.map((d) => d.index), players: m.players.length, stale: m.stale };
+    });
+    log("model:", JSON.stringify(model));
+    assert.equal(model.stale, false);
+    assert.ok(model.doors.includes(0), "door 0 shown closed");
+    await snap("map-open");
+    const open = await frames(10000);
+    log("frames closed:", JSON.stringify(closed), "open:", JSON.stringify(open));
+    assert.ok(open.p95 <= closed.p95 * 1.2 + 2, `frame time with the map open: p95 ${open.p95.toFixed(1)} ms vs ${closed.p95.toFixed(1)} ms closed`);
+    await command("set cheats_test 1");
+    assert.equal((await run("mapdoor 0")).ok, true, "mapdoor 0");
+    await page.waitForFunction(() => !window.__bo1Coop.mapOverlay.model.doors.some((d) => d.index === 0), null, { timeout: 2000 });
+    await snap("map-door-open");
+    await page.keyboard.press("n");
+    await page.waitForFunction(() => window.__bo1Coop.mapOverlay.host.style.display === "none", null, { timeout: 2000 });
+    assert.equal(await page.evaluate(() => window.five?.screen), "playing");
+  },
   async load() {
     await setCheats(true);
     await startMap();
