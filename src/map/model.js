@@ -9,11 +9,14 @@ import { RENDER_DELAY_MS, sampleTrack } from "./track.js";
 const GONE_MS = 2000; // a player not heard from this long has left
 const NO_DATA_MS = 5000; // the map was opened this long ago and nothing came
 
-/** Player number -> name: the host knows who is in its game, a guest reads the host's lobby. */
+const text = (value) => (typeof value === "string" ? value : value == null ? "" : String(value));
+
+/** Player number -> name: the host knows who is in its game, a guest reads the host's lobby. Names come from other
+ * players' games, so anything that is not text is made text. */
 function names(session) {
-  if (session.mode !== "guest") return new Map(funPlayers(session).map((p) => [p.n, p.name]));
-  const known = new Map((session.lobby?.players ?? []).map((p) => [p.n, p.name ?? ""]));
-  if (Number.isInteger(session.seat)) known.set(session.seat + 1, session.name ?? "");
+  if (session.mode !== "guest") return new Map(funPlayers(session).map((p) => [p.n, text(p.name)]));
+  const known = new Map((session.lobby?.players ?? []).map((p) => [p.n, text(p?.name)]));
+  if (Number.isInteger(session.seat)) known.set(session.seat + 1, text(session.name));
   return known;
 }
 
@@ -46,7 +49,8 @@ export function mapModel(session, now, { view = latestView() } = {}) {
     return { status: waited ? "noData" : "waiting" };
   }
   const floor = mine?.floor ?? 0;
-  const room = mine && mine.room >= 0 && plan.rooms[mine.room] ? mine.room : -1;
+  // a room index only means something in the plan the game was captured with
+  const room = map.planOk && mine && mine.room >= 0 && plan.rooms[mine.room] ? mine.room : -1;
   const state = map.planOk ? map.state : null;
   let boxIndex = -1;
   return {

@@ -310,7 +310,13 @@ export class MapOverlay {
         this.host.style.display = "none";
         return;
       }
-      this.draw(session);
+      try {
+        this.draw(session);
+      } catch (error) {
+        // never leave a frozen panel over the game: close it, and N can open it again
+        session.note?.(`map drawing failed: ${error?.stack ?? error}`);
+        session.map.open = false;
+      }
       requestAnimationFrame(frame);
     };
     requestAnimationFrame(frame);

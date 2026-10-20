@@ -78,7 +78,14 @@ export function mapTick(session, now, { playing = screen() === "playing", slug =
     map.live.clear();
     map.tracks.clear();
   }
-  if (session.mode === "guest" || !session.cheats?.ok || !playing) return;
+  if (!playing) {
+    // out of the game (game over, back to the menu): what it showed belongs to that game, and a restart starts clean
+    if (map.live.size || map.state) Object.assign(map, { state: null, planOk: false, liveV: null });
+    map.live.clear();
+    map.tracks.clear();
+    return;
+  }
+  if (session.mode === "guest" || !session.cheats?.ok) return;
   if (now - map.lastAskAt >= LIVE_EVERY_MS) {
     map.lastAskAt = now;
     askDvar(session, "cheats_map_live");

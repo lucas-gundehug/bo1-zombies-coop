@@ -379,6 +379,42 @@ test("with a plan that doesn't match, players stay but doors and rooms are hidde
   assert.equal(model.players.length, 2);
 });
 
+test("with a plan that doesn't match, the room you're in is not named or outlined", () => {
+  const now = 100000;
+  const session = modelSession(now);
+  session.map.planOk = false;
+  const model = mapModel(session, now, { view: VIEW });
+  assert.equal(model.room, null);
+  assert.ok(model.rooms.every((r) => !r.current));
+});
+
+test("a name that is not text (from another player's game) still draws", () => {
+  const now = 100000;
+  const session = modelSession(now);
+  session.guests.get(1).state.name = 42;
+  const model = mapModel(session, now, { view: VIEW });
+  assert.equal(model.players[1].letter, "4");
+  session.guests.get(1).state.name = { evil: true };
+  assert.equal(typeof mapModel(session, now, { view: VIEW }).players[1].letter, "string");
+  const guest = modelSession(now);
+  Object.assign(guest, { mode: "guest", seat: 1, name: "jonas", lobby: { players: [{ n: 1, name: ["x"] }] } });
+  assert.equal(typeof mapModel(guest, now, { view: VIEW }).players[0].letter, "string");
+});
+
+test("leaving the game forgets its players and state (a restart starts clean)", () => {
+  const session = hostSession();
+  onMapLine(session, "cheats_map_live", "v=1 p=0,100,-200,64,90,2,0");
+  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=01 rooms=110 box=1 power=0");
+  mapTick(session, 1000, { playing: false, slug: "kino" });
+  assert.equal(session.map.live.size, 0);
+  assert.equal(session.map.tracks.size, 0);
+  assert.equal(session.map.state, null);
+  session.fun.queue.length = 0;
+  // the new game's first reading has v=1 again: its state must be asked for, not taken as already known
+  onMapLine(session, "cheats_map_live", "v=1 p=0,100,-200,64,90,2,0");
+  assert.deepEqual(session.fun.queue, ["cheats_map_state"]);
+});
+
 test("no plan, waiting, and no data", () => {
   const now = 100000;
   const noPlan = modelSession(now);
@@ -578,6 +614,13 @@ test("every map has a valid bundled plan", () => {
   }
   assert.ok(planFor("kino").rooms.length >= 10);
   assert.equal(planFor("atlantis"), null);
+});
+
+test("maps with a power switch show it (Der Riese and Verrückt one, Shangri-La two, Nacht none)", () => {
+  const switches = (slug) => planFor(slug).pois.filter((p) => p.kind === "power").length;
+  for (const slug of ["riese", "verruckt", "kino", "five", "moon", "ascension", "cotd"]) assert.equal(switches(slug), 1, slug);
+  assert.equal(switches("shangrila"), 2);
+  assert.equal(switches("nacht"), 0);
 });
 
 test("the floors of a plan match the floor table", () => {

@@ -24,6 +24,9 @@ map_main()
 	level.map_zones = [];
 	level.map_doors = [];
 	SetDvar( "cheats_map_dump", "0" );
+	// dvars outlive a level restart (game over in the same page): the last game's players and doors must not show
+	SetDvar( "cheats_map_live", "" );
+	SetDvar( "cheats_map_state", "" );
 	flag_wait( "all_players_spawned" );
 	wait( 2 );
 	map_capture();
@@ -259,10 +262,21 @@ map_dump()
 	{
 		records[records.size] = "P,pap,-," + map_xyz( pap[i].origin );
 	}
-	power = GetEntArray( "use_elec_switch", "targetname" );
-	for ( i = 0; i < power.size; i++ )
+	// the power switch: use_elec_switch on most maps, use_power_switch on Der Riese, use_master_switch on Verrückt,
+	// and Shangri-La's two (both pulled turn the power on)
+	switches = [];
+	switches[0] = "use_elec_switch";
+	switches[1] = "use_power_switch";
+	switches[2] = "use_master_switch";
+	switches[3] = "power_trigger_left";
+	switches[4] = "power_trigger_right";
+	for ( s = 0; s < switches.size; s++ )
 	{
-		records[records.size] = "P,power,-," + map_xyz( power[i].origin );
+		power = GetEntArray( switches[s], "targetname" );
+		for ( i = 0; i < power.size; i++ )
+		{
+			records[records.size] = "P,power,-," + map_xyz( power[i].origin );
+		}
 	}
 	for ( i = 0; i < level.map_chests.size; i++ )
 	{
