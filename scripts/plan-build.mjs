@@ -112,5 +112,8 @@ export function buildPlan(dumpText, { slug, floors }) {
     return { kind: door.kind, cost: door.cost, at: [floorAt(door), door.x, door.y], rooms: [a, b] };
   });
   const pois = dump.pois.map((p) => ({ kind: p.kind, id: p.id, at: [floorAt(p), p.x, p.y] }));
-  return { v: 1, slug, sig: `z${dump.zones.length}d${dump.doors.length}`, floors, rooms, doors, pois };
+  // the sig the game script publishes: room and door counts, and a checksum over the doors in order (index ×
+  // (cost + |x| + |y|)), so a door moved or reordered by a game update is noticed even when the counts stay
+  const sum = dump.doors.reduce((s, d, i) => s + (i + 1) * (d.cost + Math.abs(d.x) + Math.abs(d.y)), 0);
+  return { v: 1, slug, sig: `z${dump.zones.length}d${dump.doors.length}c${sum}`, floors, rooms, doors, pois };
 }

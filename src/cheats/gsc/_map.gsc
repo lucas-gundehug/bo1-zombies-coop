@@ -7,7 +7,8 @@
 // the bundled plan (src/map/plans/<map>.json). Published:
 //   cheats_map_live        every 0.25 s: v=<state counter> p=<ent>,<x>,<y>,<z>,<yaw>,<room>,<s>;...
 //                          (room: index into the rooms or -1; s: 0 alive, 1 downed, 2 spectating)
-//   cheats_map_state       when it changes (the counter goes up): sig=z<rooms>d<doors> doors=<0/1 per door, 1 = open>
+//   cheats_map_state       when it changes (the counter goes up): sig=z<rooms>d<doors>c<checksum of the doors>
+//                          doors=<0/1 per door, 1 = open>
 //                          rooms=<0/1 per room, 1 = enabled> box=<chest indices> power=<0|1>
 //   cheats_map_dump_count  after the console sets cheats_map_dump 1: the number of cheats_map_dump_<i> chunks, each
 //                          ";"-separated records of ","-separated fields (scripts/plan-build.mjs reads them):
@@ -72,6 +73,42 @@ map_capture()
 			}
 		}
 	}
+	// the triggers of each door (they share a target), worked out once
+	level.map_door_group = [];
+	for ( i = 0; i < level.map_doors.size; i++ )
+	{
+		group = [];
+		for ( j = 0; j < level.map_doors.size; j++ )
+		{
+			if ( level.map_door_target[j] == level.map_door_target[i] )
+			{
+				group[group.size] = j;
+			}
+		}
+		level.map_door_group[i] = group;
+	}
+	// the sig's checksum, as scripts/plan-build.mjs computes it from the dump: index × (cost + |x| + |y|) over the doors
+	level.map_door_sum = 0;
+	for ( i = 0; i < level.map_doors.size; i++ )
+	{
+		door = level.map_doors[i];
+		cost = 0;
+		if ( IsDefined( door.zombie_cost ) )
+		{
+			cost = door.zombie_cost;
+		}
+		x = int( door.origin[0] );
+		y = int( door.origin[1] );
+		if ( x < 0 )
+		{
+			x = 0 - x;
+		}
+		if ( y < 0 )
+		{
+			y = 0 - y;
+		}
+		level.map_door_sum = level.map_door_sum + ( i + 1 ) * ( cost + x + y );
+	}
 	level.map_chests = [];
 	if ( IsDefined( level.chests ) )
 	{
@@ -113,13 +150,10 @@ map_room_of( ent )
 // a door is open once any of its triggers (they share a target) was bought or is gone
 map_door_open( i )
 {
-	for ( j = 0; j < level.map_doors.size; j++ )
+	group = level.map_door_group[i];
+	for ( g = 0; g < group.size; g++ )
 	{
-		if ( level.map_door_target[j] != level.map_door_target[i] )
-		{
-			continue;
-		}
-		door = level.map_doors[j];
+		door = level.map_doors[group[g]];
 		if ( !IsDefined( door ) || is_true( door._door_open ) )
 		{
 			return true;
@@ -157,7 +191,7 @@ map_state_text()
 	{
 		box = "" + level.chest_index;
 	}
-	return "sig=z" + level.map_zones.size + "d" + level.map_doors.size + " doors=" + doors + " rooms=" + rooms + " box=" + box + " power=" + maps\cheats\_cheats::cheats_bit( maps\cheats\_cheats::cheats_flag( "power_on" ) );
+	return "sig=z" + level.map_zones.size + "d" + level.map_doors.size + "c" + level.map_door_sum + " doors=" + doors + " rooms=" + rooms + " box=" + box + " power=" + maps\cheats\_cheats::cheats_bit( maps\cheats\_cheats::cheats_flag( "power_on" ) );
 }
 
 map_state_loop()
@@ -332,9 +366,14 @@ map_dump()
 	SetDvar( "cheats_map_dump_count", count );
 }
 
-// test hook (test/cheats-e2e.mjs map-script): opens door i the retail devgui way, free of charge
+// test hook (test/cheats-e2e.mjs): opens door i the retail devgui way, free of charge. Only while the tests set
+// cheats_test 1: for a second it makes every door free for everyone (zombie_unlock_all).
 map_open_door( i )
 {
+	if ( GetDvarInt( #"cheats_test" ) != 1 )
+	{
+		return "test_only";
+	}
 	if ( i < 0 || i >= level.map_doors.size || !IsDefined( level.map_doors[i] ) )
 	{
 		return "no_door " + i;

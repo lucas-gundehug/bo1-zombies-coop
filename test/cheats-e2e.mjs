@@ -348,13 +348,16 @@ const scenarios = {
     };
     const before = await mapState();
     log("map state:", JSON.stringify(before));
-    const [, rooms, doors] = before.sig?.match(/^z(\d+)d(\d+)$/) ?? [];
+    const [, rooms, doors] = before.sig?.match(/^z(\d+)d(\d+)c\d+$/) ?? [];
     assert.ok(Number(rooms) >= 1, `sig ${before.sig}`);
     assert.equal(before.doors?.length ?? 0, Number(doors), "one door bit per door");
     assert.equal(before.rooms?.length, Number(rooms), "one room bit per room");
     // MAPDOOR=<i> opens another door than the first (a debris pile on Five: 8)
     const door = Number(process.env.MAPDOOR ?? 0);
     if (Number(doors) > door) {
+      // the door hook works only for tests (it makes every door free for a second)
+      assert.equal((await run(`mapdoor ${door}`)).code, "test_only", "mapdoor without cheats_test");
+      await command("set cheats_test 1");
       const v0 = (await live()).v;
       assert.equal((await run(`mapdoor ${door}`)).ok, true, `mapdoor ${door}`);
       const doorEnd = Date.now() + 5000;
@@ -429,6 +432,7 @@ const scenarios = {
     const open = await frames(10000);
     log("frames closed:", JSON.stringify(closed), "open:", JSON.stringify(open));
     assert.ok(open.p95 <= closed.p95 * 1.2 + 2, `frame time with the map open: p95 ${open.p95.toFixed(1)} ms vs ${closed.p95.toFixed(1)} ms closed`);
+    await command("set cheats_test 1");
     assert.equal((await run("mapdoor 0")).ok, true, "mapdoor 0");
     await page.waitForFunction(() => !window.__bo1Coop.mapOverlay.model.doors.some((d) => d.index === 0), null, { timeout: 2000 });
     await snap("map-door-open");

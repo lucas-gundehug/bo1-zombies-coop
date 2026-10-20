@@ -1,8 +1,8 @@
 // What the map panel draws, worked out from the map state (src/map/state.js) once per frame. The renderer
 // (src/map/overlay.js) only draws what this returns.
-import { funPlayers } from "../fun/fun.js";
 import { latestView } from "../game/page.js";
 import { PLAYER_COLORS } from "../ui/card.js";
+import { mapPlayers } from "./live.js";
 import { roomName } from "./names.js";
 import { RENDER_DELAY_MS, sampleTrack } from "./track.js";
 
@@ -14,7 +14,7 @@ const text = (value) => (typeof value === "string" ? value : value == null ? "" 
 /** Player number -> name: the host knows who is in its game, a guest reads the host's lobby. Names come from other
  * players' games, so anything that is not text is made text. */
 function names(session) {
-  if (session.mode !== "guest") return new Map(funPlayers(session).map((p) => [p.n, text(p.name)]));
+  if (session.mode !== "guest") return new Map(mapPlayers(session).map((p) => [p.n, text(p.name)]));
   const known = new Map((session.lobby?.players ?? []).map((p) => [p.n, text(p?.name)]));
   if (Number.isInteger(session.seat)) known.set(session.seat + 1, text(session.name));
   return known;

@@ -5,6 +5,7 @@
 //   cheats_map_state   sig=<sig> doors=<0/1 per door> rooms=<0/1 per room> box=<chest indices> power=<0|1>
 //                      rewritten when it changes, and the counter goes up
 import { askDvar } from "../cheats/bridge.js";
+import { SLOT } from "../engine/builds.js";
 import { funPlayers } from "../fun/fun.js";
 import { currentZone, MAP_SLUGS, screen } from "../game/page.js";
 import { floorOf } from "./plan.js";
@@ -41,6 +42,19 @@ export function parseMapState(value) {
   return { sig: raw.sig, doors: bits(raw.doors), rooms: bits(raw.rooms), box, power: raw.power === "1" };
 }
 
+/**
+ * Host: who is in the game, [{ slot, n, name }] (slot = entity number, n = lobby number). Fun mode's list, plus guests
+ * whose connection is coming back (their player stays in the game meanwhile, so their dot stays too).
+ */
+export function mapPlayers(session) {
+  const players = funPlayers(session);
+  for (const g of session.guests?.values() ?? []) {
+    if (g.present || g.slot?.state !== SLOT.reconnecting || players.some((p) => p.slot === g.slot.slot)) continue;
+    players.push({ slot: g.slot.slot, n: g.seat + 1, name: g.state?.name || `Player ${g.seat + 1}` });
+  }
+  return players;
+}
+
 /** Takes one cheats_map_* dvar the console printed (the cheat bridge hands them over). */
 export function onMapLine(session, name, value) {
   const map = session.map;
@@ -49,7 +63,7 @@ export function onMapLine(session, name, value) {
   if (name === "cheats_map_live") {
     const live = parseLive(value);
     if (!live) return;
-    const numbers = new Map(funPlayers(session).map((p) => [p.slot, p.n]));
+    const numbers = new Map(mapPlayers(session).map((p) => [p.slot, p.n]));
     map.liveReads += 1;
     for (const p of live.players) {
       const n = numbers.get(p.ent);

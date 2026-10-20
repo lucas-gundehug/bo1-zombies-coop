@@ -190,6 +190,28 @@ test("parseMapState reads doors, rooms, box and power", () => {
   assert.equal(parseMapState("nothing here"), null);
 });
 
+test("a guest who is reconnecting keeps their dot", () => {
+  const session = hostSession();
+  Object.assign(session.guests.get(1), { present: false, slot: { slot: 1, state: SLOT.reconnecting } });
+  onMapLine(session, "cheats_map_live", "v=1 p=0,100,-200,64,90,2,0;1,5,6,7,-45,0,0");
+  assert.equal(session.map.live.get(2)?.x, 5);
+  const model = mapModel(session, Date.now(), { view: { origin: [100, -200, 120], angles: [0, 90, 0] } });
+  assert.deepEqual(
+    model.players.map((p) => [p.n, p.letter]),
+    [
+      [1, "L"],
+      [2, "J"],
+    ],
+  );
+});
+
+test("a seat whose player left the game has no dot", () => {
+  const session = hostSession();
+  Object.assign(session.guests.get(1), { present: false, slot: null });
+  onMapLine(session, "cheats_map_live", "v=1 p=0,100,-200,64,90,2,0;1,5,6,7,-45,0,0");
+  assert.equal(session.map.live.has(2), false);
+});
+
 test("live samples are stored under each player's number", () => {
   const session = hostSession();
   onMapLine(session, "cheats_map_live", "v=1 p=0,100,-200,64,90,2,0;1,5,6,200,-45,0,1;3,1,1,1,0,0,0");
@@ -319,10 +341,10 @@ test("mapModel draws each player with their colour and first letter; mine from m
   assert.deepEqual(model.legend.map((l) => l.name), ["Lucas", "jonas"]);
 });
 
-test("others are drawn 300 ms in the past, between two samples", () => {
+test("others are drawn 400 ms in the past, between two samples", () => {
   const now = 100000;
   const jonas = mapModel(modelSession(now), now, { view: VIEW }).players[1];
-  assert.ok(Math.abs(jonas.x - 1080) < 1e-9, `x ${jonas.x}`); // 300 ms back from the newest: 0.8 of the way from 1000 to 1100
+  assert.ok(Math.abs(jonas.x - 1040) < 1e-9, `x ${jonas.x}`); // 400 ms back from now: 0.4 of the way from 1000 to 1100
 });
 
 test("a downed player gets a ring, a spectator is left out", () => {
@@ -556,7 +578,8 @@ const FLOORS = [
 test("buildPlan turns the dump into a valid plan", () => {
   const plan = buildPlan(DUMP, { slug: "kino", floors: FLOORS });
   assert.equal(validPlan(plan), true);
-  assert.equal(plan.sig, "z3d1");
+  // rooms, doors, and a checksum of the doors (index × (cost + |x| + |y|)): door 0 costs 1000 at (250, 0)
+  assert.equal(plan.sig, "z3d1c1250");
   assert.deepEqual(
     plan.rooms.map((r) => r.id),
     ["a_zone", "b_zone", "empty_zone"],
@@ -609,7 +632,7 @@ test("every map has a valid bundled plan", () => {
     const plan = planFor(slug);
     assert.ok(plan, `no plan for ${slug}`);
     assert.equal(plan.slug, slug);
-    assert.equal(plan.sig, `z${plan.rooms.length}d${plan.doors.length}`);
+    assert.match(plan.sig, new RegExp(`^z${plan.rooms.length}d${plan.doors.length}c\\d+$`));
     assert.ok(plan.rooms.length >= 3, `${slug}: ${plan.rooms.length} rooms`);
   }
   assert.ok(planFor("kino").rooms.length >= 10);

@@ -285,7 +285,7 @@ export class MapOverlay {
   constructor() {
     this.host = document.createElement("bo1-coop-map");
     const root = this.host.attachShadow({ mode: "closed" });
-    root.innerHTML = `<style>:host { all: initial; position: fixed; inset: 0; z-index: 2147483646; pointer-events: none; display: none; } canvas { width: 100%; height: 100%; display: block; }</style><canvas></canvas>`;
+    root.innerHTML = `<style>:host { all: initial; position: fixed; left: 0; top: 0; z-index: 2147483646; pointer-events: none; display: none; } canvas { width: 100%; height: 100%; display: block; }</style><canvas></canvas>`;
     this.canvas = root.querySelector("canvas");
     this.cache = {};
     this.running = false;
@@ -326,12 +326,18 @@ export class MapOverlay {
     const dpr = window.devicePixelRatio || 1;
     const width = window.innerWidth;
     const height = window.innerHeight;
-    if (this.canvas.width !== Math.round(width * dpr) || this.canvas.height !== Math.round(height * dpr)) {
-      this.canvas.width = Math.round(width * dpr);
-      this.canvas.height = Math.round(height * dpr);
+    // the canvas covers only the panel (less to paint every frame); drawMap still draws in window coordinates
+    const box = panelBox(width, height);
+    const style = this.host.style;
+    if (style.left !== `${box.x}px` || style.width !== `${box.w}px` || style.top !== `${box.y}px` || style.height !== `${box.h}px`) {
+      Object.assign(style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px` });
+    }
+    if (this.canvas.width !== Math.round(box.w * dpr) || this.canvas.height !== Math.round(box.h * dpr)) {
+      this.canvas.width = Math.round(box.w * dpr);
+      this.canvas.height = Math.round(box.h * dpr);
     }
     const ctx = this.canvas.getContext("2d");
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, -box.x * dpr, -box.y * dpr);
     this.model = mapModel(session, Date.now()); // the last frame's model (the real-game test reads it)
     drawMap(ctx, width, height, this.model, session.map.plan, this.cache);
   }

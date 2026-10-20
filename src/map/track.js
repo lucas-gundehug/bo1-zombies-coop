@@ -3,8 +3,11 @@
 
 const KEEP = 8;
 
-/** Others are drawn this far in the past, so there are two samples to glide between at 4 a second. */
-export const RENDER_DELAY_MS = 300;
+/**
+ * Others are drawn this far in the past, so there are two samples to glide between at 4 a second, with room for a
+ * sample that comes late (a busy console on the host, network jitter on a guest).
+ */
+export const RENDER_DELAY_MS = 400;
 
 export function pushSample(track, at, x, y, yaw) {
   track.push({ at, x, y, yaw });
