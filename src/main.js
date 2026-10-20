@@ -3,6 +3,7 @@ import { createRoomCode, normalizeRoomCode } from "../relay/src/protocol.js";
 import { CONNECTION } from "./engine/builds.js";
 import { followMovedSite, go, keepSinglePlayer, landingUrl, paramsFromHash } from "./game/page.js";
 import { AIM_SPEEDS, Gamepad } from "./input/gamepad.js";
+import { createDirect } from "./net/direct.js";
 import { startPump } from "./net/pump.js";
 import { guestTick, moveToHost } from "./session/guest.js";
 import { holdStart, hookMain, hookWasm } from "./session/hooks.js";
@@ -81,6 +82,7 @@ function start() {
     if (session.mode === "guest") session.guestId = guestIdFor(session.room);
     session.phase = session.mode === "host" ? "hosting" : "joining-room";
     session.pump = startPump(session, onControl);
+    session.direct = createDirect(session);
     if (session.mode === "host") holdStart(session, card.host);
   }
 
@@ -91,6 +93,7 @@ function tick(session) {
   try {
     if (session.mode === "host") hostTick(session);
     else if (session.mode === "guest") guestTick(session);
+    session.direct?.tick();
     if (session.mode) reportHidden(session);
     funTick(session);
     mapTick(session, Date.now());

@@ -3,7 +3,7 @@
 import { MAX_GUESTS } from "../../relay/src/protocol.js";
 import { currentHorde, currentSlug, currentZone, MAP_NAMES, MAP_SLUGS, screen as pageScreen } from "../game/page.js";
 import { AIM_SPEEDS } from "../input/gamepad.js";
-import { guestRoster, hostRoster } from "../session/lobby.js";
+import { connectionText, guestRoster, hostRoster } from "../session/lobby.js";
 import { validSeat } from "../session/session.js";
 import { DEFAULT_RELAY } from "../util/relay.js";
 import { cleanName } from "../util/settings.js";
@@ -175,6 +175,7 @@ function playerRows(session, roster, me) {
       status: empty ? (session.mode === "host" ? T.freeHint : "") : T.st[p.status] ?? T.st.away,
       tone: p.tone ?? "",
       ping: empty || p.host || !Number.isFinite(p.ping) ? null : p.ping,
+      path: empty || p.host || !T.path[p.path] ? null : T.path[p.path],
     };
   });
 }
@@ -192,6 +193,8 @@ function settingsSection(session, inRoom) {
       [T.relay, T.relayState[session.socket] ?? T.relayState.idle, session.socket === "open" ? "" : "error"],
       [T.ping, session.stats?.rtt != null ? `${Math.round(session.stats.rtt)} ms` : "–"],
     ];
+    const connection = connectionText(session);
+    if (connection) items.push([T.connection, connection]);
     if (session.stats?.lost) items.push([T.dropped, String(session.stats.lost)]);
     blocks.push({ kind: "kv", items });
   }
