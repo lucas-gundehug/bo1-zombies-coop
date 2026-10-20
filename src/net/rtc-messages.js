@@ -9,9 +9,11 @@ export const CANDIDATE_FLUSH_MS = 250;
 /** A link not open this long after its offer is given up. */
 export const CONNECT_TIMEOUT_MS = 8000;
 
-const MAX_SDP = 3000;
+export const MAX_SDP = 3000;
+/** An rtc-ice message is kept to this many bytes of JSON, well under the relay's MAX_TEXT_BYTES (4096). */
+export const MAX_ICE_JSON = 3500;
 const MAX_CANDIDATES = 8;
-const MAX_CANDIDATE = 512;
+export const MAX_CANDIDATE = 512;
 const MAX_MID = 16;
 const MAX_ATTEMPT = 1e6;
 const ACCEPTS = { host: ["rtc-offer", "rtc-ice"], guest: ["rtc-answer", "rtc-ice"] };

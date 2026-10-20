@@ -2,7 +2,7 @@
 //   node test/direct.test.mjs
 import assert from "node:assert/strict";
 import { batchCandidates, CANDIDATE_FLUSH_MS, CONNECT_TIMEOUT_MS, parseRtc, retryDelay, RTC_TYPES } from "../src/net/rtc-messages.js";
-import { controlRoutes, createRoutes, fromDirect, isDirect, packetPath, relayPresence } from "../src/net/routes.js";
+import { controlRoutes, createRoutes, fromDirect, isDirect, LINK_STALE_MS, packetPath, relayPresence } from "../src/net/routes.js";
 
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
@@ -196,7 +196,9 @@ class FakePc {
     return { type: "answer", sdp: "answer-sdp" };
   }
   async setLocalDescription(description) {
-    this.localDescription = description;
+    // like Chrome: once gathering has run, the local description also carries the candidates found so far
+    this.localDescription = { ...description, sdp: `${description.sdp}
+a=candidate:gathered` };
   }
   async setRemoteDescription(description) {
     this.remote = description;
@@ -229,11 +231,14 @@ function fakeSession(mode) {
   };
 }
 const sent = (session, t) => session.posted.filter((p) => p.message.type === "send" && p.message.message.t === t).map((p) => p.message.message);
+const linkPosts = (session, seat) => session.posted.filter((p) => p.message.type === "link" && p.message.seat === seat);
+/** What the pump worker reports about the newest link the page handed it for a seat. */
+const report = (session, direct, seat, open) => direct.onLink(seat, open, linkPosts(session, seat).at(-1)?.message.id);
 
-function directFor(session) {
+function directFor(session, Pc = FakePc) {
   FakePc.all = [];
   const clock = { t: 1000 };
-  session.direct = createDirect(session, { RTCPeerConnection: FakePc, now: () => clock.t });
+  session.direct = createDirect(session, { RTCPeerConnection: Pc, now: () => clock.t });
   return { direct: session.direct, clock };
 }
 
@@ -252,7 +257,8 @@ test("guest: offers once, with a game and a control channel handed to the pump",
   assert.deepEqual([game.label, game.options], ["game", { negotiated: true, id: 1, ordered: false, maxRetransmits: 0 }]);
   assert.deepEqual([control.label, control.options], ["control", { negotiated: true, id: 2 }]);
   const link = session.posted.find((p) => p.message.type === "link");
-  assert.deepEqual(link.message, { type: "link", seat: 0, game, control });
+  assert.ok(Number.isInteger(link.message.id));
+  assert.deepEqual(link.message, { type: "link", seat: 0, id: link.message.id, game, control });
   assert.deepEqual(link.transfer, [game, control]);
   assert.deepEqual(sent(session, "rtc-offer"), [{ t: "rtc-offer", n: 1, sdp: "offer-sdp" }]);
   assert.equal(direct.state(0), "connecting");
@@ -355,11 +361,11 @@ test("guest: the host stays present over the direct link when the relay goes", a
   assert.equal(session.peer, true);
   direct.tick();
   await settle();
-  direct.onLink(0, true);
+  report(session, direct, 0, true);
   assert.equal(direct.state(0), "direct");
   relayClosed(session);
   assert.equal(session.peer, true);
-  direct.onLink(0, false);
+  report(session, direct, 0, false);
   assert.equal(session.peer, false);
   assert.ok(session.hostLeftAt > 0);
 });
@@ -387,11 +393,11 @@ test("host: a guest is present while the relay or its direct link has it", async
   assert.equal(session.guests.get(2).present, true);
   direct.onSignal({ t: "rtc-offer", n: 1, sdp: "offer-sdp", from: 2 });
   await settle();
-  direct.onLink(2, true);
+  report(session, direct, 2, true);
   relayClosed(session);
   assert.equal(session.guests.get(2).present, true);
   assert.equal(session.peer, true);
-  direct.onLink(2, false);
+  report(session, direct, 2, false);
   assert.equal(session.guests.get(2).present, false);
   assert.ok(session.guests.get(2).leftAt > 0);
   assert.equal(session.peer, false);
@@ -403,7 +409,7 @@ test("host: the relay announcing a direct guest again (its relay reconnect) keep
   onControl(session, { t: "peer", seat: 2, present: true });
   direct.onSignal({ t: "rtc-offer", n: 1, sdp: "offer-sdp", from: 2 });
   await settle();
-  direct.onLink(2, true);
+  report(session, direct, 2, true);
   relayClosed(session);
   onControl(session, { t: "welcome", guests: [] });
   onControl(session, { t: "peer", seat: 2, present: true });
@@ -428,7 +434,7 @@ test("host: a guest that left and came back while the host stayed on the relay g
   onControl(session, { t: "peer", seat: 2, present: true });
   direct.onSignal({ t: "rtc-offer", n: 1, sdp: "offer-sdp", from: 2 });
   await settle();
-  direct.onLink(2, true);
+  report(session, direct, 2, true);
   onControl(session, { t: "peer", seat: 2, present: false });
   assert.equal(direct.state(2), "direct");
   onControl(session, { t: "peer", seat: 2, present: true });
@@ -442,7 +448,7 @@ test("host: a new offer for a seat replaces the link whoever had it made", async
   const { direct } = directFor(session);
   direct.onSignal({ t: "rtc-offer", n: 1, sdp: "offer-sdp", from: 2 });
   await settle();
-  direct.onLink(2, true);
+  report(session, direct, 2, true);
   direct.onSignal({ t: "rtc-offer", n: 1, sdp: "offer-sdp", from: 2 });
   await settle();
   assert.ok(FakePc.all[0].closed);
@@ -457,7 +463,7 @@ test("host: its own relay reconnect keeps the direct links", async () => {
   onControl(session, { t: "peer", seat: 1, present: true });
   direct.onSignal({ t: "rtc-offer", n: 1, sdp: "offer-sdp", from: 1 });
   await settle();
-  direct.onLink(1, true);
+  report(session, direct, 1, true);
   relayClosed(session);
   onControl(session, { t: "welcome", guests: [1] });
   assert.equal(direct.state(1), "direct");
@@ -487,7 +493,7 @@ test("hostRoster: each present guest shows its path, the host and free seats non
   onControl(session, { t: "peer", seat: 2, present: true });
   direct.onSignal({ t: "rtc-offer", n: 1, sdp: "offer-sdp", from: 1 });
   await settle();
-  direct.onLink(1, true);
+  report(session, direct, 1, true);
   const { players } = hostRoster(session);
   assert.deepEqual(players.map((p) => p.path), [null, "direct", "relay", null]);
 });
@@ -502,7 +508,7 @@ test("guestRoster: a guest's own row shows its own path", async () => {
   await settle();
   direct.onSignal({ t: "rtc-answer", n: 1, sdp: "answer-sdp" });
   await settle();
-  direct.onLink(0, true);
+  report(session, direct, 0, true);
   const players = guestRoster(session);
   assert.equal(players[1].path, "direct");
   assert.equal(players[2].path, "relay");
@@ -515,6 +521,88 @@ test("connectionText: a guest sees its own path, the host a count", () => {
   const host = { mode: "host", guests: new Map([[1, { seat: 1, present: true }], [2, { seat: 2, present: true }], [3, { seat: 3, present: false }]]), links: new Map([[1, "direct"]]) };
   assert.equal(connectionText(host), "1 Direct, 1 Relay");
   assert.equal(connectionText({ mode: "host", guests: new Map(), links: new Map() }), null);
+});
+
+// --- review fixes ---
+
+test("isDirect: a link whose pings went unanswered for 1.5 s is not direct", () => {
+  assert.equal(LINK_STALE_MS, 1500);
+  const routes = routesWith({ 1: { ...link(), aliveAt: 1000 } }, [1]);
+  assert.equal(isDirect(routes, 1, 2499), true);
+  assert.equal(isDirect(routes, 1, 2500), false);
+  assert.equal(packetPath(routes, 1, 2500), "relay");
+  assert.deepEqual(controlRoutes(routes, { t: "info", to: 1 }, true, 2500), [{ via: "relay", message: { t: "info", to: 1 } }]);
+  routes.links.get(1).aliveAt = 2600;
+  assert.equal(isDirect(routes, 1, 2700), true);
+});
+
+test("host: a late close report for the old link leaves the new one alone", async () => {
+  const session = fakeSession("host");
+  const { direct } = directFor(session);
+  direct.onSignal({ t: "rtc-offer", n: 1, sdp: "offer-sdp", from: 2 });
+  await settle();
+  report(session, direct, 2, true);
+  direct.onSignal({ t: "rtc-offer", n: 2, sdp: "offer-sdp", from: 2 });
+  await settle();
+  const [first] = linkPosts(session, 2);
+  direct.onLink(2, false, first.message.id);
+  direct.onLink(2, true, first.message.id);
+  await settle();
+  assert.equal(FakePc.all[1].closed, undefined);
+  assert.deepEqual(sent(session, "rtc-answer").map((m) => m.n), [1, 2]);
+  assert.equal(direct.state(2), "connecting");
+});
+
+test("guest: the offer sent is the one created, without the gathered candidates", async () => {
+  const session = fakeSession("guest");
+  const { direct } = directFor(session);
+  direct.tick();
+  await settle();
+  assert.deepEqual(sent(session, "rtc-offer").map((m) => m.sdp), ["offer-sdp"]);
+});
+
+test("guest: an offer too big for the relay is not sent, and the link is given up", async () => {
+  class BigPc extends FakePc {
+    async createOffer() {
+      return { type: "offer", sdp: "x".repeat(3001) };
+    }
+  }
+  const session = fakeSession("guest");
+  const { direct } = directFor(session, BigPc);
+  direct.tick();
+  await settle();
+  assert.equal(sent(session, "rtc-offer").length, 0);
+  assert.ok(FakePc.all[0].closed);
+  assert.equal(direct.state(0), "relay");
+});
+
+test("guest: candidate messages stay well under the relay's 4096-byte limit", async () => {
+  const session = fakeSession("guest");
+  const { direct, clock } = directFor(session);
+  direct.tick();
+  await settle();
+  const pc = FakePc.all[0];
+  for (let k = 0; k < 8; k += 1) pc.onicecandidate({ candidate: { candidate: `candidate:${k} ${"x".repeat(480)}`, sdpMid: "0", sdpMLineIndex: 0 } });
+  pc.onicecandidate({ candidate: { candidate: `candidate:big ${"x".repeat(600)}`, sdpMid: "0", sdpMLineIndex: 0 } });
+  for (let k = 0; k < 10; k += 1) {
+    direct.tick();
+    clock.t += 250;
+  }
+  const messages = sent(session, "rtc-ice");
+  assert.ok(messages.every((m) => JSON.stringify(m).length <= 3500), messages.map((m) => JSON.stringify(m).length).join(","));
+  assert.equal(messages.flatMap((m) => m.cands).length, 8);
+});
+
+test("guest on the relay only: a relay outage alone is not the host leaving", () => {
+  const session = fakeSession("guest");
+  directFor(session);
+  onControl(session, { t: "welcome", seat: 1, peer: true });
+  relayClosed(session);
+  assert.equal(session.peer, false);
+  assert.equal(session.hostLeftAt, undefined);
+  onControl(session, { t: "welcome", seat: 1, peer: true });
+  onControl(session, { t: "peer", present: false });
+  assert.ok(session.hostLeftAt > 0);
 });
 
 let failed = 0;

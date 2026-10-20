@@ -107,7 +107,7 @@ export function guest(session, seat) {
  * Who is here, from both paths: a guest (host side) or the host (guest side, seat 0) counts as present while the relay
  * says so or its direct link is open, so a game with direct links outlives the relay (src/net/direct.js).
  */
-export function syncPresence(session, seat) {
+export function syncPresence(session, seat, { hostLeft = true } = {}) {
   const direct = session.links.get(seat) === "direct";
   if (session.mode === "host") {
     const present = session.relayGuests.has(seat) || direct;
@@ -120,9 +120,10 @@ export function syncPresence(session, seat) {
   const was = session.peer;
   session.peer = session.relayPeer || direct;
   if (was && !session.peer) {
-    session.hostLeftAt = Date.now();
+    // Losing the relay alone is not the host leaving (the guest waits for it to come back, as before direct links).
+    if (hostLeft) session.hostLeftAt = Date.now();
     session.remotePause = false;
-    session.note("host left");
+    session.note(hostLeft ? "host left" : "relay lost");
   }
 }
 
@@ -133,7 +134,7 @@ export function relayClosed(session) {
     for (let seat = 1; seat <= MAX_GUESTS; seat += 1) syncPresence(session, seat);
   } else if (session.mode === "guest") {
     session.relayPeer = false;
-    syncPresence(session, 0);
+    syncPresence(session, 0, { hostLeft: false });
   }
 }
 

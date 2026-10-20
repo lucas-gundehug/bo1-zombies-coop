@@ -16,6 +16,8 @@ const POLL_MS = 1;
 const FLUSH_MS = 4;
 const INBOX_LIMIT = 512;
 const PING_MS = 2000;
+// Each open direct link is pinged this often over its control channel; its answers keep it "alive" (routes.js).
+const DIRECT_PING_MS = 500;
 // A direct game channel with this much still unsent is not keeping up: drop packets rather than queue them up.
 const DIRECT_BUFFER_LIMIT = 256 * 1024;
 
@@ -73,10 +75,10 @@ self.onmessage = ({ data: message }) => {
       sendText(message.message);
       break;
     case "link":
-      addLink(message.seat, message.game, message.control);
+      addLink(message.seat, message.game, message.control, message.id);
       break;
     case "unlink":
-      removeLink(message.seat);
+      if (message.id === undefined || state.routes.links.get(message.seat)?.id === message.id) removeLink(message.seat);
       break;
     case "relay-down":
       // Test hook (test/e2e.mjs RELAY_DOWN_S): behave as if the relay were gone for the rest of the day.
@@ -169,9 +171,15 @@ function onText(text) {
 /** A control message from the relay or a direct link (stamped with its seat like the relay does). */
 function onControl(message) {
   if (message.t === "ping") {
-    sendText(hosting() ? { t: "pong", ts: message.ts, to: message.from } : { t: "pong", ts: message.ts });
+    // A direct link's liveness ping (d, k = the link's id) is answered like any other, carrying d and k back.
+    const echo = message.d ? { d: 1, k: message.k } : {};
+    sendText(hosting() ? { t: "pong", ts: message.ts, to: message.from, ...echo } : { t: "pong", ts: message.ts, ...echo });
   } else if (message.t === "pong") {
     if (typeof message.ts !== "number") return;
+    if (message.d) {
+      const link = state.routes.links.get(hosting() ? message.from : 0);
+      if (link && link.id === message.k) link.aliveAt = performance.now();
+    }
     const rtt = Math.max(0, performance.now() - message.ts);
     if (hosting()) {
       // The host pings all guests at once: keep one round-trip time per seat, plus the slowest.
@@ -220,15 +228,16 @@ function sendDirect(seat, packet) {
 }
 
 /** Takes over a link's data channels (transferred by the page) and reports when the link opens and closes. */
-function addLink(seat, game, control) {
+function addLink(seat, game, control, id) {
   removeLink(seat);
-  const link = { game, control, reported: false };
+  const link = { id, game, control, reported: false };
   state.routes.links.set(seat, link);
   game.binaryType = "arraybuffer";
   const opened = () => {
     if (state.routes.links.get(seat) !== link || link.reported || !isDirect(state.routes, seat)) return;
     link.reported = true;
-    post({ type: "link", seat, open: true });
+    link.aliveAt = performance.now();
+    post({ type: "link", seat, id, open: true });
   };
   const closed = () => {
     if (state.routes.links.get(seat) === link) removeLink(seat);
@@ -262,7 +271,18 @@ function removeLink(seat) {
       // already closed
     }
   }
-  if (link.reported) post({ type: "link", seat, open: false });
+  if (link.reported) post({ type: "link", seat, id: link.id, open: false });
+}
+
+function pingLinks(now) {
+  for (const link of state.routes.links.values()) {
+    if (!link.reported) continue;
+    try {
+      link.control.send(JSON.stringify({ t: "ping", ts: now, d: 1, k: link.id }));
+    } catch {
+      // closing; removeLink follows
+    }
+  }
 }
 
 /** seat -> "direct" | "relay" for the stats (a guest has the one link to the host, seat 0). */
@@ -333,10 +353,15 @@ async function loop() {
   state.looping = true;
   const tick = new Int32Array(new SharedArrayBuffer(4));
   let lastPing = 0;
+  let lastDirectPing = 0;
   let lastStats = 0;
   while (!state.closed) {
     pump();
     const now = performance.now();
+    if (now - lastDirectPing >= DIRECT_PING_MS) {
+      lastDirectPing = now;
+      pingLinks(now);
+    }
     if (now - lastPing >= PING_MS) {
       lastPing = now;
       sendText({ t: "ping", ts: now });

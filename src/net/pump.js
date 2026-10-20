@@ -9,7 +9,7 @@ export function startPump(session, onControl) {
     if (message.type === "socket") {
       session.onSocket(message);
       if (message.state !== "open") relayClosed(session);
-    } else if (message.type === "link") session.direct?.onLink(message.seat, message.open);
+    } else if (message.type === "link") session.direct?.onLink(message.seat, message.open, message.id);
     else if (message.type === "control") onControl(session, message.message);
     else if (message.type === "stats") session.stats = message.stats;
   };

@@ -5,7 +5,7 @@
 import { validSeat } from "../session/session.js";
 import { syncPresence } from "../session/messages.js";
 import { postToPump, send } from "./pump.js";
-import { batchCandidates, CANDIDATE_FLUSH_MS, CONNECT_TIMEOUT_MS, parseRtc, retryDelay } from "./rtc-messages.js";
+import { CANDIDATE_FLUSH_MS, CONNECT_TIMEOUT_MS, MAX_CANDIDATE, MAX_ICE_JSON, MAX_SDP, parseRtc, retryDelay } from "./rtc-messages.js";
 
 export const ICE_SERVERS = Object.freeze([{ urls: "stun:stun.cloudflare.com:3478" }, { urls: "stun:stun.l.google.com:19302" }]);
 
@@ -16,18 +16,22 @@ export function createDirect(session, { RTCPeerConnection = globalThis.RTCPeerCo
   const hosting = () => session.mode === "host";
   const links = new Map(); // seat -> { n, pc, startedAt, open, remoteSet, waiting, gathered, flushedAt }
   let attempt = 0;
+  let linkIds = 0; // tags each link handed to the worker, so a late report about a replaced link is recognized
   let failures = 0;
   let nextOfferAt = 0;
 
   function connect(seat, n) {
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS.map((server) => ({ ...server })) });
-    const link = { seat, n, pc, startedAt: now(), open: false, remoteSet: false, waiting: [], gathered: [], flushedAt: 0 };
+    const link = { seat, n, id: (linkIds += 1), pc, startedAt: now(), open: false, remoteSet: false, waiting: [], gathered: [], flushedAt: 0 };
     links.set(seat, link);
     const game = pc.createDataChannel("game", { negotiated: true, id: 1, ordered: false, maxRetransmits: 0 });
     const control = pc.createDataChannel("control", { negotiated: true, id: 2 });
-    postToPump(session, { type: "link", seat, game, control }, [game, control]);
+    postToPump(session, { type: "link", seat, id: link.id, game, control }, [game, control]);
     pc.onicecandidate = ({ candidate }) => {
-      if (candidate?.candidate) link.gathered.push({ c: candidate.candidate, m: candidate.sdpMid ?? null, i: candidate.sdpMLineIndex ?? null });
+      // the other side would refuse a longer one (parseRtc)
+      if (candidate?.candidate && candidate.candidate.length <= MAX_CANDIDATE) {
+        link.gathered.push({ c: candidate.candidate, m: candidate.sdpMid ?? null, i: candidate.sdpMLineIndex ?? null });
+      }
     };
     pc.onconnectionstatechange = () => {
       if (["failed", "closed"].includes(pc.connectionState)) fail(seat, link, `connection ${pc.connectionState}`);
@@ -45,7 +49,7 @@ export function createDirect(session, { RTCPeerConnection = globalThis.RTCPeerCo
     } catch {
       // already closed
     }
-    postToPump(session, { type: "unlink", seat });
+    postToPump(session, { type: "unlink", seat, id: link.id });
     if (session.links.delete(seat)) syncPresence(session, seat);
   }
 
@@ -66,7 +70,9 @@ export function createDirect(session, { RTCPeerConnection = globalThis.RTCPeerCo
     try {
       const description = await link.pc.createOffer();
       await link.pc.setLocalDescription(description);
-      if (links.get(0) === link) send(session, { t: "rtc-offer", n: link.n, sdp: link.pc.localDescription.sdp });
+      // The offer as created, without candidates (they follow as rtc-ice); one the relay would refuse is not sent.
+      if (description.sdp.length > MAX_SDP) throw new Error(`offer too long (${description.sdp.length})`);
+      if (links.get(0) === link) send(session, { t: "rtc-offer", n: link.n, sdp: description.sdp });
     } catch (error) {
       fail(0, link, error?.message ?? error);
     }
@@ -80,7 +86,8 @@ export function createDirect(session, { RTCPeerConnection = globalThis.RTCPeerCo
       remoteReady(link);
       const description = await link.pc.createAnswer();
       await link.pc.setLocalDescription(description);
-      if (links.get(seat) === link) send(session, { t: "rtc-answer", n, sdp: link.pc.localDescription.sdp, to: seat });
+      if (description.sdp.length > MAX_SDP) throw new Error(`answer too long (${description.sdp.length})`);
+      if (links.get(seat) === link) send(session, { t: "rtc-answer", n, sdp: description.sdp, to: seat });
     } catch (error) {
       fail(seat, link, error?.message ?? error);
     }
@@ -95,11 +102,20 @@ export function createDirect(session, { RTCPeerConnection = globalThis.RTCPeerCo
     link.pc.addIceCandidate({ candidate: c, sdpMid: m, sdpMLineIndex: i }).catch(() => {});
   }
 
+  /** Sends gathered candidates: up to 8 per message and MAX_ICE_JSON bytes, one message per CANDIDATE_FLUSH_MS. */
   function flushCandidates(link) {
     if (!link.gathered.length || now() - link.flushedAt < CANDIDATE_FLUSH_MS) return;
-    const [cands] = batchCandidates(link.gathered.splice(0, 8));
+    const message = { t: "rtc-ice", n: link.n, cands: [], ...(hosting() ? { to: link.seat } : {}) };
+    while (link.gathered.length && message.cands.length < 8) {
+      message.cands.push(link.gathered[0]);
+      if (message.cands.length > 1 && JSON.stringify(message).length > MAX_ICE_JSON) {
+        message.cands.pop();
+        break;
+      }
+      link.gathered.shift();
+    }
     link.flushedAt = now();
-    send(session, { t: "rtc-ice", n: link.n, cands, ...(hosting() ? { to: link.seat } : {}) });
+    send(session, message);
   }
 
   return {
@@ -127,11 +143,11 @@ export function createDirect(session, { RTCPeerConnection = globalThis.RTCPeerCo
       }
     },
 
-    /** From the pump worker: both channels of a link opened, or one of them closed. */
-    onLink(seat, open) {
+    /** From the pump worker: both channels of link `id` opened, or one of them closed. */
+    onLink(seat, open, id) {
       const link = links.get(seat);
+      if (!link || link.id !== id) return; // about a link this page has replaced or given up already
       if (open) {
-        if (!link) return;
         link.open = true;
         failures = 0;
         session.links.set(seat, "direct");
@@ -139,7 +155,7 @@ export function createDirect(session, { RTCPeerConnection = globalThis.RTCPeerCo
         syncPresence(session, seat);
       } else {
         if (session.links.delete(seat)) syncPresence(session, seat);
-        if (link) fail(seat, link, "channel closed");
+        fail(seat, link, "channel closed");
       }
     },
 
