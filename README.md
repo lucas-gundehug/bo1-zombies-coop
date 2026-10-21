@@ -126,12 +126,14 @@ open. Press **M** again to close it.
 
 ### 🧭 The minimap
 
-A small map sits in the top left corner during every game. You stay in the middle and it scrolls under you as you run,
-with the room you're in written on top. It shows the same rooms, doors, icons and friends as the big map, and hides
-while the big map is open. Turn it off under **Settings → Minimap** on the Co-op card.
+A small map sits in the top left corner during every game, in the style of Modern Warfare 2's. You're the yellow arrow
+in the middle, and it turns with you as you run and look around, so the way you face is always up; the **N** on its edge
+points north. The room you're in is written under it. It shows the same rooms, doors, icons and friends (arrows in
+their colour) as the big map, and hides while the big map is open. Turn it off under **Settings → Minimap** on the
+Co-op card.
 
 <p align="center">
-  <img src="docs/images/minimap.png" alt="The minimap in the top left corner: the room name on top, the player in the middle, perk icons and locked doors around" width="260">
+  <img src="docs/images/minimap.png" alt="The minimap in the top left corner: the player as a yellow arrow in the middle, the map turned so they face up, N on the edge, perk icons and locked doors around, the room name under it" width="260">
 </p>
 
 ### 🔫 The cheat menu (N)

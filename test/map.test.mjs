@@ -14,9 +14,12 @@ import { onMapMessage } from "../src/map/net.js";
 import { onMapKey } from "../src/map/hotkey.js";
 import { buildPlan } from "../scripts/plan-build.mjs";
 import { decodeDxt, ICON_FILES, parseIwi, zipEntries } from "../src/map/icons.js";
-import { minimapActions, minimapCanvasSize, minimapSettingBlocks, minimapVisible, minimapWindow } from "../src/map/minimap.js";
+import { minimapActions, minimapCanvasSize, minimapSettingBlocks, minimapNorth, minimapPlace, minimapTurn, minimapVisible } from "../src/map/minimap.js";
 import { planFor } from "../src/map/plans/index.js";
 import { FLOORS as FLOOR_TABLE } from "../src/map/names.js";
+import { myView, viewAddresses } from "../src/map/view.js";
+
+const KNOWN_BUILD = "42be1c35025afa61ed1f0fc4558ca15c45c49b37dfdc458d3ebbe30f8c958036";
 import { MAP_SLUGS } from "../src/game/page.js";
 
 const tests = [];
@@ -197,7 +200,7 @@ test("a guest who is reconnecting keeps their dot", () => {
   Object.assign(session.guests.get(1), { present: false, slot: { slot: 1, state: SLOT.reconnecting } });
   onMapLine(session, "cheats_map_live", "v=1 p=0,100,-200,64,90,2,0;1,5,6,7,-45,0,0");
   assert.equal(session.map.live.get(2)?.x, 5);
-  const model = mapModel(session, Date.now(), { view: { origin: [100, -200, 120], angles: [0, 90, 0] } });
+  const model = mapModel(session, Date.now(), { mine: { x: 100, y: -200, z: 64, yaw: 90 } });
   assert.deepEqual(
     model.players.map((p) => [p.n, p.letter]),
     [
@@ -329,11 +332,11 @@ function modelSession(now) {
   session.map.planOk = true;
   return session;
 }
-const VIEW = { origin: [120, 130, 110], angles: [0, 45, 0] };
+const MINE = { x: 120, y: 130, z: 50, yaw: 45 };
 
 test("mapModel draws each player with their colour and first letter; mine from my camera", () => {
   const now = 100000;
-  const model = mapModel(modelSession(now), now, { view: VIEW });
+  const model = mapModel(modelSession(now), now, { mine: MINE });
   assert.equal(model.status, "ok");
   const [me, jonas] = model.players;
   assert.deepEqual([me.n, me.letter, me.color, me.me, me.x, me.y, me.yaw], [1, "L", PLAYER_COLORS[0], true, 120, 130, 45]);
@@ -345,17 +348,49 @@ test("mapModel draws each player with their colour and first letter; mine from m
 
 test("others are drawn 400 ms in the past, between two samples", () => {
   const now = 100000;
-  const jonas = mapModel(modelSession(now), now, { view: VIEW }).players[1];
+  const jonas = mapModel(modelSession(now), now, { mine: MINE }).players[1];
   assert.ok(Math.abs(jonas.x - 1040) < 1e-9, `x ${jonas.x}`); // 400 ms back from now: 0.4 of the way from 1000 to 1100
+});
+
+test("my dot is where I am this frame, on the floor my feet are on", () => {
+  const now = 100000;
+  const me = mapModel(modelSession(now), now, { mine: { x: 300, y: 250, z: 200, yaw: -30 } }).players[0];
+  assert.deepEqual([me.x, me.y, me.yaw, me.floor], [300, 250, -30, 1]); // z 200 is above the ground floor's 120
+});
+
+test("where my view can't be read, my dot glides between the script's samples like everyone's", () => {
+  const now = 100000;
+  const session = modelSession(now);
+  session.map.tracks.set(1, []);
+  pushSample(session.map.tracks.get(1), now - 500, 0, 100, 0);
+  pushSample(session.map.tracks.get(1), now - 250, 100, 100, 90);
+  const me = mapModel(session, now, { mine: null }).players[0];
+  assert.ok(Math.abs(me.x - 40) < 1e-9 && Math.abs(me.yaw - 36) < 1e-9, `${me.x} ${me.yaw}`);
+  assert.equal(me.floor, 0);
+});
+
+test("myView reads my position and facing from the engine's memory where the build is known", () => {
+  const at = viewAddresses(KNOWN_BUILD);
+  const buffer = new ArrayBuffer(at.eye + 64);
+  const f32 = new Float32Array(buffer);
+  f32.set([10, 20, 30, 0, 0, 0], at.feet >> 2);
+  f32.set([11.5, 22.25, 90, 5, -135.5, 0], at.eye >> 2);
+  const session = { hash: KNOWN_BUILD, engine: { buffer } };
+  assert.deepEqual(myView(session), { x: 11.5, y: 22.25, z: 30, yaw: -135.5 });
+  f32[(at.eye >> 2) + 4] = 60; // the next frame sees the new facing
+  assert.equal(myView(session).yaw, 60);
+  assert.equal(myView({ hash: "another build", engine: { buffer } }), null);
+  assert.equal(myView({ hash: KNOWN_BUILD }), null, "before the engine runs");
+  assert.equal(myView({ hash: KNOWN_BUILD, engine: { buffer: new ArrayBuffer(at.eye + 64) } }), null, "all zero: no game yet");
 });
 
 test("a downed player gets a ring, a spectator is left out", () => {
   const now = 100000;
   const session = modelSession(now);
   session.map.live.get(2).s = 1;
-  assert.equal(mapModel(session, now, { view: VIEW }).players[1].downed, true);
+  assert.equal(mapModel(session, now, { mine: MINE }).players[1].downed, true);
   session.map.live.get(2).s = 2;
-  const model = mapModel(session, now, { view: VIEW });
+  const model = mapModel(session, now, { mine: MINE });
   assert.deepEqual(model.players.map((p) => p.n), [1]);
   assert.deepEqual(model.legend.map((l) => l.letter), ["L"]);
 });
@@ -364,16 +399,16 @@ test("a player not heard from for 2 s is dropped with their track; a new one sho
   const now = 100000;
   const session = modelSession(now);
   session.map.live.get(2).at = now - 2100;
-  const model = mapModel(session, now, { view: VIEW });
+  const model = mapModel(session, now, { mine: MINE });
   assert.deepEqual(model.players.map((p) => p.n), [1]);
   assert.equal(session.map.tracks.has(2), false);
   onMapLine(session, "cheats_map_live", "v=1 p=0,100,100,50,90,0,0;1,1100,200,50,0,1,0");
-  assert.deepEqual(mapModel(session, Date.now(), { view: VIEW }).players.map((p) => p.n), [1, 2]);
+  assert.deepEqual(mapModel(session, Date.now(), { mine: MINE }).players.map((p) => p.n), [1, 2]);
 });
 
 test("closed doors and room states come from the state", () => {
   const now = 100000;
-  const model = mapModel(modelSession(now), now, { view: VIEW });
+  const model = mapModel(modelSession(now), now, { mine: MINE });
   assert.deepEqual(
     model.doors.map((d) => d.index),
     [0],
@@ -396,7 +431,7 @@ test("with a plan that doesn't match, players stay but doors and rooms are hidde
   const now = 100000;
   const session = modelSession(now);
   session.map.planOk = false;
-  const model = mapModel(session, now, { view: VIEW });
+  const model = mapModel(session, now, { mine: MINE });
   assert.deepEqual(model.doors, []);
   assert.ok(model.rooms.every((r) => r.open === null));
   assert.equal(model.stale, true);
@@ -407,7 +442,7 @@ test("with a plan that doesn't match, the room you're in is not named or outline
   const now = 100000;
   const session = modelSession(now);
   session.map.planOk = false;
-  const model = mapModel(session, now, { view: VIEW });
+  const model = mapModel(session, now, { mine: MINE });
   assert.equal(model.room, null);
   assert.ok(model.rooms.every((r) => !r.current));
 });
@@ -416,13 +451,13 @@ test("a name that is not text (from another player's game) still draws", () => {
   const now = 100000;
   const session = modelSession(now);
   session.guests.get(1).state.name = 42;
-  const model = mapModel(session, now, { view: VIEW });
+  const model = mapModel(session, now, { mine: MINE });
   assert.equal(model.players[1].letter, "4");
   session.guests.get(1).state.name = { evil: true };
-  assert.equal(typeof mapModel(session, now, { view: VIEW }).players[1].letter, "string");
+  assert.equal(typeof mapModel(session, now, { mine: MINE }).players[1].letter, "string");
   const guest = modelSession(now);
   Object.assign(guest, { mode: "guest", seat: 1, name: "jonas", lobby: { players: [{ n: 1, name: ["x"] }] } });
-  assert.equal(typeof mapModel(guest, now, { view: VIEW }).players[0].letter, "string");
+  assert.equal(typeof mapModel(guest, now, { mine: MINE }).players[0].letter, "string");
 });
 
 test("leaving the game forgets its players and state (a restart starts clean)", () => {
@@ -443,19 +478,19 @@ test("no plan, waiting, and no data", () => {
   const now = 100000;
   const noPlan = modelSession(now);
   noPlan.map.plan = null;
-  assert.equal(mapModel(noPlan, now, { view: VIEW }).status, "noPlan");
+  assert.equal(mapModel(noPlan, now, { mine: MINE }).status, "noPlan");
   const empty = hostSession();
   empty.map.openedAt = now - 1000;
-  assert.equal(mapModel(empty, now, { view: VIEW }).status, "waiting");
+  assert.equal(mapModel(empty, now, { mine: MINE }).status, "waiting");
   empty.map.openedAt = now - 5001;
-  assert.equal(mapModel(empty, now, { view: VIEW }).status, "noData");
+  assert.equal(mapModel(empty, now, { mine: MINE }).status, "noData");
 });
 
 test("friends on another floor show on that floor's button", () => {
   const now = 100000;
   const session = modelSession(now);
   session.map.live.get(2).floor = 1;
-  const model = mapModel(session, now, { view: VIEW });
+  const model = mapModel(session, now, { mine: MINE });
   assert.deepEqual(
     model.floors.map((f) => [f.name, f.current, f.others]),
     [
@@ -469,7 +504,7 @@ test("a guest sees itself as me, with names from the host's lobby", () => {
   const now = 100000;
   const session = modelSession(now);
   Object.assign(session, { mode: "guest", seat: 1, name: "jonas", lobby: { players: [{ n: 1, name: "Lucas" }, { n: 2, name: "" }] } });
-  const model = mapModel(session, now, { view: VIEW });
+  const model = mapModel(session, now, { mine: MINE });
   assert.deepEqual(
     model.players.map((p) => [p.n, p.letter, p.me]),
     [
@@ -828,10 +863,24 @@ test("the minimap setting turns it off and on, and is saved", () => {
   assert.ok(blocks.some((b) => b.kind === "buttons" && b.buttons[0].act === "minimapSetting"));
 });
 
-test("the minimap cuts a square around the player out of the floor drawing", () => {
-  // a floor layer drawn with the origin at (500, 400) px and 0.1 px per unit; the player at world (1000, 2000)
-  const layer = { scale: 0.1, rotate: 0, tx: 500, ty: 400 };
-  assert.deepEqual(minimapWindow(layer, 1000, 2000, 200), { sx: 500, sy: 100, size: 200 });
+const near = (actual, expected) => assert.ok(actual.every((v, i) => Math.abs(v - expected[i]) < 1e-9), `${actual} vs ${expected}`);
+
+test("the minimap turns with me: what I look at is straight up, I am in the middle", () => {
+  assert.equal(minimapTurn(90), 0); // looking north: north up, not turned
+  // 100 units = 11 px. Looking north, a point north of me is above me; looking east, a point east of me is
+  near(minimapPlace({ x: 0, y: 0, yaw: 90 }, 0, 100), [100, 89]);
+  near(minimapPlace({ x: 0, y: 0, yaw: 0 }, 100, 0), [100, 89]);
+  // looking east, north is on my left; looking south-west, a point north-east of me is behind me
+  near(minimapPlace({ x: 0, y: 0, yaw: 0 }, 0, 100), [89, 100]);
+  near(minimapPlace({ x: 50, y: 50, yaw: 225 }, 50 + 100 / Math.SQRT2, 50 + 100 / Math.SQRT2), [100, 111]);
+  near(minimapPlace({ x: 7, y: 8, yaw: 33 }, 7, 8), [100, 100]);
+});
+
+test("the minimap's N sits on the rim toward north", () => {
+  near(minimapNorth(90), [100, 10]); // looking north: top middle
+  near(minimapNorth(0), [10, 100]); // looking east: left
+  near(minimapNorth(-90), [100, 190]); // looking south: bottom
+  near(minimapNorth(45), [10, 10]); // looking north-east: north is up and left, in the corner
 });
 
 // ---- the M key (src/map/hotkey.js) ----

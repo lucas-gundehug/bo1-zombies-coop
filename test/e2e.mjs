@@ -388,6 +388,30 @@ if (allIn) {
         .then((h) => h.jsonValue(), () => null);
       log(`minimap on ${g.name}: ${mini ?? "FAILED"}`);
       if (!mini) ok = false;
+      // the guest walks: its own arrow follows it every frame (read from its own engine, src/map/view.js)
+      await g.page.keyboard.down("w");
+      const walk = await g.page.evaluate(
+        () =>
+          new Promise((resolve) => {
+            let frames = 0;
+            let moved = 0;
+            let last = null;
+            const end = performance.now() + 2000;
+            const step = (t) => {
+              const me = window.__bo1Coop.minimap.model?.players.find((p) => p.me);
+              frames += 1;
+              if (me && last && (me.x !== last.x || me.y !== last.y)) moved += 1;
+              last = me;
+              if (t < end) requestAnimationFrame(step);
+              else resolve({ frames, moved, fromEngine: window.__bo1Coop.minimap.fromEngine });
+            };
+            requestAnimationFrame(step);
+          }),
+      );
+      await g.page.keyboard.up("w");
+      log(`${g.name} walking, its minimap moved in ${JSON.stringify(walk)}`);
+      // two games on one PC: the guest's engine draws fewer frames than the screen shows (once a second before the fix)
+      if (!walk.fromEngine || walk.moved < walk.frames * 0.5) ok = false;
     }
   }
   for (const p of players) await p.page.screenshot({ path: `${OUT}/${p.name}.png` }).catch(() => {});
