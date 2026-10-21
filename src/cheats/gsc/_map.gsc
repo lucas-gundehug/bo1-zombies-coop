@@ -2,19 +2,20 @@
 #include common_scripts\utility;
 #include maps\_zombiemode_utility;
 
-// IN-GAME MAP - the game side of the map panel (src/map/). Rooms, doors and box spots are captured once, in one order,
-// when the cheat menu publishes its lists; the live data and the dump both use that order, so their indices agree with
-// the bundled plan (src/map/plans/<map>.json). Published:
+// IN-GAME MAP - the game side of the map panel (src/map/). Rooms and doors are captured once, in one order, when the
+// cheat menu publishes its lists; the live data and the dump both use that order, so their indices agree with the
+// bundled plan (src/map/plans/<map>.json). The box is published by where it stands: the game shuffles its chests every
+// match, so a chest index means nothing to the plan. Published:
 //   cheats_map_live        every 0.25 s: v=<state counter> p=<ent>,<x>,<y>,<z>,<yaw>,<room>,<s>;...
 //                          (room: index into the rooms or -1; s: 0 alive, 1 downed, 2 spectating)
 //   cheats_map_state       when it changes (the counter goes up): sig=z<rooms>d<doors>c<checksum of the doors>
 //                          doors=<0/1 per door, 1 = open>
-//                          rooms=<0/1 per room, 1 = enabled> box=<chest indices> power=<0|1>
+//                          rooms=<0/1 per room, 1 = enabled> box=<x>:<y> of the box, * in a fire sale power=<0|1>
 //   cheats_map_dump_count  after the console sets cheats_map_dump 1: the number of cheats_map_dump_<i> chunks, each
 //                          ";"-separated records of ","-separated fields (scripts/plan-build.mjs reads them):
 //                            Z,<zone name>,<x>,<y>,<z>                     every room, in order (its first volume)
 //                            D,<door|debris|power>,<x>,<y>,<z>,<cost>,<target>   every door trigger, in order
-//                            P,<perk|pap|power|box>,<id or ->,<x>,<y>,<z>   boxes in chest order
+//                            P,<perk|pap|power|box>,<id or ->,<x>,<y>,<z>   boxes in this match's chest order
 //                            N,<x>,<y>,<z>,<room>                          every path node inside a room
 // Findings behind this (which fields exist, hidden boxes 10,000 units down): docs/superpowers/specs/2026-10-20-in-game-map-spike.md
 
@@ -127,6 +128,20 @@ map_xyz( v )
 	return int( v[0] ) + "," + int( v[1] ) + "," + z;
 }
 
+// where a box spot really is: a hidden box's trigger is moved 10,000 units down, its first place is kept
+map_chest_at( chest )
+{
+	if ( IsDefined( chest.orig_origin ) )
+	{
+		return chest.orig_origin;
+	}
+	if ( IsDefined( chest.chest_lid ) )
+	{
+		return chest.chest_lid.origin;
+	}
+	return chest.origin;
+}
+
 map_room_of( ent )
 {
 	for ( i = 0; i < level.map_zones.size; i++ )
@@ -174,22 +189,17 @@ map_state_text()
 	{
 		rooms = rooms + maps\cheats\_cheats::cheats_bit( level.zones[level.map_zones[i]].is_enabled );
 	}
+	// the game shuffles level.chests every match, so the box is named by where it stands, not by its index
 	box = "";
 	fire_sale = IsDefined( level.zombie_vars ) && is_true( level.zombie_vars["zombie_powerup_fire_sale_on"] );
 	if ( fire_sale )
 	{
-		for ( i = 0; i < level.map_chests.size; i++ )
-		{
-			if ( box != "" )
-			{
-				box = box + ",";
-			}
-			box = box + i;
-		}
+		box = "*";
 	}
-	else if ( IsDefined( level.chest_index ) && level.map_chests.size > 0 )
+	else if ( IsDefined( level.chests ) && IsDefined( level.chest_index ) && IsDefined( level.chests[level.chest_index] ) )
 	{
-		box = "" + level.chest_index;
+		at = map_chest_at( level.chests[level.chest_index] );
+		box = int( at[0] ) + ":" + int( at[1] );
 	}
 	return "sig=z" + level.map_zones.size + "d" + level.map_doors.size + "c" + level.map_door_sum + " doors=" + doors + " rooms=" + rooms + " box=" + box + " power=" + maps\cheats\_cheats::cheats_bit( maps\cheats\_cheats::cheats_flag( "power_on" ) );
 }
@@ -314,17 +324,7 @@ map_dump()
 	}
 	for ( i = 0; i < level.map_chests.size; i++ )
 	{
-		chest = level.map_chests[i];
-		at = chest.origin;
-		if ( IsDefined( chest.orig_origin ) )
-		{
-			at = chest.orig_origin;
-		}
-		else if ( IsDefined( chest.chest_lid ) )
-		{
-			at = chest.chest_lid.origin;
-		}
-		records[records.size] = "P,box,-," + map_xyz( at );
+		records[records.size] = "P,box,-," + map_xyz( map_chest_at( level.map_chests[i] ) );
 	}
 	nodes = GetAllNodes();
 	probe = Spawn( "script_origin", ( 0, 0, 0 ) );

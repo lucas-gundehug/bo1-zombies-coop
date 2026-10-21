@@ -1,4 +1,4 @@
-// BO1 Zombies Co-op 2.2.2.6 for vel.gg. Built from src/ with scripts/build.mjs; edit the sources, not this file.
+// BO1 Zombies Co-op 2.2.2.7 for vel.gg. Built from src/ with scripts/build.mjs; edit the sources, not this file.
 (() => {
   // relay/src/protocol.js
   var ROLES = Object.freeze(["host", "guest"]);
@@ -1547,7 +1547,7 @@
     } else if (message.t === "maps") {
       const { slug, sig, doors, rooms, box, power } = message;
       if (!SLUGS.includes(slug) || typeof sig !== "string" || !bits(doors) || !bits(rooms)) return;
-      if (!Array.isArray(box) || box.length > 8 || !box.every(Number.isInteger)) return;
+      if (!Array.isArray(box) || box.length > 16 || !box.every(Number.isInteger)) return;
       if (slug !== map.slug) return;
       map.state = { v: null, sig, doors: [...doors].map((c) => c === "1"), rooms: [...rooms].map((c) => c === "1"), box, power: power === 1, at: now };
       map.planOk = Boolean(map.plan) && sig === map.plan.sig;
@@ -2827,6 +2827,7 @@
   // src/map/live.js
   var LIVE_EVERY_MS = 250;
   var BITS = /^[01]*$/;
+  var SPOT = /^-?\d+:-?\d+$/;
   function parseLive(value) {
     const match = String(value).match(/^v=(\d+) p=(.*)$/);
     if (!match) return null;
@@ -2845,8 +2846,24 @@
     );
     if (!raw.sig || !BITS.test(raw.doors ?? "x") || !BITS.test(raw.rooms ?? "x")) return null;
     const bits2 = (text3) => [...text3].map((c) => c === "1");
-    const box = (raw.box ?? "").split(",").filter(Boolean).map(Number).filter(Number.isInteger);
+    const box = raw.box === "*" ? "*" : (raw.box ?? "").split(",").flatMap((spot) => SPOT.test(spot) ? [spot.split(":").map(Number)] : []);
     return { sig: raw.sig, doors: bits2(raw.doors), rooms: bits2(raw.rooms), box, power: raw.power === "1" };
+  }
+  var SPOT_NEAR = 64;
+  function boxSpots(plan, box) {
+    const spots = plan.pois.filter((p) => p.kind === "box").map((p) => p.at);
+    if (box === "*") return spots.map((_, i) => i);
+    const found = /* @__PURE__ */ new Set();
+    for (const [x, y] of box) {
+      let best = -1;
+      let bestDistance = SPOT_NEAR;
+      spots.forEach(([, sx, sy], i) => {
+        const distance2 = Math.hypot(sx - x, sy - y);
+        if (distance2 <= bestDistance) [best, bestDistance] = [i, distance2];
+      });
+      if (best >= 0) found.add(best);
+    }
+    return [...found].sort((a, b) => a - b);
   }
   function mapPlayers(session) {
     const players = funPlayers(session);
@@ -2877,7 +2894,7 @@
     } else if (name === "cheats_map_state") {
       const state = parseMapState(value);
       if (!state) return;
-      map.state = { ...state, v: map.liveV, at: now };
+      map.state = { ...state, box: map.plan ? boxSpots(map.plan, state.box) : [], v: map.liveV, at: now };
       map.planOk = Boolean(map.plan) && state.sig === map.plan.sig;
     }
   }
@@ -3752,19 +3769,20 @@ cheats_freeze_loop()
 #include common_scripts\\utility;
 #include maps\\_zombiemode_utility;
 
-// IN-GAME MAP - the game side of the map panel (src/map/). Rooms, doors and box spots are captured once, in one order,
-// when the cheat menu publishes its lists; the live data and the dump both use that order, so their indices agree with
-// the bundled plan (src/map/plans/<map>.json). Published:
+// IN-GAME MAP - the game side of the map panel (src/map/). Rooms and doors are captured once, in one order, when the
+// cheat menu publishes its lists; the live data and the dump both use that order, so their indices agree with the
+// bundled plan (src/map/plans/<map>.json). The box is published by where it stands: the game shuffles its chests every
+// match, so a chest index means nothing to the plan. Published:
 //   cheats_map_live        every 0.25 s: v=<state counter> p=<ent>,<x>,<y>,<z>,<yaw>,<room>,<s>;...
 //                          (room: index into the rooms or -1; s: 0 alive, 1 downed, 2 spectating)
 //   cheats_map_state       when it changes (the counter goes up): sig=z<rooms>d<doors>c<checksum of the doors>
 //                          doors=<0/1 per door, 1 = open>
-//                          rooms=<0/1 per room, 1 = enabled> box=<chest indices> power=<0|1>
+//                          rooms=<0/1 per room, 1 = enabled> box=<x>:<y> of the box, * in a fire sale power=<0|1>
 //   cheats_map_dump_count  after the console sets cheats_map_dump 1: the number of cheats_map_dump_<i> chunks, each
 //                          ";"-separated records of ","-separated fields (scripts/plan-build.mjs reads them):
 //                            Z,<zone name>,<x>,<y>,<z>                     every room, in order (its first volume)
 //                            D,<door|debris|power>,<x>,<y>,<z>,<cost>,<target>   every door trigger, in order
-//                            P,<perk|pap|power|box>,<id or ->,<x>,<y>,<z>   boxes in chest order
+//                            P,<perk|pap|power|box>,<id or ->,<x>,<y>,<z>   boxes in this match's chest order
 //                            N,<x>,<y>,<z>,<room>                          every path node inside a room
 // Findings behind this (which fields exist, hidden boxes 10,000 units down): docs/superpowers/specs/2026-10-20-in-game-map-spike.md
 
@@ -3877,6 +3895,20 @@ map_xyz( v )
 	return int( v[0] ) + "," + int( v[1] ) + "," + z;
 }
 
+// where a box spot really is: a hidden box's trigger is moved 10,000 units down, its first place is kept
+map_chest_at( chest )
+{
+	if ( IsDefined( chest.orig_origin ) )
+	{
+		return chest.orig_origin;
+	}
+	if ( IsDefined( chest.chest_lid ) )
+	{
+		return chest.chest_lid.origin;
+	}
+	return chest.origin;
+}
+
 map_room_of( ent )
 {
 	for ( i = 0; i < level.map_zones.size; i++ )
@@ -3924,22 +3956,17 @@ map_state_text()
 	{
 		rooms = rooms + maps\\cheats\\_cheats::cheats_bit( level.zones[level.map_zones[i]].is_enabled );
 	}
+	// the game shuffles level.chests every match, so the box is named by where it stands, not by its index
 	box = "";
 	fire_sale = IsDefined( level.zombie_vars ) && is_true( level.zombie_vars["zombie_powerup_fire_sale_on"] );
 	if ( fire_sale )
 	{
-		for ( i = 0; i < level.map_chests.size; i++ )
-		{
-			if ( box != "" )
-			{
-				box = box + ",";
-			}
-			box = box + i;
-		}
+		box = "*";
 	}
-	else if ( IsDefined( level.chest_index ) && level.map_chests.size > 0 )
+	else if ( IsDefined( level.chests ) && IsDefined( level.chest_index ) && IsDefined( level.chests[level.chest_index] ) )
 	{
-		box = "" + level.chest_index;
+		at = map_chest_at( level.chests[level.chest_index] );
+		box = int( at[0] ) + ":" + int( at[1] );
 	}
 	return "sig=z" + level.map_zones.size + "d" + level.map_doors.size + "c" + level.map_door_sum + " doors=" + doors + " rooms=" + rooms + " box=" + box + " power=" + maps\\cheats\\_cheats::cheats_bit( maps\\cheats\\_cheats::cheats_flag( "power_on" ) );
 }
@@ -4064,17 +4091,7 @@ map_dump()
 	}
 	for ( i = 0; i < level.map_chests.size; i++ )
 	{
-		chest = level.map_chests[i];
-		at = chest.origin;
-		if ( IsDefined( chest.orig_origin ) )
-		{
-			at = chest.orig_origin;
-		}
-		else if ( IsDefined( chest.chest_lid ) )
-		{
-			at = chest.chest_lid.origin;
-		}
-		records[records.size] = "P,box,-," + map_xyz( at );
+		records[records.size] = "P,box,-," + map_xyz( map_chest_at( level.map_chests[i] ) );
 	}
 	nodes = GetAllNodes();
 	probe = Spawn( "script_origin", ( 0, 0, 0 ) );
@@ -6636,7 +6653,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
   }
 
   // src/cheats/version.js
-  var FORK_VERSION = "2.2.2.6";
+  var FORK_VERSION = "2.2.2.7";
 
   // src/util/updates.js
   var LATEST = "https://api.github.com/repos/lucas-gundehug/bo1-zombies-coop/releases/latest";

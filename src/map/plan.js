@@ -4,8 +4,8 @@
 //                                                      has below null; area [x0, y0, x1, y1] limits a floor to a region
 //     rooms: [{ id, label: [floor, x, y], rects: [[floor, x0, y0, x1, y1], ...] }],
 //     doors: [{ kind: "door" | "debris" | "power", cost, at: [floor, x, y], rooms: [a, b] }],
-//     pois: [{ kind: "perk" | "pap" | "power" | "box", id, at: [floor, x, y] }] }   boxes in the game's chest order
-// The index of a room, door or box is what the live data (src/map/live.js) refers to.
+//     pois: [{ kind: "perk" | "pap" | "power" | "box", id, at: [floor, x, y] }] }
+// The index of a room or door is what the live data (src/map/live.js) refers to; the box comes as where it stands.
 
 const DOOR_KINDS = ["door", "debris", "power"];
 const POI_KINDS = ["perk", "pap", "power", "box"];

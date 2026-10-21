@@ -2,8 +2,9 @@
 // bridge's console reads.
 //   cheats_map_live    v=<state counter> p=<ent>,<x>,<y>,<z>,<yaw>,<room>,<s>;...   every 0.25 s (s: 0 alive, 1 downed,
 //                      2 spectating; room: index into the plan's rooms, or -1)
-//   cheats_map_state   sig=<sig> doors=<0/1 per door> rooms=<0/1 per room> box=<chest indices> power=<0|1>
-//                      rewritten when it changes, and the counter goes up
+//   cheats_map_state   sig=<sig> doors=<0/1 per door> rooms=<0/1 per room> box=<x>:<y> (* in a fire sale) power=<0|1>
+//                      rewritten when it changes, and the counter goes up. The game shuffles its box spots every
+//                      match, so the box comes as where it stands and is matched to the plan's spots here.
 import { askDvar } from "../cheats/bridge.js";
 import { SLOT } from "../engine/builds.js";
 import { funPlayers } from "../fun/fun.js";
@@ -16,6 +17,7 @@ import { ICON_FILES, loadIcons as readIcons } from "./icons.js";
 
 const LIVE_EVERY_MS = 250;
 const BITS = /^[01]*$/;
+const SPOT = /^-?\d+:-?\d+$/;
 
 export function parseLive(value) {
   const match = String(value).match(/^v=(\d+) p=(.*)$/);
@@ -39,8 +41,27 @@ export function parseMapState(value) {
   );
   if (!raw.sig || !BITS.test(raw.doors ?? "x") || !BITS.test(raw.rooms ?? "x")) return null;
   const bits = (text) => [...text].map((c) => c === "1");
-  const box = (raw.box ?? "").split(",").filter(Boolean).map(Number).filter(Number.isInteger);
+  const box = raw.box === "*" ? "*" : (raw.box ?? "").split(",").flatMap((spot) => (SPOT.test(spot) ? [spot.split(":").map(Number)] : []));
   return { sig: raw.sig, doors: bits(raw.doors), rooms: bits(raw.rooms), box, power: raw.power === "1" };
+}
+
+const SPOT_NEAR = 64; // world units: the script and the plan read a spot's place the same way, so it is exact in practice
+
+/** The plan's box numbers for where the game says the box is: [x, y] spots, or "*" for every spot (a fire sale). */
+export function boxSpots(plan, box) {
+  const spots = plan.pois.filter((p) => p.kind === "box").map((p) => p.at);
+  if (box === "*") return spots.map((_, i) => i);
+  const found = new Set();
+  for (const [x, y] of box) {
+    let best = -1;
+    let bestDistance = SPOT_NEAR;
+    spots.forEach(([, sx, sy], i) => {
+      const distance = Math.hypot(sx - x, sy - y);
+      if (distance <= bestDistance) [best, bestDistance] = [i, distance];
+    });
+    if (best >= 0) found.add(best);
+  }
+  return [...found].sort((a, b) => a - b);
 }
 
 /**
@@ -79,7 +100,7 @@ export function onMapLine(session, name, value) {
   } else if (name === "cheats_map_state") {
     const state = parseMapState(value);
     if (!state) return;
-    map.state = { ...state, v: map.liveV, at: now };
+    map.state = { ...state, box: map.plan ? boxSpots(map.plan, state.box) : [], v: map.liveV, at: now };
     map.planOk = Boolean(map.plan) && state.sig === map.plan.sig;
   }
 }

@@ -49,9 +49,10 @@ says which seats are direct.
 
 M in a game opens the map panel (`src/map/`) without pausing and without taking the mouse (`src/map/hotkey.js`; a canvas
 in its own shadow root, `src/map/overlay.js`). The same mod's `src/cheats/gsc/_map.gsc` captures the rooms
-(`level.zones`), the door and debris triggers and the box spots once, in one order, when the lists are published, and
+(`level.zones`) and the door and debris triggers once, in one order, when the lists are published, and
 publishes `cheats_map_live` (every player, every 0.25 s) and `cheats_map_state` (doors, rooms, box, power; its counter
-goes up on a change). The bridge hands `cheats_map_*` prints to `src/map/live.js`; the host forwards them to guests as
+goes up on a change). The box goes by where it stands (`box=<x>:<y>`, `*` in a fire sale), matched to the plan's
+nearest spot on the host page (`boxSpots`), because the game shuffles `level.chests` every match. The bridge hands `cheats_map_*` prints to `src/map/live.js`; the host forwards them to guests as
 `mapp` / `maps` control messages (`src/map/net.js`), so every player running the fork sees the map. Floor plans are
 bundled per map (`src/map/plans/<slug>.json`): `node scripts/map-plan.mjs <slug|all>` loads the map, asks the script
 for a one-off dump (each room's path nodes) and builds the plan; the raw dumps stay in `scripts/map-dumps/`, and
@@ -85,7 +86,8 @@ entry it prints; until then the map falls back to the game script's 4-a-second s
 - Things learned in game: the script's lists are published 2 s after everyone spawned (wait for `lists>=1`); unfreezing
   keeps zombie spawning paused until the round ends, or one extra zombie spawns. A bought door keeps its trigger with
   `_door_open` set (debris may delete it); hidden box spots and Moon's Juggernog and Speed Cola triggers sit 10,000
-  units down (`chest.orig_origin` is a box's real place). Power switches: `use_elec_switch` (most maps),
+  units down (`chest.orig_origin` is a box's real place). `level.chests` comes in a new random order every match,
+  so a chest index never matches the plan (`<map> box` checks two matches and a fire sale). Power switches: `use_elec_switch` (most maps),
   `use_power_switch` (Der Riese), `use_master_switch` (Verrückt), `power_trigger_left` / `_right` (Shangri-La); all set
   the `power_on` flag.
 
