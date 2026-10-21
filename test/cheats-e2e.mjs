@@ -1,7 +1,7 @@
 // The cheat menu on the real vel.gg: one browser with the extension, a map, the game script, its commands.
 //   node test/cheats-e2e.mjs [map=kino] [scenario=load]
 // Scenarios: load (the script reports ready), off (with the setting off nothing loads), actions (every command, Task 2),
-// findview (where a new engine keeps my view, for src/map/view.js).
+// findview (where a new engine keeps my view, for src/map/view.js), box (the Mystery Box on the map, two matches).
 // PROFILE=<dir> reuses a browser profile (the map packs are downloaded once per profile and kept), default in the OS
 // temp folder. SHOTS=<dir> saves a screenshot after each step. HORDE=1 plays vel.gg's Hell mode (?horde=1).
 import { chromium } from "playwright";
@@ -385,6 +385,52 @@ const scenarios = {
       assert.ok(chunk && chunk.length < 400, `dump chunk ${i}: ${chunk?.length}`);
     }
     log("dump chunks:", count);
+  },
+  // The Mystery Box on the map, in two matches (the game shuffles its box spots every match): the map marks the one spot
+  // where the game's box stands, and every spot in a fire sale. With SHOTS, pictures from around the marked spot.
+  async box() {
+    await setCheats(true);
+    for (let match = 0; match < 2; match += 1) {
+      await startMap();
+      assert.ok(await waitReady(), "ready");
+      await until((s) => s.lists >= 1, 30000, "lists published");
+      await command("god");
+      await page.waitForFunction(() => window.__bo1Coop.map.planOk === true && window.__bo1Coop.minimap.model, null, { timeout: 20000 });
+      const said = (await readDvar("cheats_map_state")).match(/ box=(\S*)/)[1];
+      const marked = await page.evaluate(() => window.__bo1Coop.minimap.model.pois.filter((p) => p.kind === "box" && p.active).map((p) => p.at));
+      log(`match ${match}: the game says box=${said}, the map marks ${JSON.stringify(marked)}`);
+      const [x, y] = said.split(":").map(Number);
+      assert.equal(marked.length, 1, "one box marked");
+      assert.ok(Math.hypot(marked[0][1] - x, marked[0][2] - y) < 64, "the marked spot is where the game's box is");
+      if (match === 1) {
+        // the power-up drops 80 units in front of me: walk into it
+        assert.equal((await run("powerup 0 fire_sale")).ok, true, "fire sale");
+        await page.keyboard.down("w");
+        await wait(1200);
+        await page.keyboard.up("w");
+        await page.waitForFunction(() => window.__bo1Coop.map.state?.box.length > 1, null, { timeout: 15000 });
+        const all = await page.evaluate(() => window.__bo1Coop.minimap.model.pois.filter((p) => p.kind === "box").every((p) => p.active));
+        log("fire sale: every spot marked:", all);
+        assert.ok(all, "every spot marked in a fire sale");
+      }
+      if (SHOTS) {
+        // the box's height from the dump, then a look at it from each side
+        await command("set cheats_map_dump 1");
+        let count = 0;
+        for (let i = 0; i < 20 && !count; i += 1) {
+          count = Number(await readDvar("cheats_map_dump_count", 2000)) || 0;
+          if (!count) await wait(1000);
+        }
+        let text = "";
+        for (let i = 0; i < count; i += 1) text += await readDvar(`cheats_map_dump_${i}`);
+        const z = [...text.matchAll(/P,box,-,(-?\d+),(-?\d+),(-?\d+)/g)].map((m) => m.slice(1).map(Number)).find(([bx, by]) => Math.hypot(bx - x, by - y) < 64)[2];
+        for (const [dx, dy, yaw] of [[0, -120, 90], [0, 120, -90], [-120, 0, 0], [120, 0, 180]]) {
+          await command(`setviewpos ${x + dx} ${y + dy} ${z + 40} ${yaw}`);
+          await wait(800);
+          await snap(`box-match${match}-yaw${yaw}`);
+        }
+      }
+    }
   },
   // The whole map in one browser: M opens it without pausing or taking the mouse, a bought door disappears from it, M
   // closes it, and the game runs as smoothly with it open.

@@ -49,7 +49,7 @@ export function onMapMessage(session, message) {
   } else if (message.t === "maps") {
     const { slug, sig, doors, rooms, box, power } = message;
     if (!SLUGS.includes(slug) || typeof sig !== "string" || !bits(doors) || !bits(rooms)) return;
-    if (!Array.isArray(box) || box.length > 8 || !box.every(Number.isInteger)) return;
+    if (!Array.isArray(box) || box.length > 16 || !box.every(Number.isInteger)) return;
     if (slug !== map.slug) return;
     map.state = { v: null, sig, doors: [...doors].map((c) => c === "1"), rooms: [...rooms].map((c) => c === "1"), box, power: power === 1, at: now };
     map.planOk = Boolean(map.plan) && sig === map.plan.sig;

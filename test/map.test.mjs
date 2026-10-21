@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { fitView, floorOf, toScreen, validPlan } from "../src/map/plan.js";
 import { createMap } from "../src/map/state.js";
-import { iconsNeeded, mapTick, onMapLine, parseLive, parseMapState } from "../src/map/live.js";
+import { boxSpots, iconsNeeded, mapTick, onMapLine, parseLive, parseMapState } from "../src/map/live.js";
 import { createBridge, onCheatsLine } from "../src/cheats/bridge.js";
 import { SLOT } from "../src/engine/builds.js";
 import { pushSample, sampleTrack } from "../src/map/track.js";
@@ -190,8 +190,10 @@ test("parseLive reads the version and every player", () => {
 });
 
 test("parseMapState reads doors, rooms, box and power", () => {
-  assert.deepEqual(parseMapState("sig=z3d2 doors=01 rooms=110 box=1 power=0"), { sig: "z3d2", doors: [false, true], rooms: [true, true, false], box: [1], power: false });
-  assert.deepEqual(parseMapState("sig=z1d0 doors= rooms=1 box=0,3 power=1"), { sig: "z1d0", doors: [], rooms: [true], box: [0, 3], power: true });
+  assert.deepEqual(parseMapState("sig=z3d2 doors=01 rooms=110 box=1343:-1313 power=0"), { sig: "z3d2", doors: [false, true], rooms: [true, true, false], box: [[1343, -1313]], power: false });
+  assert.deepEqual(parseMapState("sig=z1d0 doors= rooms=1 box=* power=1"), { sig: "z1d0", doors: [], rooms: [true], box: "*", power: true });
+  assert.deepEqual(parseMapState("sig=z1d0 doors= rooms=1 box= power=0").box, [], "no box (yet)");
+  assert.deepEqual(parseMapState("sig=z1d0 doors= rooms=1 box=3,x:1,5:6 power=0").box, [[5, 6]], "only whole x:y spots");
   assert.equal(parseMapState("nothing here"), null);
 });
 
@@ -228,13 +230,36 @@ test("live samples are stored under each player's number", () => {
   assert.equal(session.map.live.get(1).floor, 0);
 });
 
+test("the box is matched to the plan's spot where it stands, whatever order the game has its spots in", () => {
+  // the game shuffles its chests every match (seen on Kino: spot 0 was (1343, 1313) in one match, (-1, -775) in the next)
+  const plan = { ...fixturePlan(), pois: [{ kind: "perk", id: "specialty_rof", at: [0, 0, 0] }, { kind: "box", id: null, at: [1, 901, -620] }, { kind: "box", id: null, at: [0, 1343, 1313] }, { kind: "box", id: null, at: [0, -1, -775] }] };
+  assert.deepEqual(boxSpots(plan, [[1343, 1313]]), [1]);
+  assert.deepEqual(boxSpots(plan, [[-3, -770]]), [2], "a few units off");
+  assert.deepEqual(boxSpots(plan, [[5000, 5000]]), [], "nowhere near a spot");
+  assert.deepEqual(boxSpots(plan, "*"), [0, 1, 2], "a fire sale: every spot");
+  assert.deepEqual(boxSpots(plan, []), []);
+  const session = hostSession(plan);
+  onMapLine(session, "cheats_map_live", "v=1 p=0,100,-200,64,90,2,0");
+  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=01 rooms=110 box=-1:-775 power=0");
+  assert.deepEqual(session.map.state.box, [2]);
+  const boxes = mapModel(session, Date.now(), { mine: MINE }).pois.filter((p) => p.kind === "box");
+  assert.deepEqual(boxes.map((b) => b.active), [false, false, true]);
+});
+
+test("a fire sale on Kino (9 box spots) reaches the guests", () => {
+  const session = hostSession(planFor("kino"));
+  Object.assign(session, { mode: "guest", seat: 1 });
+  onMapMessage(session, { t: "maps", slug: "kino", sig: planFor("kino").sig, doors: "000000000000", rooms: "0000000011", box: [0, 1, 2, 3, 4, 5, 6, 7, 8], power: 0 });
+  assert.deepEqual(session.map.state?.box, [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+});
+
 test("a state with the plan's sig makes the plan usable, another sig does not", () => {
   const session = hostSession();
   onMapLine(session, "cheats_map_live", "v=1 p=0,100,-200,64,90,2,0");
-  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=01 rooms=110 box=1 power=0");
+  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=01 rooms=110 box=900:400 power=0");
   assert.equal(session.map.planOk, true);
   assert.equal(session.map.state.v, 1);
-  onMapLine(session, "cheats_map_state", "sig=z3d3 doors=011 rooms=110 box=1 power=0");
+  onMapLine(session, "cheats_map_state", "sig=z3d3 doors=011 rooms=110 box=900:400 power=0");
   assert.equal(session.map.planOk, false);
 });
 
@@ -242,7 +267,7 @@ test("a new live version asks for the state once", () => {
   const session = hostSession();
   onMapLine(session, "cheats_map_live", "v=1 p=0,100,-200,64,90,2,0");
   assert.deepEqual(session.fun.queue, ["cheats_map_state"]);
-  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=01 rooms=110 box=1 power=0");
+  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=01 rooms=110 box=900:400 power=0");
   session.fun.queue.length = 0;
   onMapLine(session, "cheats_map_live", "v=1 p=0,100,-200,64,90,2,0");
   assert.deepEqual(session.fun.queue, []);
@@ -253,11 +278,11 @@ test("a new live version asks for the state once", () => {
 test("after a restart (lower version) the next state replaces the old one", () => {
   const session = hostSession();
   onMapLine(session, "cheats_map_live", "v=7 p=0,100,-200,64,90,2,0");
-  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=11 rooms=111 box=1 power=1");
+  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=11 rooms=111 box=900:400 power=1");
   session.fun.queue.length = 0;
   onMapLine(session, "cheats_map_live", "v=0 p=0,100,-200,64,90,2,0");
   assert.deepEqual(session.fun.queue, ["cheats_map_state"]);
-  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=00 rooms=100 box=0 power=0");
+  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=00 rooms=100 box=900:400 power=0");
   assert.deepEqual(session.map.state.doors, [false, false]);
   assert.equal(session.map.state.v, 0);
 });
@@ -463,7 +488,7 @@ test("a name that is not text (from another player's game) still draws", () => {
 test("leaving the game forgets its players and state (a restart starts clean)", () => {
   const session = hostSession();
   onMapLine(session, "cheats_map_live", "v=1 p=0,100,-200,64,90,2,0");
-  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=01 rooms=110 box=1 power=0");
+  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=01 rooms=110 box=900:400 power=0");
   mapTick(session, 1000, { playing: false, slug: "kino" });
   assert.equal(session.map.live.size, 0);
   assert.equal(session.map.tracks.size, 0);
@@ -543,7 +568,7 @@ test("the host sends positions per reading, and the state once until it changes"
   const session = sendingSession();
   const tick = (now) => mapTick(session, now, { playing: true, slug: "kino" });
   onMapLine(session, "cheats_map_live", "v=1 p=0,100,-200,64,90,2,0;1,5,6,7,-45,0,1");
-  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=01 rooms=110 box=1 power=0");
+  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=01 rooms=110 box=900:400 power=0");
   tick(1000);
   tick(1100); // no new reading: nothing new
   onMapLine(session, "cheats_map_live", "v=1 p=0,110,-200,64,90,2,0;1,5,6,7,-45,0,1");
@@ -553,8 +578,8 @@ test("the host sends positions per reading, and the state once until it changes"
     [1, 110, -200, 64, 90, 2, 0],
     [2, 5, 6, 7, -45, 0, 1],
   ]);
-  assert.deepEqual(sentOf(session, "maps"), [{ t: "maps", slug: "kino", sig: "z3d2", doors: "01", rooms: "110", box: [1], power: 0 }]);
-  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=11 rooms=111 box=1 power=0");
+  assert.deepEqual(sentOf(session, "maps"), [{ t: "maps", slug: "kino", sig: "z3d2", doors: "01", rooms: "110", box: [0], power: 0 }]);
+  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=11 rooms=111 box=900:400 power=0");
   tick(1500);
   assert.equal(sentOf(session, "maps").length, 2);
   tick(6600);
@@ -565,7 +590,7 @@ test("nothing is sent while no guest is in the room", () => {
   const session = sendingSession();
   session.peer = false;
   onMapLine(session, "cheats_map_live", "v=1 p=0,100,-200,64,90,2,0");
-  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=01 rooms=110 box=1 power=0");
+  onMapLine(session, "cheats_map_state", "sig=z3d2 doors=01 rooms=110 box=900:400 power=0");
   mapTick(session, 1000, { playing: true, slug: "kino" });
   assert.deepEqual(session.sent, []);
 });
@@ -596,7 +621,7 @@ test("a guest ignores malformed map messages whole", () => {
   assert.equal(session.map.live.size, 0);
   onMapMessage(session, { t: "maps", slug: "atlantis", sig: "z3d2", doors: "01", rooms: "110", box: [1], power: 0 });
   onMapMessage(session, { t: "maps", slug: "kino", sig: "z3d2", doors: "0x", rooms: "110", box: [1], power: 0 });
-  onMapMessage(session, { t: "maps", slug: "kino", sig: "z3d2", doors: "01", rooms: "110", box: [1, 2, 3, 4, 5, 6, 7, 8, 9], power: 0 });
+  onMapMessage(session, { t: "maps", slug: "kino", sig: "z3d2", doors: "01", rooms: "110", box: Array.from({ length: 17 }, (_, i) => i), power: 0 }); // more than any map has
   assert.equal(session.map.state, null);
 });
 
