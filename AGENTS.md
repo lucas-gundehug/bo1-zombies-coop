@@ -6,7 +6,8 @@ code; the agent writes, tests and maintains everything. Talk to him in plain Eng
 ## Keeping up with upstream
 
 vel.gg changes its engine often and upstream follows within a day or so. When the card says "vel.gg updated its game
-engine" or upstream has a new release: `git fetch upstream && git merge upstream/main`, rebuild, run the checks below,
+engine" or upstream has a new release: `git fetch upstream && git merge upstream/main`, rebuild, run the checks below (on a new engine also
+`node test/cheats-e2e.mjs kino findview`, see the map paragraph),
 then publish a fork release (see Release). `README.md` is the fork's own: on a merge conflict there keep ours and
 carry over only what changed for users (install steps, new features). Keep fork changes small and inside `src/cheats/`,
 `src/net/` (direct links) or `src/map/` (the in-game map), so merges stay easy. The upstream files the fork touches: `src/main.js`,
@@ -60,8 +61,13 @@ changes a map. Findings behind it: `docs/superpowers/specs/2026-10-20-in-game-ma
 The perk and Mystery Box icons are the game's own: `src/map/icons.js` reads them at run time from the map pack's
 `.iwd` archives in OPFS (`pack-<slug>/files/main`, zip files of `.iwi` images; perks in `iw_06` / `iw_36`, the box's
 `minimap_icon_mystery_box` in `iw_05`) and decodes their DXT data, so no game artwork is in the repo; without them the
-map draws text labels. The corner minimap (`src/map/minimap.js`, on unless Settings → Minimap is off) copies the
-square around the player out of a cached drawing of the floor each frame and hides while the big map is open.
+map draws text labels. The corner minimap (`src/map/minimap.js`, on unless Settings → Minimap is off) is MW2-style
+(Lucas's pick): it turns the cached drawing of the floor around the player every frame so they face up, N on the rim,
+and hides while the big map is open. Your own position and facing come from the engine's memory every frame
+(`src/map/view.js`): vel.gg's `five.views` updates only about once a second and its angles stay 0. The client keeps
+the view as six floats (origin, angles) at the feet and at the eye, at one static address per engine build (`VIEWS`,
+keyed by the engine hash). After vel.gg ships a new engine, run `node test/cheats-e2e.mjs kino findview` and add the
+entry it prints; until then the map falls back to the game script's 4-a-second samples.
 
 ## Checks
 

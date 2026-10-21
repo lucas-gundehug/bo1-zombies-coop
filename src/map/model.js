@@ -1,10 +1,11 @@
 // What the map panel draws, worked out from the map state (src/map/state.js) once per frame. The renderer
 // (src/map/overlay.js) only draws what this returns.
-import { latestView } from "../game/page.js";
 import { PLAYER_COLORS } from "../ui/card.js";
 import { mapPlayers } from "./live.js";
+import { floorOf } from "./plan.js";
 import { roomName } from "./names.js";
 import { RENDER_DELAY_MS, sampleTrack } from "./track.js";
+import { myView } from "./view.js";
 
 const GONE_MS = 2000; // a player not heard from this long has left
 const NO_DATA_MS = 5000; // the map was opened this long ago and nothing came
@@ -22,7 +23,11 @@ function names(session) {
 
 const myNumber = (session) => (session.mode === "guest" ? session.seat + 1 : 1);
 
-export function mapModel(session, now, { view = latestView() } = {}) {
+/**
+ * `mine` is my own player this frame ({ x, y, z, yaw }, src/map/view.js), or null where it can't be read: then my dot
+ * glides between the game script's samples like everyone else's.
+ */
+export function mapModel(session, now, { mine = myView(session) } = {}) {
   const map = session.map;
   const plan = map.plan;
   if (!plan) return { status: "noPlan" };
@@ -37,20 +42,23 @@ export function mapModel(session, now, { view = latestView() } = {}) {
     }
     if (entry.s === 2) continue;
     const name = known.get(n) || "";
-    let at = { x: entry.x, y: entry.y, yaw: entry.yaw };
-    if (n === me && view) at = { x: view.origin[0], y: view.origin[1], yaw: view.angles[1] };
-    else if (n !== me) at = sampleTrack(map.tracks.get(n) ?? [], now - RENDER_DELAY_MS) ?? at;
-    players.push({ n, name, letter: (name.trim()[0] ?? String(n)).toUpperCase(), color: PLAYER_COLORS[n - 1] ?? PLAYER_COLORS[0], ...at, floor: entry.floor, room: entry.room, downed: entry.s === 1, me: n === me });
+    let at = sampleTrack(map.tracks.get(n) ?? [], now - RENDER_DELAY_MS) ?? { x: entry.x, y: entry.y, yaw: entry.yaw };
+    let floor = entry.floor;
+    if (n === me && mine) {
+      at = { x: mine.x, y: mine.y, yaw: mine.yaw };
+      floor = floorOf(plan, mine.z, mine.x, mine.y);
+    }
+    players.push({ n, name, letter: (name.trim()[0] ?? String(n)).toUpperCase(), color: PLAYER_COLORS[n - 1] ?? PLAYER_COLORS[0], ...at, floor, room: entry.room, downed: entry.s === 1, me: n === me });
   }
   players.sort((a, b) => a.n - b.n);
-  const mine = players.find((p) => p.me);
+  const myDot = players.find((p) => p.me);
   if (!players.length && !map.state) {
     const waited = map.openedAt != null && now - map.openedAt > NO_DATA_MS;
     return { status: waited ? "noData" : "waiting" };
   }
-  const floor = mine?.floor ?? 0;
+  const floor = myDot?.floor ?? 0;
   // a room index only means something in the plan the game was captured with
-  const room = map.planOk && mine && mine.room >= 0 && plan.rooms[mine.room] ? mine.room : -1;
+  const room = map.planOk && myDot && myDot.room >= 0 && plan.rooms[myDot.room] ? myDot.room : -1;
   const state = map.planOk ? map.state : null;
   let boxIndex = -1;
   return {

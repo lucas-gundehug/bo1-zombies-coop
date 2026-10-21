@@ -1,6 +1,7 @@
 // The cheat menu on the real vel.gg: one browser with the extension, a map, the game script, its commands.
 //   node test/cheats-e2e.mjs [map=kino] [scenario=load]
-// Scenarios: load (the script reports ready), off (with the setting off nothing loads), actions (every command, Task 2).
+// Scenarios: load (the script reports ready), off (with the setting off nothing loads), actions (every command, Task 2),
+// findview (where a new engine keeps my view, for src/map/view.js).
 // PROFILE=<dir> reuses a browser profile (the map packs are downloaded once per profile and kept), default in the OS
 // temp folder. SHOTS=<dir> saves a screenshot after each step. HORDE=1 plays vel.gg's Hell mode (?horde=1).
 import { chromium } from "playwright";
@@ -8,6 +9,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { viewAddresses } from "../src/map/view.js";
 
 const MAP = process.argv[2] ?? "kino";
 const SCENARIO = process.argv[3] ?? "load";
@@ -425,6 +427,34 @@ const scenarios = {
     await page.waitForFunction(() => window.__bo1Coop.minimap.shown && window.__bo1Coop.minimap.model?.room, null, { timeout: 10000 });
     log("minimap room:", await page.evaluate(() => window.__bo1Coop.minimap.model.room));
     await snap("minimap");
+    // it follows me every frame and turns with me: facing a known way, then walking, my arrow moves in nearly every frame
+    const [vx, vy, vz] = await page.evaluate(() => window.five.views.at(-1).origin);
+    await command(`setviewpos ${vx} ${vy} ${vz + 60} 37`); // setviewpos takes the eye height
+    await page.waitForFunction(() => Math.abs(window.__bo1Coop.minimap.model.players.find((p) => p.me).yaw - 37) < 0.5, null, { timeout: 3000 });
+    await page.keyboard.down("w");
+    const walk = await page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          let frames = 0;
+          let moved = 0;
+          let last = null;
+          const end = performance.now() + 2000;
+          const step = (t) => {
+            const me = window.__bo1Coop.minimap.model.players.find((p) => p.me);
+            frames += 1;
+            if (last && (me.x !== last.x || me.y !== last.y)) moved += 1;
+            last = me;
+            if (t < end) requestAnimationFrame(step);
+            else resolve({ frames, moved, fromEngine: window.__bo1Coop.minimap.fromEngine });
+          };
+          requestAnimationFrame(step);
+        }),
+    );
+    await page.keyboard.up("w");
+    log("walking, the minimap moved in", JSON.stringify(walk));
+    assert.equal(walk.fromEngine, true, "my view is read from the engine");
+    assert.ok(walk.moved >= walk.frames * 0.8, `my arrow moved in ${walk.moved} of ${walk.frames} frames`);
+    await snap("minimap-turned");
     const withMinimap = await frames(10000);
     await page.evaluate(() => window.__bo1Coop.card.handlers.minimapSetting());
     await page.waitForFunction(() => !window.__bo1Coop.minimap.shown, null, { timeout: 2000 });
@@ -461,6 +491,43 @@ const scenarios = {
     await page.waitForFunction(() => window.__bo1Coop.mapOverlay.host.style.display === "none", null, { timeout: 2000 });
     await page.waitForFunction(() => window.__bo1Coop.minimap.shown, null, { timeout: 2000 }); // back once the big map closes
     assert.equal(await page.evaluate(() => window.five?.screen), "playing");
+  },
+  // Where this engine keeps my view (src/map/view.js): stands still, turns to a known facing, and looks through the
+  // engine's static data for my x and y followed by that yaw. Prints the entry to put in VIEWS when vel.gg ships a new
+  // engine. On a build already listed there, the minimap must show the facing it found.
+  async findview() {
+    await setCheats(true);
+    await startMap();
+    assert.ok(await waitReady(), "ready");
+    await command("god");
+    await page.waitForFunction(() => window.__bo1Coop.minimap.shown, null, { timeout: 30000 });
+    await wait(1500); // vel.gg's own report is a second behind: after standing still it is where I am
+    const [x, y, z] = await page.evaluate(() => window.five.views.at(-1).origin);
+    await command(`setviewpos ${x} ${y} ${z + 60} 37`); // setviewpos takes the eye height
+    await wait(1000);
+    const found = await page.evaluate(
+      ([x, y]) => {
+        const f32 = new Float32Array(window.__bo1Coop.engine.buffer);
+        const hits = [];
+        for (let i = 0; i < 160e6 / 4; i += 1) {
+          if (Math.abs(f32[i] - x) < 1 && Math.abs(f32[i + 1] - y) < 1 && Math.abs(f32[i + 4] - 37) < 0.01) hits.push([i * 4, f32[i + 2]]);
+        }
+        return { hash: window.__bo1Coop.hash, hits };
+      },
+      [x, y],
+    );
+    log("found", JSON.stringify(found));
+    // the client's two copies: the eye one about 60 units above the feet one, near it (the server keeps a copy at the
+    // feet too, which only the host has)
+    const pairs = found.hits.flatMap(([a, az]) => found.hits.filter(([, bz]) => bz - az > 40 && bz - az < 80).map(([b]) => [a, b]));
+    assert.ok(pairs.length, "a view at the feet with one at the eye");
+    const [feet, eye] = pairs.sort((p, q) => Math.abs(p[1] - p[0]) - Math.abs(q[1] - q[0]))[0];
+    log(`VIEWS entry: "${found.hash}": { feet: ${feet}, eye: ${eye} },`);
+    if (viewAddresses(found.hash)) {
+      assert.deepEqual(viewAddresses(found.hash), { feet, eye });
+      const yaw = await page.evaluate(() => window.__bo1Coop.minimap.model.players.find((p) => p.me).yaw);
+      assert.ok(Math.abs(yaw - 37) < 0.5, `the minimap's facing: ${yaw}`);
+    }
   },
   // Health levels: player 0's health follows the level (read where Fun mode reads entity fields, src/fun/fun.js)
   async health() {

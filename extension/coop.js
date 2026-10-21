@@ -2419,8 +2419,8 @@
         onCheatsLine(session, text3);
         const missing = text3.match(/Could not load weapon "([^"]+)"/);
         if (missing && session.fun?.pendingWeapon === missing[1]) {
-          const label = WEAPONS2.find(([w]) => w === missing[1])?.[1] ?? missing[1];
-          say2(session.fun, F.weaponMissing(label));
+          const label2 = WEAPONS2.find(([w]) => w === missing[1])?.[1] ?? missing[1];
+          say2(session.fun, F.weaponMissing(label2));
           session.fun.pendingWeapon = null;
         }
         return original.apply(this, args);
@@ -2531,8 +2531,8 @@
         if (!engineReady()) return;
         fun.pendingWeapon = weapon;
         fun.queue.push(`give ${weapon}`);
-        const label = WEAPONS2.find(([w]) => w === weapon)?.[1] ?? weapon;
-        say2(fun, F.weaponGiven(label));
+        const label2 = WEAPONS2.find(([w]) => w === weapon)?.[1] ?? weapon;
+        say2(fun, F.weaponGiven(label2));
       },
       funReset: () => {
         const a = addresses(session);
@@ -2626,7 +2626,7 @@
     else {
       if (session.cheats?.ok === false) blocks.push(cheatsFailedBlock());
       blocks.push({ kind: "label", text: F.weapons, aside: MAP_SLUGS[session.zone ?? currentZone()] ?? "" });
-      blocks.push({ kind: "grid", buttons: WEAPONS2.map(([w, label]) => ({ act: "funWeapon", arg: w, label })) });
+      blocks.push({ kind: "grid", buttons: WEAPONS2.map(([w, label2]) => ({ act: "funWeapon", arg: w, label: label2 })) });
     }
     blocks.push({ kind: "buttons", buttons: [{ act: "funReset", label: F.reset, style: "ghost" }] });
     return { kind: "section", title: F.title, act: "fun", open: fun.open, blocks };
@@ -4580,9 +4580,9 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     stepper(s) {
       const box = document.createElement("div");
       box.className = "stepper";
-      const label = document.createElement("span");
-      label.className = "flabel";
-      label.textContent = s.label;
+      const label2 = document.createElement("span");
+      label2.className = "flabel";
+      label2.textContent = s.label;
       const value = document.createElement("span");
       value.className = "sval";
       value.textContent = s.value;
@@ -4594,7 +4594,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
         e.dataset.arg = b.arg;
         return e;
       };
-      box.append(label, make(s.dec, "−"), value, make(s.inc, "+"));
+      box.append(label2, make(s.dec, "−"), value, make(s.inc, "+"));
       return box;
     }
     pillParts(pill) {
@@ -4637,9 +4637,9 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
         }
         case "room": {
           const box = el("div", "panel");
-          const label = el("div", "label", block.label);
-          if (block.aside) label.append(el("em", "", block.aside));
-          box.append(label, el("div", "code", block.code));
+          const label2 = el("div", "label", block.label);
+          if (block.aside) label2.append(el("em", "", block.aside));
+          box.append(label2, el("div", "code", block.code));
           if (block.buttons?.length) {
             const row = el("div", "row");
             for (const b of block.buttons) row.append(button(b));
@@ -4659,8 +4659,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
         }
         case "players": {
           const box = el("div");
-          const label = el("div", "label", block.label);
-          if (block.aside) label.append(el("em", "", block.aside));
+          const label2 = el("div", "label", block.label);
+          if (block.aside) label2.append(el("em", "", block.aside));
           const list = el("div", "players");
           for (const p of block.players) {
             const row = el("div", `player ${p.empty ? "empty" : ""} ${p.me ? "me" : ""}`);
@@ -4683,7 +4683,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
             }
             list.append(row);
           }
-          box.append(label, list);
+          box.append(label2, list);
           return box;
         }
         case "steps": {
@@ -4946,6 +4946,26 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     return words ? words[0].toUpperCase() + words.slice(1) : String(id);
   }
 
+  // src/map/view.js
+  var VIEWS = {
+    // served at https://vel.gg/bsz/ since 2026-10-18 (src/engine/builds.js)
+    "42be1c35025afa61ed1f0fc4558ca15c45c49b37dfdc458d3ebbe30f8c958036": { feet: 11209664, eye: 11209776 }
+  };
+  var viewAddresses = (hash) => VIEWS[hash] ?? null;
+  function myView(session) {
+    const at2 = viewAddresses(session.hash);
+    const buffer = session.engine?.buffer;
+    if (!at2 || !buffer) return null;
+    if (session.mapF32?.buffer !== buffer) session.mapF32 = new Float32Array(buffer);
+    const f32 = session.mapF32;
+    const x = f32[at2.eye >> 2];
+    const y = f32[(at2.eye >> 2) + 1];
+    const yaw = f32[(at2.eye >> 2) + 4];
+    const z = f32[(at2.feet >> 2) + 2];
+    if (![x, y, z, yaw].every(Number.isFinite) || x === 0 && y === 0 && z === 0) return null;
+    return { x, y, z, yaw };
+  }
+
   // src/map/model.js
   var GONE_MS = 2e3;
   var NO_DATA_MS = 5e3;
@@ -4957,7 +4977,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     return known;
   }
   var myNumber = (session) => session.mode === "guest" ? session.seat + 1 : 1;
-  function mapModel(session, now, { view: view2 = latestView() } = {}) {
+  function mapModel(session, now, { mine = myView(session) } = {}) {
     const map = session.map;
     const plan = map.plan;
     if (!plan) return { status: "noPlan" };
@@ -4972,19 +4992,22 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       }
       if (entry.s === 2) continue;
       const name = known.get(n) || "";
-      let at2 = { x: entry.x, y: entry.y, yaw: entry.yaw };
-      if (n === me && view2) at2 = { x: view2.origin[0], y: view2.origin[1], yaw: view2.angles[1] };
-      else if (n !== me) at2 = sampleTrack(map.tracks.get(n) ?? [], now - RENDER_DELAY_MS) ?? at2;
-      players.push({ n, name, letter: (name.trim()[0] ?? String(n)).toUpperCase(), color: PLAYER_COLORS[n - 1] ?? PLAYER_COLORS[0], ...at2, floor: entry.floor, room: entry.room, downed: entry.s === 1, me: n === me });
+      let at2 = sampleTrack(map.tracks.get(n) ?? [], now - RENDER_DELAY_MS) ?? { x: entry.x, y: entry.y, yaw: entry.yaw };
+      let floor2 = entry.floor;
+      if (n === me && mine) {
+        at2 = { x: mine.x, y: mine.y, yaw: mine.yaw };
+        floor2 = floorOf(plan, mine.z, mine.x, mine.y);
+      }
+      players.push({ n, name, letter: (name.trim()[0] ?? String(n)).toUpperCase(), color: PLAYER_COLORS[n - 1] ?? PLAYER_COLORS[0], ...at2, floor: floor2, room: entry.room, downed: entry.s === 1, me: n === me });
     }
     players.sort((a, b) => a.n - b.n);
-    const mine = players.find((p) => p.me);
+    const myDot = players.find((p) => p.me);
     if (!players.length && !map.state) {
       const waited = map.openedAt != null && now - map.openedAt > NO_DATA_MS;
       return { status: waited ? "noData" : "waiting" };
     }
-    const floor = mine?.floor ?? 0;
-    const room = map.planOk && mine && mine.room >= 0 && plan.rooms[mine.room] ? mine.room : -1;
+    const floor = myDot?.floor ?? 0;
+    const room = map.planOk && myDot && myDot.room >= 0 && plan.rooms[myDot.room] ? myDot.room : -1;
     const state = map.planOk ? map.state : null;
     let boxIndex = -1;
     return {
@@ -5023,21 +5046,21 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
 
   // src/map/overlay.js
   var C2 = {
-    panel: "rgba(18,17,16,.9)",
-    line: "#34302b",
-    fg: "#ece6dc",
-    muted: "#9d958a",
-    dim: "#6f685f",
-    accent: "#e2552f",
-    accent2: "#f07a4f",
+    panel: "rgba(22,28,20,.72)",
+    line: "rgba(205,215,190,.35)",
+    fg: "#e8eedc",
+    muted: "#a9b39b",
+    dim: "#7a8370",
+    accent: "#6f8240",
     gold: "#f4c542",
     bad: "#ff6b5a",
-    roomOpen: "#2a2622",
-    roomOpenEdge: "#6f685f",
-    roomShut: "#1d1a17",
-    roomShutEdge: "#4a443d",
-    roomUnknown: "#24211e",
-    current: "#3a2a22"
+    roomOpen: "#5f6b53",
+    roomOpenEdge: "#c3ccb4",
+    roomShut: "#33392f",
+    roomShutEdge: "#5b6451",
+    roomUnknown: "#454d3f",
+    current: "#8a9775",
+    currentEdge: "#eef2e4"
   };
   var FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
   var PERK_LABELS = {
@@ -5088,9 +5111,9 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     };
     const look = (i) => {
       const r = model.rooms[i];
-      if (r.current) return { edge: C2.accent, fill: C2.current, grow: 3, label: C2.accent2 };
-      if (r.open === true) return { edge: C2.roomOpenEdge, fill: C2.roomOpen, grow: 1.5, label: C2.muted };
-      if (r.open === false) return { edge: C2.roomShutEdge, fill: C2.roomShut, grow: 1.5, label: C2.dim };
+      if (r.current) return { edge: C2.currentEdge, fill: C2.current, grow: 2, label: "#fff" };
+      if (r.open === true) return { edge: C2.roomOpenEdge, fill: C2.roomOpen, grow: 1.5, label: C2.fg };
+      if (r.open === false) return { edge: C2.roomShutEdge, fill: C2.roomShut, grow: 1.5, label: C2.muted };
       return { edge: C2.roomShutEdge, fill: C2.roomUnknown, grow: 1.5, label: C2.muted };
     };
     const order = plan.rooms.map((_, i) => i).sort((a, b) => Number(model.rooms[a].current) - Number(model.rooms[b].current));
@@ -5130,9 +5153,9 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       }
       return;
     }
-    const label = door.kind === "power" ? "" : String(door.cost);
+    const label2 = door.kind === "power" ? "" : String(door.cost);
     ctx.font = `800 11px ${FONT}`;
-    const w = 26 + (label ? ctx.measureText(label).width : 0);
+    const w = 26 + (label2 ? ctx.measureText(label2).width : 0);
     roundRect(ctx, x - w / 2, y - 10, w, 20, 10);
     ctx.fillStyle = "#121110";
     ctx.fill();
@@ -5150,7 +5173,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     ctx.beginPath();
     ctx.arc(ix + 4, y - 2, 2.6, Math.PI, 0);
     ctx.stroke();
-    text2(ctx, label, ix + 12, y + 0.5, { size: 11, weight: 800, color: C2.gold });
+    text2(ctx, label2, ix + 12, y + 0.5, { size: 11, weight: 800, color: C2.gold });
   }
   function bolt(ctx, x, y, color) {
     ctx.fillStyle = color;
@@ -5212,14 +5235,14 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       return;
     }
     const pap = poi.kind === "pap";
-    const label = pap ? "PaP" : PERK_LABELS[poi.id] ?? "Perk";
+    const label2 = pap ? "PaP" : PERK_LABELS[poi.id] ?? "Perk";
     roundRect(ctx, x - 14, y - 11, 28, 22, 5);
     ctx.fillStyle = pap ? "#2b1f3a" : "#3a1a17";
     ctx.fill();
     ctx.strokeStyle = pap ? "#b48cff" : C2.bad;
     ctx.lineWidth = 1.2;
     ctx.stroke();
-    text2(ctx, label, x, y + 0.5, { size: 10, weight: 800, color: pap ? "#d7c2ff" : "#fff", align: "center" });
+    text2(ctx, label2, x, y + 0.5, { size: 10, weight: 800, color: pap ? "#d7c2ff" : "#fff", align: "center" });
   }
   function drawPlayer(ctx, view2, p, r = 11) {
     const [x, y] = toScreen(view2, p.x, p.y);
@@ -5382,17 +5405,38 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
   var BAR = 26;
   var SCALE = 0.11;
   var PAD2 = SIZE / 2 + 16;
+  var FONT2 = '"Bahnschrift SemiCondensed", Bahnschrift, "Arial Narrow", system-ui, sans-serif';
+  var LOOK = {
+    back: "rgba(22,28,20,.55)",
+    // the square behind the rooms
+    rooms: 0.75,
+    // the rooms layer's opacity
+    frame: "rgba(205,215,190,.6)",
+    corner: "rgba(235,240,225,.95)",
+    me: "#ffd23f",
+    text: "#e8eedc",
+    shadow: "rgba(0,0,0,.65)"
+  };
   var minimapEnabled = () => readSetting("minimap", "1") !== "0";
   var minimapCanvasSize = (dpr) => ({ w: Math.round(SIZE * dpr), h: Math.round((SIZE + BAR) * dpr) });
-  function minimapFrame(session, now, { playing = screen() === "playing", view: view2 = latestView() } = {}) {
+  function minimapFrame(session, now, { playing = screen() === "playing", mine = myView(session) } = {}) {
     const map = session.map;
     if (!map?.minimap || !playing || map.open || !map.plan) return null;
-    const model = mapModel(session, now, { view: view2 });
+    const model = mapModel(session, now, { mine });
     return model.status === "ok" && model.players.some((p) => p.me) ? model : null;
   }
-  function minimapWindow(layer, x, y, size) {
-    const [sx, sy] = toScreen(layer, x, y);
-    return { sx: sx - size / 2, sy: sy - size / 2, size };
+  var minimapTurn = (yaw) => (yaw - 90) * Math.PI / 180;
+  function minimapPlace(me, x, y) {
+    const dx = (x - me.x) * SCALE;
+    const dy = -(y - me.y) * SCALE;
+    const a = minimapTurn(me.yaw);
+    return [SIZE / 2 + dx * Math.cos(a) - dy * Math.sin(a), SIZE / 2 + dx * Math.sin(a) + dy * Math.cos(a)];
+  }
+  function minimapNorth(yaw, inset = 10) {
+    const a = (yaw - 180) * Math.PI / 180;
+    const [x, y] = [Math.cos(a), Math.sin(a)];
+    const k = (SIZE / 2 - inset) / Math.max(Math.abs(x), Math.abs(y));
+    return [SIZE / 2 + x * k, SIZE / 2 + y * k];
   }
   function minimapSettingBlocks(session) {
     const on = session.map?.minimap !== false;
@@ -5425,7 +5469,38 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     const view2 = { scale: SCALE, rotate: 0, tx: PAD2 - b[0] * SCALE, ty: PAD2 + b[3] * SCALE };
     const w = (b[2] - b[0]) * SCALE + 2 * PAD2;
     const h = (b[3] - b[1]) * SCALE + 2 * PAD2;
-    return { view: view2, canvas: drawRooms(plan, model, view2, w, h, dpr, { labels: false }) };
+    return { view: view2, w, h, canvas: drawRooms(plan, model, view2, w, h, dpr, { labels: false }) };
+  }
+  function label(ctx, value, x, y, { size, align = "left", spacing = 0 }) {
+    ctx.font = `700 ${size}px ${FONT2}`;
+    ctx.textAlign = align;
+    ctx.textBaseline = "middle";
+    ctx.letterSpacing = `${spacing}px`;
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = LOOK.shadow;
+    ctx.strokeText(value, x, y);
+    ctx.fillStyle = LOOK.text;
+    ctx.fillText(value, x, y);
+    ctx.letterSpacing = "0px";
+  }
+  function arrow(ctx, x, y, turn2, color, r, downed) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(turn2);
+    ctx.beginPath();
+    ctx.moveTo(0, -r * 1.3);
+    ctx.lineTo(r, r);
+    ctx.lineTo(0, r * 0.45);
+    ctx.lineTo(-r, r);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.lineJoin = "round";
+    ctx.lineWidth = downed ? 2.5 : 1.5;
+    ctx.strokeStyle = downed ? C2.bad : "rgba(0,0,0,.8)";
+    ctx.stroke();
+    ctx.restore();
   }
   var Minimap = class {
     constructor() {
@@ -5455,7 +5530,9 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
         const slug = session.map?.slug;
         if (this.brokenSlug !== void 0 && this.brokenSlug !== slug) this.brokenSlug = void 0;
         try {
-          const model = this.brokenSlug === void 0 ? minimapFrame(session, Date.now()) : null;
+          const mine = myView(session);
+          this.fromEngine = Boolean(mine);
+          const model = this.brokenSlug === void 0 ? minimapFrame(session, Date.now(), { mine }) : null;
           show(Boolean(model));
           if (model) this.draw(session, model);
         } catch (error) {
@@ -5481,38 +5558,60 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
       const ctx = this.canvas.getContext("2d");
       ctx.setTransform(size.w / SIZE, 0, 0, size.h / (SIZE + BAR), 0, 0);
       ctx.clearRect(0, 0, SIZE, SIZE + BAR);
-      roundRect(ctx, 0.5, 0.5, SIZE - 1, SIZE + BAR - 1, 10);
-      ctx.fillStyle = "rgba(18,17,16,.94)";
-      ctx.fill();
-      ctx.strokeStyle = C2.line;
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      text2(ctx, model.room ?? "—", SIZE / 2, BAR / 2 + 1, { size: 13, weight: 800, align: "center" });
       const current = model.rooms.findIndex((r) => r.current);
       const key = `${plan.slug}|${model.floor}|${dpr}|${map.planOk}|${map.state?.at ?? 0}|${current}`;
       if (this.cache.key !== key) this.cache = { key, ...floorLayer(plan, model, dpr) };
-      const { view: view2, canvas } = this.cache;
-      const win = minimapWindow(view2, me.x, me.y, SIZE);
-      const sx = Math.round(win.sx * dpr) / dpr;
-      const sy = Math.round(win.sy * dpr) / dpr;
+      const { view: view2, w, h, canvas } = this.cache;
       ctx.save();
-      roundRect(ctx, 1, BAR, SIZE - 2, SIZE - 1, 9);
+      ctx.beginPath();
+      ctx.rect(0, 0, SIZE, SIZE);
+      ctx.fillStyle = LOOK.back;
+      ctx.fill();
       ctx.clip();
-      ctx.drawImage(canvas, sx * dpr, sy * dpr, SIZE * dpr, SIZE * dpr, 0, BAR, SIZE, SIZE);
-      const mini = { scale: view2.scale, rotate: 0, tx: view2.tx - sx, ty: view2.ty - sy + BAR };
+      const [lx, ly] = toScreen(view2, me.x, me.y);
+      ctx.save();
+      ctx.translate(SIZE / 2, SIZE / 2);
+      ctx.rotate(minimapTurn(me.yaw));
+      ctx.globalAlpha = LOOK.rooms;
+      ctx.drawImage(canvas, -lx, -ly, w, h);
+      ctx.restore();
       for (const poi of model.pois) {
         if (poi.at[0] !== model.floor) continue;
-        const [x, y] = toScreen(mini, poi.at[1], poi.at[2]);
+        const [x, y] = minimapPlace(me, poi.at[1], poi.at[2]);
         drawPoi(ctx, x, y, poi, map.icons, 18);
       }
       for (const door of model.doors) {
         if (door.at[0] !== model.floor) continue;
-        const [x, y] = toScreen(mini, door.at[1], door.at[2]);
+        const [x, y] = minimapPlace(me, door.at[1], door.at[2]);
         drawLock(ctx, x, y, door, true);
       }
-      const here = model.players.filter((p) => p.floor === model.floor);
-      for (const p of [...here.filter((q) => !q.me), me]) drawPlayer(ctx, mini, p, p.me ? 8 : 7);
+      for (const p of model.players) {
+        if (p.me || p.floor !== model.floor) continue;
+        const [x, y] = minimapPlace(me, p.x, p.y);
+        arrow(ctx, x, y, (me.yaw - p.yaw) * Math.PI / 180, p.color, 6, p.downed);
+      }
+      arrow(ctx, SIZE / 2, SIZE / 2, 0, LOOK.me, 8, me.downed);
       ctx.restore();
+      ctx.strokeStyle = LOOK.frame;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(0.5, 0.5, SIZE - 1, SIZE - 1);
+      ctx.strokeStyle = LOOK.corner;
+      ctx.lineWidth = 2;
+      for (const [x, y, dx, dy] of [
+        [1, 1, 1, 1],
+        [SIZE - 1, 1, -1, 1],
+        [1, SIZE - 1, 1, -1],
+        [SIZE - 1, SIZE - 1, -1, -1]
+      ]) {
+        ctx.beginPath();
+        ctx.moveTo(x, y + dy * 12);
+        ctx.lineTo(x, y);
+        ctx.lineTo(x + dx * 12, y);
+        ctx.stroke();
+      }
+      const [nx, ny] = minimapNorth(me.yaw);
+      label(ctx, "N", nx, ny, { size: 13, align: "center" });
+      label(ctx, (model.room ?? "").toUpperCase(), 2, SIZE + BAR / 2 + 1, { size: 13, spacing: 2 });
     }
   };
 
@@ -6391,8 +6490,8 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
     if (!custom) blocks.push({ kind: "text", cls: "muted small", text: T.relayNote });
     if (session.usage) {
       const resets = new Date(session.usage.resetsAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      const label = session.usage.fraction >= 1 ? T.usedUp(resets) : T.usage(Math.round(session.usage.fraction * 100), resets);
-      blocks.push({ kind: "meter", fraction: session.usage.fraction, label });
+      const label2 = session.usage.fraction >= 1 ? T.usedUp(resets) : T.usage(Math.round(session.usage.fraction * 100), resets);
+      blocks.push({ kind: "meter", fraction: session.usage.fraction, label: label2 });
     }
     if (session.editRelay) {
       blocks.push({ kind: "input", field: "relay", placeholder: T.relayPlaceholder, act: "saveRelay", button: T.save, value: custom ? session.relay : "" });

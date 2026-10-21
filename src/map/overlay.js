@@ -7,22 +7,23 @@ import { mapModel } from "./model.js";
 import { fitView, toScreen } from "./plan.js";
 import { M } from "./strings.js";
 
+// Olive greys, as in Modern Warfare 2's minimap; the panel lets the game show through.
 export const C = {
-  panel: "rgba(18,17,16,.9)",
-  line: "#34302b",
-  fg: "#ece6dc",
-  muted: "#9d958a",
-  dim: "#6f685f",
-  accent: "#e2552f",
-  accent2: "#f07a4f",
+  panel: "rgba(22,28,20,.72)",
+  line: "rgba(205,215,190,.35)",
+  fg: "#e8eedc",
+  muted: "#a9b39b",
+  dim: "#7a8370",
+  accent: "#6f8240",
   gold: "#f4c542",
   bad: "#ff6b5a",
-  roomOpen: "#2a2622",
-  roomOpenEdge: "#6f685f",
-  roomShut: "#1d1a17",
-  roomShutEdge: "#4a443d",
-  roomUnknown: "#24211e",
-  current: "#3a2a22",
+  roomOpen: "#5f6b53",
+  roomOpenEdge: "#c3ccb4",
+  roomShut: "#33392f",
+  roomShutEdge: "#5b6451",
+  roomUnknown: "#454d3f",
+  current: "#8a9775",
+  currentEdge: "#eef2e4",
 };
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 const PERK_LABELS = {
@@ -81,9 +82,9 @@ export function drawRooms(plan, model, view, w, h, dpr, { labels = true } = {}) 
   };
   const look = (i) => {
     const r = model.rooms[i];
-    if (r.current) return { edge: C.accent, fill: C.current, grow: 3, label: C.accent2 };
-    if (r.open === true) return { edge: C.roomOpenEdge, fill: C.roomOpen, grow: 1.5, label: C.muted };
-    if (r.open === false) return { edge: C.roomShutEdge, fill: C.roomShut, grow: 1.5, label: C.dim };
+    if (r.current) return { edge: C.currentEdge, fill: C.current, grow: 2, label: "#fff" };
+    if (r.open === true) return { edge: C.roomOpenEdge, fill: C.roomOpen, grow: 1.5, label: C.fg };
+    if (r.open === false) return { edge: C.roomShutEdge, fill: C.roomShut, grow: 1.5, label: C.muted };
     return { edge: C.roomShutEdge, fill: C.roomUnknown, grow: 1.5, label: C.muted };
   };
   // room by room, its edge then its inside: a room's own rectangles hide each other's edges, while the next room's edge
