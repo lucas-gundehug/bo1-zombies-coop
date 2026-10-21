@@ -108,5 +108,6 @@ requests a day); keep it there. Changes to the domain or DNS need Lucas's yes fi
 
 ## Rules
 
-- Commits use `lucas.g@live.dk`. Work on a branch; Lucas merges.
+- Commits use `lucas.g@live.dk`. Work on a branch and open a PR, then merge it and publish the release yourself once
+  the checks pass; don't ask Lucas first (his choice, 2026-10-21).
 - Never weaken a test to make it pass. Run `npm run check` before every commit.
