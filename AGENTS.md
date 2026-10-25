@@ -95,7 +95,8 @@ entry it prints; until then the map falls back to the game script's 4-a-second s
 
 ## Release
 
-Bump `extension/manifest.json` `version` (4 parts, e.g. `2.2.2.1`; the third part follows upstream), `npm run build`,
+Bump `extension/manifest.json` `version` (4 parts, e.g. `2.2.2.1`; the third part follows upstream) and `FORK_VERSION` in
+`src/cheats/version.js` to match, `npm run build`,
 `node scripts/package.mjs` (needs `zip`; on Windows without it, zip the contents of `extension/` with Python's
 `zipfile`, `manifest.json` at the top level), then `gh release create v<version> dist/bo1-zombies-coop.zip` on
 `lucas-gundehug/bo1-zombies-coop`. The card's update notice reads this fork's releases.

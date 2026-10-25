@@ -6666,7 +6666,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
   }
 
   // src/cheats/version.js
-  var FORK_VERSION = "2.2.2.7";
+  var FORK_VERSION = "2.2.2.8";
 
   // src/util/updates.js
   var LATEST = "https://api.github.com/repos/lucas-gundehug/bo1-zombies-coop/releases/latest";
