@@ -1,4 +1,4 @@
-// BO1 Zombies Co-op 2.2.2.7 for vel.gg. Built from src/ with scripts/build.mjs; edit the sources, not this file.
+// BO1 Zombies Co-op 2.2.2.8 for vel.gg. Built from src/ with scripts/build.mjs; edit the sources, not this file.
 (() => {
   // relay/src/protocol.js
   var ROLES = Object.freeze(["host", "guest"]);
@@ -3491,12 +3491,25 @@ cheats_health_apply()
 		self.cheats_health_base = self.maxhealth;
 	}
 	target = int( self.cheats_health_base * self.cheats_health / 100 );
-	if ( self.maxhealth != target )
+	// Health regeneration (setnormalhealth) heals up to the client's session max, which only SetMaxHealth sets;
+	// writing self.maxhealth leaves it behind. getnormalhealth is health / session max, so it tells whether the two
+	// still agree. SetMaxHealth fills the health up; keep the player as hurt as they were, by ratio.
+	if ( self.health <= 0 )
 	{
-		self.maxhealth = target;
-		if ( self.health > target )
+		return;
+	}
+	normal = self getnormalhealth();
+	if ( self.maxhealth != target || int( self.health / normal + .5 ) != target )
+	{
+		self SetMaxHealth( target );
+		health = int( normal * target + .5 );
+		if ( health < 1 )
 		{
-			self.health = target;
+			health = 1;
+		}
+		if ( health < target )
+		{
+			self.health = health;
 		}
 	}
 	self.cheats_health_set = target;
@@ -6653,7 +6666,7 @@ button.act.tiny { padding: 5px 6px; font-size: 11.5px; font-weight: 600; }
   }
 
   // src/cheats/version.js
-  var FORK_VERSION = "2.2.2.7";
+  var FORK_VERSION = "2.2.2.8";
 
   // src/util/updates.js
   var LATEST = "https://api.github.com/repos/lucas-gundehug/bo1-zombies-coop/releases/latest";

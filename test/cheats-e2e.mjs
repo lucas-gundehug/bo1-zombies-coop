@@ -3,7 +3,8 @@
 // Scenarios: load (the script reports ready), off (with the setting off nothing loads), actions (every command, Task 2),
 // findview (where a new engine keeps my view, for src/map/view.js), box (the Mystery Box on the map, two matches).
 // PROFILE=<dir> reuses a browser profile (the map packs are downloaded once per profile and kept), default in the OS
-// temp folder. SHOTS=<dir> saves a screenshot after each step. HORDE=1 plays vel.gg's Hell mode (?horde=1).
+// temp folder. SHOTS=<dir> saves a screenshot after each step. HORDE=1 plays vel.gg's Hell mode (?horde=1). The window stays
+// off-screen; SHOW=1 puts it on screen.
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -24,7 +25,15 @@ if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 const context = await chromium.launchPersistentContext(PROFILE, {
   headless: false,
   viewport: { width: 1100, height: 650 },
-  args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
+  args: [
+    // off-screen unless SHOW=1 (Lucas's choice: no test windows on his screens), and never throttled for being hidden
+    ...(process.env.SHOW ? [] : ["--window-position=-32000,-32000"]),
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+    "--disable-background-timer-throttling",
+    `--disable-extensions-except=${extension}`,
+    `--load-extension=${extension}`,
+  ],
 });
 // Automated windows are refused pointer lock, which the game needs to leave "click to start" (as in test/e2e.mjs).
 await context.addInitScript(() => {
@@ -585,30 +594,62 @@ const scenarios = {
       const { build, engine } = window.__bo1Coop;
       return engine.int(build.fun.entities + build.fun.ent.health);
     });
+    // the entity's maxHealth sits right after health
+    const maxHealth = () => page.evaluate(() => {
+      const { build, engine } = window.__bo1Coop;
+      return engine.int(build.fun.entities + build.fun.ent.health + 4);
+    });
+    // A hit, faked by writing the health: the game's own regeneration (_gameskill, setnormalhealth) must bring it back
+    // to the full level. It heals to the client's session max, which the level must have moved too: a light hit, and a
+    // deep one (below the "very hurt" line, where regeneration is slow).
+    const regenerates = async (full, label) => {
+      for (const ratio of [0.6, 0.1]) {
+        const hurt = Math.max(1, Math.round(full * ratio));
+        await page.evaluate((h) => {
+          const { build, engine } = window.__bo1Coop;
+          engine.setInt(build.fun.entities + build.fun.ent.health, h);
+        }, hurt);
+        const end = Date.now() + 40000;
+        let now = hurt;
+        while (Date.now() < end && now !== full) {
+          await wait(250);
+          now = await health();
+        }
+        log(`${label}: hurt to ${hurt}, regenerated to ${now}`);
+        assert.equal(now, full, `${label}: regenerates from ${hurt} to the full ${full}`);
+      }
+    };
     const start = await health();
     log("health at the start:", start);
-    for (const pct of [200, 300, 100]) {
+    for (const pct of [200, 300]) {
       assert.equal((await run(`health 0 ${pct}`)).ok, true, `health ${pct}`);
       await wait(800);
       const now = await health();
       log(`health ${pct}%:`, now);
       assert.equal(now, Math.round((start * pct) / 100), `health at ${pct}%`);
+      await regenerates(now, `${pct}%`);
     }
     assert.equal((await run("health 0 50")).code, "bad_health", "50% is refused");
-    // on top of Juggernog: its maximum (the entity's maxHealth, right after health) doubles at 200%
-    const maxHealth = () => page.evaluate(() => {
-      const { build, engine } = window.__bo1Coop;
-      return engine.int(build.fun.entities + build.fun.ent.health + 4);
-    });
+    // Juggernog bought at 300%: the level goes on top of Juggernog's maximum, and the player stays at full health
     assert.equal((await run("perk 0 specialty_armorvest", 60000)).ok, true, "Juggernog");
     await wait(2000);
+    const jug300 = await maxHealth();
+    log("health / maximum with Juggernog at 300%:", await health(), jug300);
+    assert.equal(await health(), jug300, "full health after Juggernog at 300%");
+    await regenerates(jug300, "Juggernog at 300%");
+    // back to 100%: Juggernog's own maximum, a third of the above
+    assert.equal((await run("health 0 100")).ok, true, "health 100 with Juggernog");
+    await wait(1500);
     const jug = await maxHealth();
     log("maximum health with Juggernog:", jug);
     assert.ok(jug > start, "Juggernog raised the maximum");
+    assert.equal(jug300, jug * 3, "300% of Juggernog's maximum");
+    await regenerates(jug, "Juggernog at 100%");
     assert.equal((await run("health 0 200")).ok, true, "health 200 with Juggernog");
     await wait(1500);
     log("maximum health with Juggernog at 200%:", await maxHealth());
     assert.equal(await maxHealth(), jug * 2, "200% of Juggernog's maximum");
+    await regenerates(jug * 2, "Juggernog at 200%");
   },
   async load() {
     await setCheats(true);

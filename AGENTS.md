@@ -27,7 +27,9 @@ and catching the engine's `"name" is: "value^7"` print in `console.log`. N opens
 (`src/cheats/hotkey.js`): vel.gg presses Escape for the game whenever it sees the pointer lock lost, so the one unlock N
 causes is hidden from it. (The keys were swapped in 2.2.2.5 at Lucas's request: M was the cheat menu, N the map.) Health levels (100–500 %, `health <target> <pct>`) multiply the player's own `maxhealth`
 (100, or Juggernog's 250); `cheats_health_loop` notices when the game resets it (a perk, a revive, a respawn) and puts
-the level back on top.
+the level back on top. Always through `SetMaxHealth`: health regeneration (`setnormalhealth`) heals to the client's
+session max, which only `SetMaxHealth` sets; writing `self.maxhealth` alone made regeneration drop a 300 % player to
+100 and drain a badly hurt one to 1 (fixed in 2.2.2.8). `kino health` fakes hits and checks regeneration.
 
 ## Direct links in one paragraph
 
@@ -93,7 +95,8 @@ entry it prints; until then the map falls back to the game script's 4-a-second s
 
 ## Release
 
-Bump `extension/manifest.json` `version` (4 parts, e.g. `2.2.2.1`; the third part follows upstream), `npm run build`,
+Bump `extension/manifest.json` `version` (4 parts, e.g. `2.2.2.1`; the third part follows upstream) and `FORK_VERSION` in
+`src/cheats/version.js` to match, `npm run build`,
 `node scripts/package.mjs` (needs `zip`; on Windows without it, zip the contents of `extension/` with Python's
 `zipfile`, `manifest.json` at the top level), then `gh release create v<version> dist/bo1-zombies-coop.zip` on
 `lucas-gundehug/bo1-zombies-coop`. The card's update notice reads this fork's releases.
